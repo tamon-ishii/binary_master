@@ -258,6 +258,11 @@ def to_bytes(self, endian: Optional[EndianType] = None) -> bytes:
     return writer.to_bytes()
 
 
+def from_bytes(cls, data: Union[bytes, bytearray], endian: Optional[EndianType] = None) -> Any:
+    """Deserialize a @binary_struct instance from bytes."""
+    return read_struct(cls, reader=data, endian=endian)
+
+
 def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_align=False):
 
     def wrapper(target_cls):
@@ -272,6 +277,7 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
             doc=doc,
         )
         target_cls.to_bytes = to_bytes
+        target_cls.from_bytes = classmethod(from_bytes)
         return target_cls
 
     if cls is not None:
@@ -392,15 +398,34 @@ def _write_element(elem_type: Any, val: Any, writer: Any, endian: Endian) -> Non
         raise TypeError(f"Cannot serialize element of type {type(val).__name__}")
 
 
-def _get_field_alignment(ftype: Any, val: Any) -> int:
+def _get_field_alignment(ftype: Any, val: Any = None) -> int:
     """Determine alignment requirement in bytes for a struct field."""
+    if get_origin(ftype) is Annotated:
+        ftype = get_args(ftype)[0]
+
     if isinstance(ftype, type) and issubclass(ftype, BinaryType):
         return min(ftype._size, 8)
-    if hasattr(val, "__binary__"):
-        sub_align = val.__binary__.get("align")
+
+    target = ftype if hasattr(ftype, "__binary__") else val
+    if hasattr(target, "__binary__"):
+        sub_align = target.__binary__.get("align")
         if sub_align:
             return sub_align
-        return 4
+        total_bits = target.__binary__.get("bits")
+        if total_bits is not None:
+            if total_bits <= 8:
+                return 1
+            elif total_bits <= 16:
+                return 2
+            elif total_bits <= 32:
+                return 4
+            elif total_bits <= 64:
+                return 8
+            return 4
+        sub_fields = target.__binary__.get("fields", {})
+        sub_aligns = [_get_field_alignment(s_ft) for s_ft in sub_fields.values()]
+        return max(sub_aligns, default=4)
+
     if ftype in (int, float) or isinstance(val, (int, float)):
         return 4
     if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset) or get_origin(ftype) is Offset:
@@ -669,7 +694,225 @@ def write_struct(
 
     return writer
 
-    return writer
+
+def read_struct(
+    cls: type[T],
+    reader: Optional[Any] = None,
+    endian: Optional[EndianType] = None,
+) -> T:
+    """Deserialize a @binary_struct class from a BinaryReader, bytes, or stream.
+
+    Args:
+        cls: The @binary_struct class to instantiate.
+        reader: A BinaryReader instance, bytes/bytearray, file path, or stream.
+        endian: Optional endianness override.
+
+    Returns:
+        Deserialized instance of `cls`.
+    """
+    from binary_master.reader import BinaryReader
+
+    meta = getattr(cls, "__binary__", None)
+    if meta is None:
+        raise TypeError(f"Class {getattr(cls, '__name__', str(cls))} is not a binary_struct")
+
+    if reader is None:
+        raise ValueError("A reader or bytes data must be provided to read_struct")
+
+    if not isinstance(reader, BinaryReader):
+        reader = BinaryReader(reader)
+
+    struct_endian = meta.get("endian", "little")
+    active_endian = normalize_endian(endian or struct_endian)
+
+    total_bits = meta.get("bits")
+    if total_bits is not None:
+        if total_bits <= 8:
+            packed_value = reader.read_uint8()
+        elif total_bits <= 16:
+            packed_value = reader.read_uint16(endian=active_endian)
+        elif total_bits <= 32:
+            packed_value = reader.read_uint32(endian=active_endian)
+        elif total_bits <= 64:
+            packed_value = reader.read_uint64(endian=active_endian)
+        else:
+            num_bytes = (total_bits + 7) // 8
+            raw = reader.read_bytes(num_bytes)
+            byteorder = "little" if active_endian == Endian.LITTLE else "big"
+            packed_value = int.from_bytes(raw, byteorder=byteorder)
+
+        fields = meta.get("fields", {})
+        shift = 0
+        kwargs = {}
+        for name, ftype in fields.items():
+            width = ftype[1] if isinstance(ftype, tuple) and len(ftype) >= 2 else 1
+            mask = (1 << width) - 1
+            val = (packed_value >> shift) & mask
+            kwargs[name] = val
+            shift += width
+        return cls(**kwargs)
+
+    fields = meta.get("fields", {})
+    align_setting = meta.get("align")
+    auto_align = meta.get("auto_align", False)
+    kwargs = {}
+
+    for name, ftype in fields.items():
+        # Unwrap Annotated
+        if get_origin(ftype) is Annotated:
+            ftype = get_args(ftype)[0]
+
+        # Automatic alignment padding before field
+        if align_setting is not None or auto_align:
+            field_align = _get_field_alignment(ftype, None)
+            req_align = min(field_align, align_setting) if align_setting else field_align
+            if req_align > 1:
+                reader.align(req_align)
+
+        # Check Offset[T]
+        is_offset = (
+            (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset)
+            or (get_origin(ftype) is Offset)
+        )
+        if is_offset:
+            target_offset = reader.read_uint32(endian=active_endian)
+            target_type = None
+            if isinstance(ftype, tuple) and len(ftype) >= 2:
+                target_type = ftype[1]
+            elif get_args(ftype):
+                target_type = get_args(ftype)[0]
+
+            if isinstance(target_type, str):
+                mod = sys.modules.get(cls.__module__)
+                if mod and hasattr(mod, target_type):
+                    target_type = getattr(mod, target_type)
+
+            if target_type and hasattr(target_type, "__binary__") and target_offset > 0:
+                saved_pos = reader.tell()
+                reader.seek(target_offset)
+                target_obj = read_struct(target_type, reader=reader, endian=active_endian)
+                reader.seek(saved_pos)
+                kwargs[name] = target_obj
+            else:
+                kwargs[name] = target_offset
+            continue
+
+        # Check OffsetTable[Count, OffsetType]
+        is_offset_table = (
+            (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] is OffsetTable)
+            or (get_origin(ftype) is OffsetTable)
+        )
+        if is_offset_table:
+            if isinstance(ftype, tuple):
+                count = ftype[1]
+                offset_t = ftype[2] if len(ftype) >= 3 else UInt32
+            else:
+                args = get_args(ftype)
+                count = args[0]
+                offset_t = args[1] if len(args) > 1 else UInt32
+
+            offs = []
+            for _ in range(count):
+                if offset_t is UInt8:
+                    off = reader.read_uint8()
+                elif offset_t is UInt16:
+                    off = reader.read_uint16(endian=active_endian)
+                elif offset_t is UInt64:
+                    off = reader.read_uint64(endian=active_endian)
+                else:
+                    off = reader.read_uint32(endian=active_endian)
+                offs.append(off)
+            kwargs[name] = offs
+            continue
+
+        # Check FixedArray[T, N]
+        is_fixed = (
+            (isinstance(ftype, tuple) and len(ftype) >= 3 and ftype[0] is FixedArray)
+            or (get_origin(ftype) is FixedArray)
+        )
+        if is_fixed:
+            if isinstance(ftype, tuple):
+                elem_t, count = ftype[1], ftype[2]
+            else:
+                args = get_args(ftype)
+                elem_t, count = args[0], args[1]
+
+            if elem_t is UInt8:
+                kwargs[name] = reader.read_bytes(count)
+            elif elem_t is Int8:
+                kwargs[name] = [reader.read_int8() for _ in range(count)]
+            elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
+                kwargs[name] = [
+                    reader._unpack_read(elem_t._fmt, elem_t._size, endian=active_endian)
+                    for _ in range(count)
+                ]
+            elif hasattr(elem_t, "__binary__"):
+                kwargs[name] = [
+                    read_struct(elem_t, reader=reader, endian=active_endian)
+                    for _ in range(count)
+                ]
+            else:
+                kwargs[name] = reader.read_bytes(count)
+            continue
+
+        # Check Array[T]
+        is_arr = (
+            (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] is Array)
+            or (get_origin(ftype) is Array)
+        )
+        if is_arr:
+            elem_t = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
+            if elem_t is UInt8:
+                kwargs[name] = reader.read_bytes()
+            elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
+                items = []
+                while reader.remaining() >= elem_t._size:
+                    items.append(reader._unpack_read(elem_t._fmt, elem_t._size, endian=active_endian))
+                kwargs[name] = items
+            elif hasattr(elem_t, "__binary__"):
+                items = []
+                while reader.remaining() > 0:
+                    items.append(read_struct(elem_t, reader=reader, endian=active_endian))
+                kwargs[name] = items
+            else:
+                kwargs[name] = reader.read_bytes()
+            continue
+
+        # Check nested binary_struct
+        if hasattr(ftype, "__binary__"):
+            kwargs[name] = read_struct(ftype, reader=reader, endian=active_endian)
+            continue
+
+        # Check primitive BinaryType
+        if isinstance(ftype, type) and issubclass(ftype, BinaryType):
+            fmt = ftype._fmt
+            if fmt:
+                kwargs[name] = reader._unpack_read(fmt, ftype._size, endian=active_endian)
+            continue
+
+        # Standard Python types fallback
+        if ftype is int:
+            kwargs[name] = reader.read_uint32(endian=active_endian)
+        elif ftype is float:
+            kwargs[name] = reader.read_float32(endian=active_endian)
+        elif ftype is bool:
+            kwargs[name] = reader.read_bool()
+        elif ftype is bytes:
+            kwargs[name] = reader.read_bytes()
+        elif ftype is str:
+            kwargs[name] = reader.read_cstring()
+        else:
+            raise TypeError(f"Unsupported field type for {name}: {ftype}")
+
+    # Struct size alignment padding
+    if align_setting is not None or auto_align:
+        field_aligns = [_get_field_alignment(ft, None) for fn, ft in fields.items()]
+        max_field_align = max(field_aligns, default=1)
+        struct_boundary = align_setting if align_setting else max_field_align
+        if struct_boundary > 1:
+            reader.align(struct_boundary)
+
+    return cls(**kwargs)
 
 
 #

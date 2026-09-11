@@ -2,6 +2,7 @@
 
 from .enums import Endian, EndianType, normalize_endian
 from .writer import BinaryWriter, Writer, OffsetTableHandle
+from .reader import BinaryReader, Reader
 from .binary_struct import (
     BinaryType,
     UInt8,
@@ -21,6 +22,7 @@ from .binary_struct import (
     Bits,
     binary_struct,
     write_struct,
+    read_struct,
 )
 from .manual import (
     LayoutEntry,
@@ -36,6 +38,8 @@ __version__ = "0.1.0"
 __all__ = [
     "BinaryWriter",
     "Writer",
+    "BinaryReader",
+    "Reader",
     "OffsetTableHandle",
     "Endian",
     "EndianType",
@@ -58,6 +62,7 @@ __all__ = [
     "Bits",
     "binary_struct",
     "write_struct",
+    "read_struct",
     "LayoutEntry",
     "generate_manual",
     "generate_mermaid_diagram",

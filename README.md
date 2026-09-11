@@ -2,11 +2,11 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-45%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-60%20passed-brightgreen.svg)]()
 
-**Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成＆仕様書自動生成ライブラリです。
+**Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・読み込み（シリアライズ／デシリアライズ）＆仕様書自動生成ライブラリです。
 
-Python 標準の `struct` モジュールで生じがちなフォーマット文字列のミス、手作業でのオフセット計算、エンディアンの混在、バイト列の煩雑な結合処理を排除し、**型安全・宣言的・直感的**にバイナリデータを構築できます。  
+Python 標準の `struct` モジュールで生じがちなフォーマット文字列のミス、手作業でのオフセット計算、エンディアンの混在、バイト列の煩雑な結合・切り出し処理を排除し、**型安全・宣言的・直感的**にバイナリデータを読み書きできます。  
 さらに、書き込んだバイナリ構造から **Mermaid ダイアグラム（フローチャート／パケット図）付きの仕様書（Markdown）** をワンライナーで自動生成する機能を備えています。
 
 ---
@@ -15,25 +15,24 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
 
 - 🚀 **宣言的バイナリ構造体 (`@binary_struct`)**  
   - Python の型ヒントとデータクラス記法を用いて、バイナリヘッダーやパケットフォーマットを直感的に定義可能。
+  - **双方向シリアライズ**: `instance.to_bytes()` による書き込みと `Cls.from_bytes(data)` による自動デシリアライズの両方に対応。
   - **Docstring の仕様書自動反映**: クラスの docstring（`"""..."""`）が仕様書の概要やビットフィールド詳細にそのまま自動反映。
   - **コメントの自動抽出**: コード上のインラインコメント（`# ...`）や `Annotated[Type, "説明"]` を自動抽出し、仕様書の `Description` 列に反映。
   - **自動アライメント & パディング (`auto_align=True`, `align=N`)**: C言語の構造体アライメント規則に基づき、メンバ境界や構造体サイズのアライメントパディングを自動挿入。
 - 🧩 **高度な型サポート**  
   - 符号付き / 符号なし整数（8, 16, 32, 64-bit）
   - 浮動小数点数（Float32, Float64）
-  - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング
-  - **オフセット自動計算 (`Offset[T]`)**: ヘッダーのオフセット値の自動バックパッチと参照先構造体の追跡
+  - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング・アンパッキング
+  - **オフセット自動計算 & 解決 (`Offset[T]`)**: ヘッダーのオフセット値の自動バックパッチおよび読み込み時の参照先自動インスタンス化
   - **オフセットテーブル (`OffsetTable[Count, Type]`)**: 複数エントリのオフセット配列の予約・自動バックパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
   - 構造体のネスト
-- ✍️ **柔軟な手続き的ライター (`BinaryWriter` / `Writer`)**  
-  - インメモリ（`BytesIO`）またはファイル/ストリームへの直接出力
-  - メソッドチェーン対応
-  - **セクションタイトルの付与 (`writer.caption(title, desc)`)**: 後続のバイナリをグループ化し、マニュアルにセクション見出しや説明文、Mermaidサブグラフを自動反映
-  - **オフセットテーブルの生成 (`writer.write_offset_table`)**: テーブル枠を予約し、返り値のハンドルから自在にオフセットや対象データをバックパッチ
+- ✍️ **柔軟な手続き的ライター & リーダー (`BinaryWriter` / `BinaryReader`)**  
+  - インメモリ（`BytesIO` / `bytes`）またはファイル/ストリームへの直接読み書き
+  - 厳格な境界・EOFチェック（オーバーフローや切り捨ての即時エラー検知）
   - 各種文字列形式（C言語スタイルの Null 終端、Pascal スタイルの長さプレフィックス、固定長パディング）
   - バイト境界アライメント（`align`）およびパディング（`pad`）
-  - 厳格な境界チェック（オーバーフロー/アンダーフローの即時エラー検知）
+  - メソッドチェーン対応ライター、カーソル操作（`seek`, `tell`, `skip`, `remaining`）
 - 📊 **仕様書 & Mermaid 図の自動生成 (`write_manual`)**  
   - シリアライズされた全フィールドのオフセット（16進/10進）、サイズ、エンディアン、参照先ターゲット（`-> 0xXXXX`）を記録した Markdown ドキュメントを出力
   - **Mermaid Flowchart**: 構造体ごとのサブグラフとオフセット参照関係の矢印表示
@@ -361,6 +360,40 @@ write_manual(
 - **`section_packet_diagrams=True`**: `caption` で区切られた各メモリ領域（ヘッダー、ボディ等）の直前に、その領域専用のパケット図を埋め込みます。ブロックごとのビット配置が直感的に把握できます。
 - **`include_values=False` (デフォルト)**: フォーマット仕様書として不要な特定インスタンスのダミー値（`Value / Preview` 列やパケット図内の値表示）を省き、すっきりとした表を出力します。デバッグ時などで値も確認したい場合は `True` を指定できます。
 
+### 4. バイナリの読み込みとデシリアライズ (`BinaryReader` / `from_bytes`)
+
+書き込んだバイナリデータは、[`BinaryReader`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/reader.py) または構造体の `from_bytes()` メソッドで完全に対称復元（ラウンドトリップ）できます。
+
+#### ① `@binary_struct.from_bytes()` による宣言的復元
+```python
+# バイト列から直接復元
+header = Header.from_bytes(binary_data)
+print(header.magic)
+print(header.flags.compressed)
+print(header.image_offset.width) # Offset[Image] の参照先も自動的にデシリアライズ
+```
+
+#### ② `BinaryReader` による逐次読み込み
+```python
+from binary_master import BinaryReader, Endian
+
+reader = BinaryReader(binary_data, default_endian=Endian.LITTLE)
+
+# プリミティブ値の読み込み
+magic = reader.read_uint32()
+version = reader.read_uint16()
+name = reader.read_cstring()
+
+# カーソル操作
+pos = reader.tell()
+reader.seek(0)
+reader.skip(4)
+reader.align(8)
+
+# 構造体の読み込み
+header = reader.read_struct(Header)
+```
+
 ---
 
 ## API リファレンス
@@ -392,6 +425,15 @@ write_manual(
 - **パディング & アライメント**: `pad(count, pad_byte)`, `align(boundary, pad_byte)`
 - **仕様書生成**: `write_manual(path_or_file, title=..., diagram_type=...)`
 - **データ取り出し**: `to_bytes()`, `to_bytearray()`
+
+### `BinaryReader` 主要メソッド
+- **整数読み込み**: `read_uint8`, `read_int8`, `read_uint16`, `read_int16`, `read_uint32`, `read_int32`, `read_uint64`, `read_int64`
+- **浮動小数点数**: `read_float32`, `read_float64`
+- **論理値 / バイト**: `read_bool`, `read_bytes(count=None)`
+- **文字列**: `read_cstring`, `read_prefixed_string`, `read_fixed_string`, `read_string`
+- **構造体**: `read_struct(cls, endian=None)`
+- **位置制御**: `tell()`, `seek(offset, whence)`, `skip(count)`, `remaining()`, `align(boundary)`
+- **初期化**: `BinaryReader(source)`, `BinaryReader.from_bytes(data)`, `BinaryReader.from_file(path)`
 
 ---
 
