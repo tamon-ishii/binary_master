@@ -23,6 +23,8 @@ class LayoutEntry:
     target_offset: Optional[int] = None
     subfields: Optional[List[dict]] = None
     caption: Optional[str] = None
+    struct_doc: Optional[str] = None
+    caption_desc: Optional[str] = None
 
 
 def format_value_preview(val: Any) -> str:
@@ -323,6 +325,13 @@ def generate_manual(
 
     # 1. Summary
     sections.append("## Overview\n")
+    root_doc = ""
+    for e in entries:
+        if e.struct_doc:
+            root_doc = e.struct_doc
+            break
+    if root_doc:
+        sections.append(f"{root_doc}\n")
     sections.append(f"- **Total Size**: {total_bytes} bytes (`0x{total_bytes:04X}`)")
     sections.append(f"- **Default Endianness**: {default_endian.capitalize()}")
     sections.append(f"- **Total Fields**: {len(entries)}\n")
@@ -390,6 +399,12 @@ def generate_manual(
             type_str = f"`{entry.type_name}`"
             endian_str = entry.endian or "-"
             desc_str = entry.description or "-"
+            if entry.target_offset is not None:
+                target_marker = f"`-> 0x{entry.target_offset:04X}`"
+                if desc_str != "-":
+                    desc_str = f"{desc_str} ({target_marker})"
+                else:
+                    desc_str = target_marker
             if include_values:
                 val_str = format_value_preview(entry.value)
                 sections.append(
@@ -440,10 +455,14 @@ def generate_manual(
             min_off = c_entries[0].offset
             max_off = c_entries[-1].offset + c_entries[-1].size
             total_size = max_off - min_off
+            cap_desc = c_entries[0].caption_desc or c_entries[0].struct_doc
             if cap:
                 sections.append(f"### {cap} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
             else:
                 sections.append(f"### (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+
+            if cap_desc:
+                sections.append(f"{cap_desc}\n")
 
             if section_packet_diagrams:
                 sec_diag = generate_packet_diagram(
@@ -471,6 +490,8 @@ def generate_manual(
             sections.append(
                 f"### `{bf_name}` (Offset: `0x{bf.offset:04X}`, Size: {bf.size}B)\n"
             )
+            if bf.struct_doc:
+                sections.append(f"{bf.struct_doc}\n")
             if include_bitfield_diagram:
                 diag = generate_bitfield_packet_diagram(
                     bf,

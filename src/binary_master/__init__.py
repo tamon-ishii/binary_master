@@ -1,7 +1,7 @@
 """Binary Master: High-level binary writing library."""
 
 from .enums import Endian, EndianType, normalize_endian
-from .writer import BinaryWriter, Writer
+from .writer import BinaryWriter, Writer, OffsetTableHandle
 from .binary_struct import (
     BinaryType,
     UInt8,
@@ -15,6 +15,7 @@ from .binary_struct import (
     Float32,
     Float64,
     Offset,
+    OffsetTable,
     Array,
     FixedArray,
     Bits,
@@ -35,6 +36,7 @@ __version__ = "0.1.0"
 __all__ = [
     "BinaryWriter",
     "Writer",
+    "OffsetTableHandle",
     "Endian",
     "EndianType",
     "normalize_endian",
@@ -50,6 +52,7 @@ __all__ = [
     "Float32",
     "Float64",
     "Offset",
+    "OffsetTable",
     "Array",
     "FixedArray",
     "Bits",

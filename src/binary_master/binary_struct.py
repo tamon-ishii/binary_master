@@ -116,6 +116,19 @@ class Bits:
         return cls, width
 
 
+class OffsetTable(Generic[T]):
+    """オフセットテーブル型: OffsetTable[Count, OffsetType] または OffsetTable[Count]"""
+
+    def __class_getitem__(cls, args):
+        if isinstance(args, tuple):
+            count = args[0]
+            offset_t = args[1] if len(args) > 1 else UInt32
+        else:
+            count = args
+            offset_t = UInt32
+        return cls, count, offset_t
+
+
 # ==========================================================
 # Description Extractor & binary_struct
 # ==========================================================
@@ -177,10 +190,13 @@ def extract_field_descriptions(cls: type) -> dict[str, str]:
 class BinaryMetadata(dict):
     """Metadata container for binary_struct with lazy type hint and description resolution."""
 
-    def __init__(self, cls, endian="little", bits=None):
+    def __init__(self, cls, endian="little", bits=None, align=None, auto_align=False, doc=""):
         super().__init__({
             "endian": endian,
             "bits": bits,
+            "align": align,
+            "auto_align": auto_align,
+            "doc": doc,
             "descriptions": {},
         })
         self._cls = cls
@@ -242,11 +258,19 @@ def to_bytes(self, endian: Optional[EndianType] = None) -> bytes:
     return writer.to_bytes()
 
 
-def binary_struct(cls=None, *, endian="little", bits=None):
+def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_align=False):
 
     def wrapper(target_cls):
         target_cls = dataclass(slots=True)(target_cls)
-        target_cls.__binary__ = BinaryMetadata(target_cls, endian=endian, bits=bits)
+        doc = inspect.cleandoc(target_cls.__doc__) if target_cls.__doc__ else ""
+        target_cls.__binary__ = BinaryMetadata(
+            target_cls,
+            endian=endian,
+            bits=bits,
+            align=align,
+            auto_align=auto_align,
+            doc=doc,
+        )
         target_cls.to_bytes = to_bytes
         return target_cls
 
@@ -263,10 +287,12 @@ def _write_bitfield(
     field_name: str = "",
     parent_struct: Optional[str] = None,
     desc: str = "",
+    struct_doc: str = "",
 ) -> None:
     import struct
     fields = instance.__binary__["fields"]
     descriptions = instance.__binary__.get("descriptions", {})
+    bf_doc = struct_doc or instance.__binary__.get("doc", "")
     packed_value = 0
     shift = 0
     subfields = []
@@ -316,6 +342,7 @@ def _write_bitfield(
             description=desc,
             struct_name=parent_struct or instance.__class__.__name__,
             subfields=subfields,
+            struct_doc=bf_doc,
         )
 
 
@@ -365,6 +392,25 @@ def _write_element(elem_type: Any, val: Any, writer: Any, endian: Endian) -> Non
         raise TypeError(f"Cannot serialize element of type {type(val).__name__}")
 
 
+def _get_field_alignment(ftype: Any, val: Any) -> int:
+    """Determine alignment requirement in bytes for a struct field."""
+    if isinstance(ftype, type) and issubclass(ftype, BinaryType):
+        return min(ftype._size, 8)
+    if hasattr(val, "__binary__"):
+        sub_align = val.__binary__.get("align")
+        if sub_align:
+            return sub_align
+        return 4
+    if ftype in (int, float) or isinstance(val, (int, float)):
+        return 4
+    if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset) or get_origin(ftype) is Offset:
+        return 4
+    if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is OffsetTable) or get_origin(ftype) is OffsetTable:
+        offset_t = ftype[2] if isinstance(ftype, tuple) and len(ftype) >= 3 else UInt32
+        return offset_t._size if hasattr(offset_t, "_size") else 4
+    return 1
+
+
 def write_struct(
     instance: Any,
     writer: Optional[Any] = None,
@@ -388,6 +434,9 @@ def write_struct(
         writer = BinaryWriter(default_endian=active_endian)
 
     current_struct_name = parent_struct_name or instance.__class__.__name__
+    struct_doc = meta.get("doc", "")
+    align_setting = meta.get("align")
+    auto_align = meta.get("auto_align", False)
 
     total_bits = meta.get("bits")
     if total_bits is not None:
@@ -399,6 +448,7 @@ def write_struct(
             field_name=parent_field_name or instance.__class__.__name__,
             parent_struct=current_struct_name,
             desc=desc,
+            struct_doc=struct_doc,
         )
         return writer
 
@@ -420,6 +470,17 @@ def write_struct(
                         break
             ftype = args[0]
 
+        # Automatic alignment padding before field
+        if align_setting is not None or auto_align:
+            field_align = _get_field_alignment(ftype, val)
+            req_align = min(field_align, align_setting) if align_setting else field_align
+            if req_align > 1:
+                cur_pos = writer.tell()
+                rem = cur_pos % req_align
+                if rem != 0:
+                    pad_len = req_align - rem
+                    writer.pad(pad_len, name="padding", desc="Alignment padding")
+
         # Check Offset[T]
         is_offset = (
             (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset)
@@ -439,19 +500,54 @@ def write_struct(
             offset_placeholder_idx = len(writer._entries) if hasattr(writer, "_entries") else -1
             placeholder_pos = writer.tell()
             if target is None:
-                writer._pack_write("I", 0, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
+                writer._pack_write("I", 0, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
             elif isinstance(target, int):
-                writer._pack_write("I", target, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
+                writer._pack_write("I", target, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
                 if offset_placeholder_idx >= 0 and offset_placeholder_idx < len(writer._entries):
                     writer._entries[offset_placeholder_idx].type_name = type_label
                     writer._entries[offset_placeholder_idx].target_offset = target
             elif hasattr(target, "__binary__"):
-                writer._pack_write("I", 0, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
+                writer._pack_write("I", 0, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
                 if offset_placeholder_idx >= 0 and offset_placeholder_idx < len(writer._entries):
                     writer._entries[offset_placeholder_idx].type_name = type_label
                 deferred_offsets.append((offset_placeholder_idx, placeholder_pos, target, active_endian))
             else:
                 raise TypeError(f"Offset field {name} expected binary_struct or int, got {type(target).__name__}")
+            continue
+
+        # Check OffsetTable[Count, OffsetType]
+        is_offset_table = (
+            (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] is OffsetTable)
+            or (get_origin(ftype) is OffsetTable)
+        )
+        if is_offset_table:
+            if isinstance(ftype, tuple):
+                count = ftype[1]
+                offset_t = ftype[2] if len(ftype) >= 3 else UInt32
+            else:
+                args = get_args(ftype)
+                count = args[0]
+                offset_t = args[1] if len(args) > 1 else UInt32
+
+            offset_size = offset_t._size if hasattr(offset_t, "_size") else 4
+            table_handle = writer.write_offset_table(
+                count=count,
+                offset_size=offset_size,
+                endian=active_endian,
+                name=name,
+                desc=f_desc,
+            )
+            if isinstance(val, (list, tuple)):
+                for i, target_item in enumerate(val):
+                    if i < count:
+                        if hasattr(target_item, "__binary__"):
+                            deferred_offsets.append(("table_entry", table_handle, i, target_item, active_endian))
+                        elif isinstance(target_item, int):
+                            table_handle.set_offset(i, target_item)
+            try:
+                setattr(instance, name, table_handle)
+            except Exception:
+                pass
             continue
 
         # Check FixedArray[T, N]
@@ -478,6 +574,7 @@ def write_struct(
                     endian=active_endian.name.capitalize(),
                     description=f_desc,
                     struct_name=current_struct_name,
+                    struct_doc=struct_doc,
                 )
             continue
 
@@ -501,6 +598,7 @@ def write_struct(
                     endian=active_endian.name.capitalize(),
                     description=f_desc,
                     struct_name=current_struct_name,
+                    struct_doc=struct_doc,
                 )
             continue
 
@@ -520,14 +618,14 @@ def write_struct(
         if isinstance(ftype, type) and issubclass(ftype, BinaryType):
             fmt = ftype._fmt
             if fmt:
-                writer._pack_write(fmt, val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
+                writer._pack_write(fmt, val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
             continue
 
         # Standard Python types fallback
         if ftype is int or (isinstance(val, int) and not isinstance(val, bool)):
-            writer._pack_write("I", val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
+            writer._pack_write("I", val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
         elif ftype is float or isinstance(val, float):
-            writer._pack_write("f", val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
+            writer._pack_write("f", val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
         elif ftype is bool or isinstance(val, bool):
             writer.write_bool(val, name=name, desc=f_desc)
         elif ftype is bytes or isinstance(val, (bytes, bytearray)):
@@ -537,18 +635,39 @@ def write_struct(
         else:
             raise TypeError(f"Unsupported field type for {name}: {ftype}")
 
+    # Struct size alignment padding
+    if align_setting is not None or auto_align:
+        field_aligns = [_get_field_alignment(ft, getattr(instance, fn, None)) for fn, ft in fields.items()]
+        max_field_align = max(field_aligns, default=1)
+        struct_boundary = align_setting if align_setting else max_field_align
+        if struct_boundary > 1:
+            cur_pos = writer.tell()
+            rem = cur_pos % struct_boundary
+            if rem != 0:
+                pad_len = struct_boundary - rem
+                writer.pad(pad_len, name="alignment_pad", desc="Struct size alignment")
+
     # Process deferred offset target objects
-    for offset_placeholder_idx, placeholder_pos, target_obj, off_endian in deferred_offsets:
-        target_pos = writer.tell()
-        write_struct(target_obj, writer=writer, endian=off_endian)
-        return_pos = writer.tell()
-        writer.seek(placeholder_pos)
-        order = normalize_endian(off_endian)
-        writer._stream.write(struct.pack(f"{order.value}I", target_pos))
-        writer.seek(return_pos)
-        if hasattr(writer, "_entries") and 0 <= offset_placeholder_idx < len(writer._entries):
-            writer._entries[offset_placeholder_idx].value = target_pos
-            writer._entries[offset_placeholder_idx].target_offset = target_pos
+    for item in deferred_offsets:
+        if isinstance(item, tuple) and len(item) == 5 and item[0] == "table_entry":
+            _, table_handle, idx, target_obj, off_endian = item
+            target_pos = writer.tell()
+            write_struct(target_obj, writer=writer, endian=off_endian)
+            table_handle.set_offset(idx, target_pos)
+        else:
+            offset_placeholder_idx, placeholder_pos, target_obj, off_endian = item
+            target_pos = writer.tell()
+            write_struct(target_obj, writer=writer, endian=off_endian)
+            return_pos = writer.tell()
+            writer.seek(placeholder_pos)
+            order = normalize_endian(off_endian)
+            writer._stream.write(struct.pack(f"{order.value}I", target_pos))
+            writer.seek(return_pos)
+            if hasattr(writer, "_entries") and 0 <= offset_placeholder_idx < len(writer._entries):
+                writer._entries[offset_placeholder_idx].value = target_pos
+                writer._entries[offset_placeholder_idx].target_offset = target_pos
+
+    return writer
 
     return writer
 

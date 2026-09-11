@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-28%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-45%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成＆仕様書自動生成ライブラリです。
 
@@ -15,23 +15,27 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
 
 - 🚀 **宣言的バイナリ構造体 (`@binary_struct`)**  
   - Python の型ヒントとデータクラス記法を用いて、バイナリヘッダーやパケットフォーマットを直感的に定義可能。
+  - **Docstring の仕様書自動反映**: クラスの docstring（`"""..."""`）が仕様書の概要やビットフィールド詳細にそのまま自動反映。
   - **コメントの自動抽出**: コード上のインラインコメント（`# ...`）や `Annotated[Type, "説明"]` を自動抽出し、仕様書の `Description` 列に反映。
+  - **自動アライメント & パディング (`auto_align=True`, `align=N`)**: C言語の構造体アライメント規則に基づき、メンバ境界や構造体サイズのアライメントパディングを自動挿入。
 - 🧩 **高度な型サポート**  
   - 符号付き / 符号なし整数（8, 16, 32, 64-bit）
   - 浮動小数点数（Float32, Float64）
   - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング
   - **オフセット自動計算 (`Offset[T]`)**: ヘッダーのオフセット値の自動バックパッチと参照先構造体の追跡
+  - **オフセットテーブル (`OffsetTable[Count, Type]`)**: 複数エントリのオフセット配列の予約・自動バックパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
   - 構造体のネスト
 - ✍️ **柔軟な手続き的ライター (`BinaryWriter` / `Writer`)**  
   - インメモリ（`BytesIO`）またはファイル/ストリームへの直接出力
   - メソッドチェーン対応
-  - **セクションタイトルの付与 (`writer.caption(str)`)**: 後続のバイナリをグループ化し、マニュアルにセクション見出しやMermaidサブグラフを自動反映
+  - **セクションタイトルの付与 (`writer.caption(title, desc)`)**: 後続のバイナリをグループ化し、マニュアルにセクション見出しや説明文、Mermaidサブグラフを自動反映
+  - **オフセットテーブルの生成 (`writer.write_offset_table`)**: テーブル枠を予約し、返り値のハンドルから自在にオフセットや対象データをバックパッチ
   - 各種文字列形式（C言語スタイルの Null 終端、Pascal スタイルの長さプレフィックス、固定長パディング）
   - バイト境界アライメント（`align`）およびパディング（`pad`）
   - 厳格な境界チェック（オーバーフロー/アンダーフローの即時エラー検知）
 - 📊 **仕様書 & Mermaid 図の自動生成 (`write_manual`)**  
-  - シリアライズされた全フィールドのオフセット（16進/10進）、サイズ、値、エンディアンを記録した Markdown ドキュメントを出力
+  - シリアライズされた全フィールドのオフセット（16進/10進）、サイズ、エンディアン、参照先ターゲット（`-> 0xXXXX`）を記録した Markdown ドキュメントを出力
   - **Mermaid Flowchart**: 構造体ごとのサブグラフとオフセット参照関係の矢印表示
   - **Mermaid packet-beta**: ネットワークパケット形式のビット/バイト配置図およびビットフィールド詳細図の生成
 
@@ -252,6 +256,83 @@ header = FileHeader(
 - `FixedArray[Type, Size]`: 固定長配列（サイズ不足時は自動パディング、サイズ超過時はエラー検知）。
 - `Array[Type]`: 可変長配列。
 
+#### 自動アライメント & パディング (`auto_align`, `align`)
+C言語の構造体のように、各メンバ型のサイズに合わせた自然境界アライメント（または指定バイト境界アライメント）に自動でパディングを挟むことができます。
+
+- デフォルト (`auto_align=False`, `align=None`): `#pragma pack(1)` 相当で、パディングなしで詰めて配置されます。
+- `auto_align=True`: 各フィールドの自然境界（UInt16=2B, UInt32=4B, UInt64=8Bなど）に合わせて手前にパディング（`padding`）を自動挿入し、末尾も最大メンバサイズ境界に合わせてパディングします。
+- `align=N`: フィールド境界および構造体末尾を N バイト境界（例: 4 や 8）にアライメントします。
+
+```python
+@binary_struct(auto_align=True)
+class AlignedHeader:
+    flag: UInt8        # 1バイト
+    # -> ここに3バイトの自動パディングが挿入される
+    data_length: UInt32 # 4バイト（0x0004から開始）
+```
+
+#### オフセットテーブル (`OffsetTable`) & `write_offset_table`
+複数のブロックやセクションへのオフセットをテーブル（配列）形式で保持し、後からそのオフセットを書き込む（またはターゲットオブジェクトを直接シリアライズする）ことができます。
+
+**1. `@binary_struct` での利用 (`OffsetTable[Count, Type]`)**
+```python
+from binary_master import OffsetTable, binary_struct, UInt32, UInt16
+
+@binary_struct
+class ChunkHeader:
+    chunk_id: UInt32
+
+@binary_struct
+class Container:
+    magic: UInt32
+    # 2エントリのUInt32オフセットテーブル
+    chunk_offsets: OffsetTable[2, UInt32]
+
+c1 = ChunkHeader(chunk_id=10)
+c2 = ChunkHeader(chunk_id=20)
+# 対象構造体を渡すと、自動的にオフセットが計算されてテーブルに書き込まれます
+container = Container(magic=0x12345678, chunk_offsets=[c1, c2])
+```
+
+**2. `BinaryWriter` 手続き的利用 (`write_offset_table`)**
+オフセットサイズ（1, 2, 4, 8バイト）とテーブル数を指定して領域を予約し、返り値の `OffsetTableHandle` を使ってオフセット値をセットできます。
+
+```python
+writer = BinaryWriter()
+
+# 3エントリ・各4バイト(32bit)のオフセットテーブル枠を予約
+table = writer.write_offset_table(count=3, offset_size=4, name="section_offsets")
+
+# 方法A: 戻り値の write_offset() で現在位置をセット
+table.write_offset(0)
+writer.write_cstring("Section 0 Data")
+
+# 方法B: 戻り値の set_offset(index, offset) で明示的にセット
+pos1 = writer.tell()
+table.set_offset(1, pos1)
+writer.write_cstring("Section 1 Data")
+
+# 方法C: インデックス代入 table[index] = offset
+table[2] = writer.tell()
+writer.write_cstring("Section 2 Data")
+
+# 方法D: write_target(index, object) で現在オフセット記録＋対象の書き込みを一括実行
+# table.write_target(0, my_struct)
+```
+※ マニュアル出力時、オフセットテーブルの各スロットには参照先オフセットを示す `-> 0xXXXX` マーカーや Mermaid の矢印（`-.->|offset: 0xXXXX|`）が自動的に付与されます。
+
+#### Docstring の仕様書反映
+構造体やビットフィールドに記述した Python 標準の docstring（`"""..."""`）は、自動的に仕様書（マニュアル）の見出し下や概要欄にドキュメントとして反映されます。
+
+```python
+@binary_struct
+class NetworkPacket:
+    """イーサネットフレームおよびペイロードをカプセル化するパケット仕様。"""
+    magic: UInt32  # プロトコル識別子 (0x4E504B54)
+    length: UInt16 # ペイロード長
+```
+マニュアル出力時、`## Overview` に上記クラスの docstring がそのまま出力され、フィールドのインラインコメントは `Description` 列に出力されます。
+
 ### 3. 仕様書（マニュアル）生成オプション
 
 `write_manual` では、出力形式やダイアグラムの表示スタイルを柔軟にカスタマイズできます。
@@ -295,6 +376,7 @@ write_manual(
 | `Float64` | 8 バイト | IEEE 754 倍精度浮動小数点数 |
 | `Bits[N]` | N ビット | ビットフィールドのフィールド幅 |
 | `Offset[T]` | 4 バイト | 構造体 `T` へのバイトオフセット（自動解決） |
+| `OffsetTable[Count, Type]` | `sizeof(Type) * Count` | オフセットテーブル配列（自動解決） |
 | `FixedArray[T, N]` | `sizeof(T) * N` | 固定長要素配列 |
 | `Array[T]` | 可変 | 可変長要素配列 |
 
@@ -303,9 +385,10 @@ write_manual(
 - **浮動小数点数**: `write_float32`, `write_float64`
 - **論理値 / バイト**: `write_bool`, `write_bytes`
 - **文字列**: `write_cstring`, `write_prefixed_string`, `write_fixed_string`, `write_string`
+- **オフセットテーブル**: `write_offset_table(count, offset_size=4, ...)`（戻り値 `OffsetTableHandle` で `set_offset`, `write_offset`, `write_target` 等が可能）
 - **構造体**: `write_struct(instance, endian=None)`
 - **位置制御**: `tell()`, `seek(offset, whence)`
-- **セクションタイトル**: `caption(title=None)`（マニュアル・図のグループ化見出しを設定）
+- **セクションタイトル**: `caption(title=None, desc="")`（マニュアル・図のグループ化見出しや説明を設定）
 - **パディング & アライメント**: `pad(count, pad_byte)`, `align(boundary, pad_byte)`
 - **仕様書生成**: `write_manual(path_or_file, title=..., diagram_type=...)`
 - **データ取り出し**: `to_bytes()`, `to_bytearray()`

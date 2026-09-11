@@ -63,6 +63,7 @@ class BinaryWriter:
         self._default_endian = normalize_endian(default_endian)
         self._entries: list[Any] = []
         self._current_caption: Optional[str] = None
+        self._current_caption_desc: str = ""
         if stream is None:
             self._stream = io.BytesIO()
             self._close_stream = auto_close if auto_close is not None else False
@@ -72,7 +73,7 @@ class BinaryWriter:
             self._close_stream = auto_close if auto_close is not None else False
             self._is_memory = isinstance(stream, io.BytesIO)
 
-    def caption(self, title: Optional[str] = None) -> BinaryWriter:
+    def caption(self, title: Optional[str] = None, desc: str = "") -> BinaryWriter:
         """Set the active section caption/title for subsequent binary writes.
 
         Fields and structures written after this call will be grouped under
@@ -80,17 +81,24 @@ class BinaryWriter:
 
         Args:
             title: The caption or title string. Pass None or an empty string to clear.
+            desc: Optional description for this section/caption.
 
         Returns:
             self for method chaining.
         """
         self._current_caption = title if title else None
+        self._current_caption_desc = desc
         return self
 
     @property
     def current_caption(self) -> Optional[str]:
         """Get the currently active section caption."""
         return self._current_caption
+
+    @property
+    def current_caption_desc(self) -> str:
+        """Get the description of the currently active section caption."""
+        return self._current_caption_desc
 
     @classmethod
     def to_memory(cls, default_endian: EndianType = Endian.LITTLE) -> BinaryWriter:
@@ -184,10 +192,13 @@ class BinaryWriter:
         target_offset: Optional[int] = None,
         subfields: Optional[list] = None,
         caption: Optional[str] = None,
+        struct_doc: Optional[str] = None,
+        caption_desc: Optional[str] = None,
     ) -> None:
         from binary_master.manual import LayoutEntry
 
         active_caption = caption if caption is not None else self._current_caption
+        active_caption_desc = caption_desc if caption_desc is not None else self._current_caption_desc
         self._entries.append(
             LayoutEntry(
                 offset=offset,
@@ -201,6 +212,8 @@ class BinaryWriter:
                 target_offset=target_offset,
                 subfields=subfields,
                 caption=active_caption,
+                struct_doc=struct_doc,
+                caption_desc=active_caption_desc,
             )
         )
 
@@ -214,6 +227,7 @@ class BinaryWriter:
         name: str = "",
         desc: str = "",
         struct_name: Optional[str] = None,
+        struct_doc: Optional[str] = None,
     ) -> BinaryWriter:
         order = normalize_endian(endian, self._default_endian)
         data = struct.pack(f"{order.value}{fmt_char}", value)
@@ -228,6 +242,7 @@ class BinaryWriter:
             endian=order.name.capitalize(),
             description=desc,
             struct_name=struct_name,
+            struct_doc=struct_doc,
         )
         return self
 
@@ -526,6 +541,64 @@ class BinaryWriter:
             self.pad(padding_needed, pad_byte=pad_byte, name=name, desc=desc or f"Align to {boundary}B boundary")
         return self
 
+    def write_offset_table(
+        self,
+        count: int,
+        offset_size: int = 4,
+        endian: EndianType = None,
+        name: str = "offsets",
+        desc: str = "Offset Table",
+    ) -> OffsetTableHandle:
+        """Reserve an offset table for `count` entries of `offset_size` bytes each.
+
+        Returns an OffsetTableHandle whose methods (write_offset, set_offset, write_target)
+        can be used to fill in target offsets later.
+
+        Args:
+            count: Number of offset entries in the table.
+            offset_size: Byte size of each offset (1, 2, 4, or 8 bytes, default: 4).
+            endian: Endianness for offset values (default: writer's default endian).
+            name: Base name for the table entries (e.g. 'file_offsets').
+            desc: Description of the offset table.
+
+        Returns:
+            OffsetTableHandle for recording/writing target offsets.
+        """
+        if count < 0:
+            raise ValueError(f"count must be non-negative, got {count}")
+        if offset_size not in (1, 2, 4, 8):
+            raise ValueError(f"offset_size must be 1, 2, 4, or 8, got {offset_size}")
+
+        order = normalize_endian(endian, self._default_endian)
+        start_pos = self.tell()
+        fmt_map = {1: "UInt8", 2: "UInt16", 4: "UInt32", 8: "UInt64"}
+        type_name = f"Offset[{fmt_map.get(offset_size, f'UInt{offset_size*8}')}]"
+
+        entry_indices: list[int] = []
+        for i in range(count):
+            slot_pos = self.tell()
+            self._stream.write(b"\x00" * offset_size)
+            idx = len(self._entries)
+            self._record_entry(
+                offset=slot_pos,
+                size=offset_size,
+                type_name=type_name,
+                value=0,
+                name=f"{name}[{i}]",
+                endian=order.name.capitalize(),
+                description=f"{desc} [#{i}]" if desc else f"Offset entry {i}",
+            )
+            entry_indices.append(idx)
+
+        return OffsetTableHandle(
+            writer=self,
+            start_offset=start_pos,
+            count=count,
+            offset_size=offset_size,
+            endian=order,
+            entry_indices=entry_indices,
+            name=name,
+        )
 
     def write_struct(self, instance: object, endian: EndianType = None) -> BinaryWriter:
         """Write a @binary_struct instance to this writer's stream.
@@ -594,4 +667,103 @@ class BinaryWriter:
         return content
 
 
+class OffsetTableHandle:
+    """Handle returned by BinaryWriter.write_offset_table.
+
+    Allows setting or writing target offsets into the reserved offset table slots.
+    """
+
+    def __init__(
+        self,
+        writer: BinaryWriter,
+        start_offset: int,
+        count: int,
+        offset_size: int,
+        endian: Endian,
+        entry_indices: list[int],
+        name: str = "offsets",
+    ):
+        self._writer = writer
+        self._start_offset = start_offset
+        self._count = count
+        self._offset_size = offset_size
+        self._endian = endian
+        self._entry_indices = entry_indices
+        self._name = name
+        self._offsets: list[Optional[int]] = [None] * count
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+    @property
+    def offset_size(self) -> int:
+        return self._offset_size
+
+    def __len__(self) -> int:
+        return self._count
+
+    def __getitem__(self, index: int) -> Optional[int]:
+        if index < 0 or index >= self._count:
+            raise IndexError(f"OffsetTable index {index} out of range (count={self._count})")
+        return self._offsets[index]
+
+    def __setitem__(self, index: int, target_offset: int) -> None:
+        self.set_offset(index, target_offset)
+
+    def set_offset(self, index: int, target_offset: Optional[int] = None) -> int:
+        """Set the target offset at slot `index`.
+
+        If target_offset is None, automatically sets it to the current stream position (writer.tell()).
+        Writes the value into the binary stream placeholder and updates the manual layout entry.
+        """
+        if index < 0 or index >= self._count:
+            raise IndexError(f"OffsetTable index {index} out of range (count={self._count})")
+
+        if target_offset is None:
+            target_offset = self._writer.tell()
+
+        self._offsets[index] = target_offset
+        slot_pos = self._start_offset + index * self._offset_size
+
+        fmt_map = {1: "B", 2: "H", 4: "I", 8: "Q"}
+        fmt_char = fmt_map.get(self._offset_size)
+        if not fmt_char:
+            raise ValueError(f"Unsupported offset_size: {self._offset_size}. Must be 1, 2, 4, or 8.")
+
+        packed = struct.pack(f"{self._endian.value}{fmt_char}", target_offset)
+        cur_pos = self._writer.tell()
+        self._writer.seek(slot_pos)
+        self._writer._stream.write(packed)
+        self._writer.seek(cur_pos)
+
+        if hasattr(self._writer, "_entries") and index < len(self._entry_indices):
+            entry_idx = self._entry_indices[index]
+            if 0 <= entry_idx < len(self._writer._entries):
+                entry = self._writer._entries[entry_idx]
+                entry.value = target_offset
+                entry.target_offset = target_offset
+
+        return target_offset
+
+    def write_offset(self, index: int, target_offset: Optional[int] = None) -> int:
+        """Write the offset into slot `index` (synonym for set_offset)."""
+        return self.set_offset(index, target_offset)
+
+    def write_target(self, index: int, target: Any) -> Any:
+        """Record current offset into slot `index`, then serialize and write `target`."""
+        pos = self._writer.tell()
+        self.set_offset(index, pos)
+        if hasattr(target, "__binary__"):
+            self._writer.write_struct(target)
+        elif isinstance(target, (bytes, bytearray)):
+            self._writer.write_bytes(target)
+        elif callable(target):
+            target(self._writer)
+        else:
+            raise TypeError(f"Cannot write target of type {type(target).__name__}")
+        return pos
+
+
 Writer = BinaryWriter
+

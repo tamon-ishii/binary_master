@@ -1,0 +1,280 @@
+"""Unit tests for struct docstring in manual, auto padding/align, and offset tables."""
+
+import pytest
+import struct
+
+from binary_master import (
+    BinaryWriter,
+    Endian,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    Bits,
+    Offset,
+    OffsetTable,
+    OffsetTableHandle,
+    binary_struct,
+    write_struct,
+)
+
+
+# ==========================================================
+# 1. Docstring Reflection Tests
+# ==========================================================
+
+@binary_struct(bits=16)
+class BitfieldHeader:
+    """Header control flags and mode bitfield."""
+    enable: Bits[1]
+    mode: Bits[3]
+    reserved: Bits[12]
+
+
+@binary_struct(endian="big")
+class DocumentedPacket:
+    """Documented network packet protocol definition."""
+    magic: UInt32
+    flags: BitfieldHeader
+    length: UInt16
+
+
+def test_struct_docstring_in_manual():
+    """Verify that docstrings on structs and bitfields appear in the manual."""
+    pkt = DocumentedPacket(
+        magic=0x12345678,
+        flags=BitfieldHeader(enable=1, mode=2, reserved=0),
+        length=100,
+    )
+    writer = BinaryWriter()
+    writer.write_struct(pkt)
+    md = writer.write_manual(title="Documented Protocol Manual")
+
+    # Struct docstring should be in ## Overview
+    assert "## Overview" in md
+    assert "Documented network packet protocol definition." in md
+
+    # Bitfield docstring should be in ## Bitfield Details
+    assert "## Bitfield Details" in md
+    assert "Header control flags and mode bitfield." in md
+
+
+def test_caption_description_in_manual():
+    """Verify that caption description appears in the manual section."""
+    writer = BinaryWriter()
+    writer.caption("Header Section", "This section contains protocol metadata.")
+    writer.write_uint32(0xCAFEBABE, name="magic")
+    writer.caption("Body Section", "Payload contents follow.")
+    writer.write_uint16(42, name="data")
+
+    md = writer.write_manual()
+    assert "### Header Section" in md
+    assert "This section contains protocol metadata." in md
+    assert "### Body Section" in md
+    assert "Payload contents follow." in md
+
+
+# ==========================================================
+# 2. Auto-Padding & Alignment Tests
+# ==========================================================
+
+@binary_struct(endian="little")
+class PackedStruct:
+    a: UInt8
+    b: UInt32
+
+
+@binary_struct(endian="little", auto_align=True)
+class AutoAlignedStruct:
+    a: UInt8
+    b: UInt32
+
+
+@binary_struct(endian="little", auto_align=True)
+class AutoAlignedWithTrailingPadding:
+    a: UInt32
+    b: UInt8  # Needs 3 bytes of trailing padding to align struct size to 4 bytes
+
+
+@binary_struct(endian="little", align=8)
+class ExplicitAlign8Struct:
+    a: UInt8
+    b: UInt16
+
+
+def test_packed_struct_has_no_padding():
+    """Default @binary_struct is packed without padding (pack 1)."""
+    s = PackedStruct(a=0xAA, b=0x12345678)
+    data = s.to_bytes()
+    # 1 byte + 4 bytes = 5 bytes
+    assert len(data) == 5
+    assert data == b"\xaa\x78\x56\x34\x12"
+
+
+def test_auto_aligned_struct_inserts_member_padding():
+    """auto_align=True inserts padding before members that require alignment."""
+    s = AutoAlignedStruct(a=0xAA, b=0x12345678)
+    writer = BinaryWriter()
+    writer.write_struct(s)
+    data = writer.to_bytes()
+
+    # 1 byte a + 3 bytes padding + 4 bytes b = 8 bytes
+    assert len(data) == 8
+    assert data == b"\xaa\x00\x00\x00\x78\x56\x34\x12"
+
+    entries = writer.entries
+    names = [e.name for e in entries]
+    assert "padding" in names
+    pad_entry = [e for e in entries if e.name == "padding"][0]
+    assert pad_entry.offset == 1
+    assert pad_entry.size == 3
+
+
+def test_auto_aligned_struct_trailing_padding():
+    """auto_align=True pads total struct size to multiple of max field alignment."""
+    s = AutoAlignedWithTrailingPadding(a=0x11223344, b=0x55)
+    data = s.to_bytes()
+    # 4 bytes a + 1 byte b + 3 bytes alignment_pad = 8 bytes
+    assert len(data) == 8
+    assert data == b"\x44\x33\x22\x11\x55\x00\x00\x00"
+
+
+def test_explicit_align_struct():
+    """align=8 aligns fields and rounds up struct size to 8 bytes."""
+    s = ExplicitAlign8Struct(a=0x01, b=0x0203)
+    data = s.to_bytes()
+    # 1 byte a + 1 byte padding (for uint16) + 2 bytes b + 4 bytes trailing = 8 bytes
+    assert len(data) == 8
+    assert data == b"\x01\x00\x03\x02\x00\x00\x00\x00"
+
+
+# ==========================================================
+# 3. Offset Table Tests
+# ==========================================================
+
+def test_offset_table_writer_basic():
+    """Test writer.write_offset_table creating slots and updating them."""
+    writer = BinaryWriter(default_endian=Endian.LITTLE)
+    # Write an offset table with 3 entries of 4 bytes each
+    table = writer.write_offset_table(count=3, offset_size=4, name="section_offsets", desc="Table of sections")
+    assert isinstance(table, OffsetTableHandle)
+    assert len(table) == 3
+    assert table.count == 3
+    assert table.offset_size == 4
+
+    # Current offset should be 12 (3 * 4 bytes reserved)
+    assert writer.tell() == 12
+
+    # Write target 0
+    pos0 = writer.tell()
+    table.write_offset(0)
+    writer.write_cstring("Section A")
+
+    # Write target 1
+    pos1 = writer.tell()
+    table[1] = pos1
+    writer.write_cstring("Section B")
+
+    # Write target 2
+    pos2 = writer.tell()
+    table.set_offset(2, pos2)
+    writer.write_cstring("Section C")
+
+    data = writer.to_bytes()
+    assert len(data) >= 12
+
+    # Verify the table in the binary contains the exact offsets
+    off0, off1, off2 = struct.unpack("<III", data[:12])
+    assert off0 == pos0
+    assert off1 == pos1
+    assert off2 == pos2
+    assert off0 == 12
+
+
+def test_offset_table_write_target():
+    """Test write_target helper method on OffsetTableHandle."""
+    writer = BinaryWriter(default_endian=Endian.LITTLE)
+    table = writer.write_offset_table(count=2, offset_size=4, name="items")
+
+    @binary_struct(endian="little")
+    class Item:
+        val: UInt16
+
+    table.write_target(0, Item(val=0x1111))
+    table.write_target(1, Item(val=0x2222))
+
+    data = writer.to_bytes()
+    # table: 8 bytes (2 * 4). item0: 2 bytes at offset 8. item1: 2 bytes at offset 10.
+    assert len(data) == 12
+    off0, off1 = struct.unpack("<II", data[:8])
+    assert off0 == 8
+    assert off1 == 10
+    v0, v1 = struct.unpack("<HH", data[8:])
+    assert v0 == 0x1111
+    assert v1 == 0x2222
+
+
+def test_offset_table_manual_reflection():
+    """Verify offset table and target pointers are reflected in Markdown manual."""
+    writer = BinaryWriter(default_endian=Endian.LITTLE)
+    table = writer.write_offset_table(count=2, offset_size=4, name="offsets", desc="Table of file offsets")
+
+    pos0 = writer.tell()
+    table.set_offset(0, pos0)
+    writer.write_uint32(0xDEADBEEF, name="block_a", desc="Data block A")
+
+    pos1 = writer.tell()
+    table.set_offset(1, pos1)
+    writer.write_uint32(0xFEEDFACE, name="block_b", desc="Data block B")
+
+    md = writer.write_manual(title="Offset Table Specification")
+
+    # Layout Table should contain target markers
+    assert f"`-> 0x{pos0:04X}`" in md
+    assert f"`-> 0x{pos1:04X}`" in md
+
+    # Mermaid diagram should contain arrow links for the offsets
+    assert f'-.->|"offset: 0x{pos0:04X}"|' in md
+    assert f'-.->|"offset: 0x{pos1:04X}"|' in md
+
+
+@binary_struct(endian="little")
+class DataChunk:
+    code: UInt32
+
+
+@binary_struct(endian="little")
+class ContainerWithOffsetTable:
+    magic: UInt32
+    num_chunks: UInt16
+    chunk_offsets: OffsetTable[2, UInt32]
+
+
+def test_offset_table_in_binary_struct():
+    """Test using OffsetTable inside @binary_struct."""
+    c1 = DataChunk(code=0x11111111)
+    c2 = DataChunk(code=0x22222222)
+    container = ContainerWithOffsetTable(
+        magic=0x544F4254,
+        num_chunks=2,
+        chunk_offsets=[c1, c2],
+    )
+    writer = BinaryWriter()
+    writer.write_struct(container)
+    data = writer.to_bytes()
+
+    # Container: magic(4) + num_chunks(2) + chunk_offsets(2*4=8) = 14 bytes
+    # c1 starts at 14 (4 bytes), c2 starts at 18 (4 bytes)
+    # Total = 22 bytes
+    assert len(data) == 22
+    magic, num_chunks = struct.unpack("<IH", data[:6])
+    assert magic == 0x544F4254
+    assert num_chunks == 2
+    off0, off1 = struct.unpack("<II", data[6:14])
+    assert off0 == 14
+    assert off1 == 18
+
+    # Check that manual reflects offsets
+    md = writer.write_manual()
+    assert f"`-> 0x{off0:04X}`" in md
+    assert f"`-> 0x{off1:04X}`" in md
