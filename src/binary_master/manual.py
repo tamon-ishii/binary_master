@@ -124,6 +124,8 @@ def generate_mermaid_diagram(
 def generate_bitfield_packet_diagram(
     entry: LayoutEntry,
     bits_per_row: Optional[int] = None,
+    bit_width: Optional[int] = None,
+    include_values: bool = False,
 ) -> str:
     """Generate a Mermaid packet-beta diagram for a bitfield entry."""
     subfields = entry.subfields or []
@@ -139,12 +141,23 @@ def generate_bitfield_packet_diagram(
         else:
             bits_per_row = 32
 
+    # Scale bitWidth so narrower rows (8 or 16 bits) expand to a wide, readable layout (~800px)
+    if bit_width is None:
+        if bits_per_row <= 8:
+            bit_width = 96
+        elif bits_per_row <= 16:
+            bit_width = 50
+
     lines = ["```mermaid"]
-    if bits_per_row != 32:
+    has_config = (bits_per_row != 32) or (bit_width is not None)
+    if has_config:
         lines.append("---")
         lines.append("config:")
         lines.append("  packet:")
-        lines.append(f"    bitsPerRow: {bits_per_row}")
+        if bits_per_row != 32:
+            lines.append(f"    bitsPerRow: {bits_per_row}")
+        if bit_width is not None:
+            lines.append(f"    bitWidth: {bit_width}")
         lines.append("---")
     lines.append("packet-beta")
     bf_name = entry.name or entry.type_name
@@ -168,7 +181,7 @@ def generate_bitfield_packet_diagram(
         s_end = b_end - 1
         s_name = sub.get("name", "field")
         s_val = sub.get("value")
-        val_str = f" ({s_val})" if s_val is not None else ""
+        val_str = f" ({s_val})" if (include_values and s_val is not None) else ""
         label = f"{s_name}{val_str}".replace('"', '\\"')
         if s_start == s_end:
             lines.append(f'{s_start}: "{label}"')
@@ -191,27 +204,41 @@ def generate_bitfield_packet_diagram(
 def generate_packet_diagram(
     entries: List[LayoutEntry],
     title: str = "",
-    expand_bitfields: bool = True,
+    expand_bitfields: bool = False,
     bits_per_row: int = 32,
+    font_size: Optional[str] = None,
+    bit_width: Optional[int] = None,
+    relative_offset: bool = False,
+    include_values: bool = False,
 ) -> str:
     """Generate a Mermaid packet-beta diagram for the overall binary layout."""
     if not entries:
         return ""
 
     lines = ["```mermaid"]
-    if bits_per_row != 32:
+    has_packet_config = (bits_per_row != 32) or (bit_width is not None)
+    has_config = has_packet_config or (font_size is not None)
+    if has_config:
         lines.append("---")
         lines.append("config:")
-        lines.append("  packet:")
-        lines.append(f"    bitsPerRow: {bits_per_row}")
+        if has_packet_config:
+            lines.append("  packet:")
+            if bits_per_row != 32:
+                lines.append(f"    bitsPerRow: {bits_per_row}")
+            if bit_width is not None:
+                lines.append(f"    bitWidth: {bit_width}")
+        if font_size:
+            lines.append("  themeVariables:")
+            lines.append(f"    fontSize: {font_size}")
         lines.append("---")
     lines.append("packet-beta")
     if title:
         lines.append(f"title {title}")
 
+    base_offset = entries[0].offset if (relative_offset and entries) else 0
     current_bit = 0
     for e in entries:
-        entry_start_bit = e.offset * 8
+        entry_start_bit = (e.offset - base_offset) * 8
         entry_end_bit = entry_start_bit + (e.size * 8)
 
         if entry_start_bit > current_bit:
@@ -241,7 +268,7 @@ def generate_packet_diagram(
                 s_end = b_end - 1
                 s_name = sub.get("name", "field")
                 s_val = sub.get("value")
-                val_str = f" ({s_val})" if s_val is not None else ""
+                val_str = f" ({s_val})" if (include_values and s_val is not None) else ""
                 label = f"{s_name}{val_str}".replace('"', '\\"')
                 if s_start == s_end:
                     lines.append(f'{s_start}: "{label}"')
@@ -280,6 +307,11 @@ def generate_manual(
     diagram_type: str = "flowchart",
     bits_per_row: int = 32,
     include_bitfield_diagram: bool = True,
+    expand_bitfields: bool = False,
+    font_size: Optional[str] = None,
+    bit_width: Optional[int] = None,
+    section_packet_diagrams: bool = False,
+    include_values: bool = False,
 ) -> str:
     """Generate a comprehensive Markdown manual with Mermaid diagram and tables."""
     total_bytes = 0
@@ -303,14 +335,34 @@ def generate_manual(
             sections.append("")
         elif diagram_type == "packet":
             sections.append("## Structure Diagram (Packet)\n")
-            sections.append(generate_packet_diagram(entries, title=f"{title} Layout", bits_per_row=bits_per_row))
+            sections.append(
+                generate_packet_diagram(
+                    entries,
+                    title=f"{title} Layout",
+                    bits_per_row=bits_per_row,
+                    expand_bitfields=expand_bitfields,
+                    font_size=font_size,
+                    bit_width=bit_width,
+                    include_values=include_values,
+                )
+            )
             sections.append("")
         elif diagram_type == "both":
             sections.append("## Structure Diagram (Flowchart)\n")
             sections.append(generate_mermaid_diagram(entries, direction=diagram_direction))
             sections.append("")
             sections.append("## Structure Diagram (Packet)\n")
-            sections.append(generate_packet_diagram(entries, title=f"{title} Layout", bits_per_row=bits_per_row))
+            sections.append(
+                generate_packet_diagram(
+                    entries,
+                    title=f"{title} Layout",
+                    bits_per_row=bits_per_row,
+                    expand_bitfields=expand_bitfields,
+                    font_size=font_size,
+                    bit_width=bit_width,
+                    include_values=include_values,
+                )
+            )
             sections.append("")
 
     # 3. Layout Table
@@ -318,25 +370,54 @@ def generate_manual(
 
     has_captions = any(e.caption for e in entries)
 
-    if not has_captions:
-        sections.append(
-            "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
-        )
-        sections.append("|---|---|---|---|---|---|---|---|")
+    def _render_table_rows(entry_list: List[LayoutEntry]) -> None:
+        if include_values:
+            sections.append(
+                "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
+            )
+            sections.append("|---|---|---|---|---|---|---|---|")
+        else:
+            sections.append(
+                "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Description |"
+            )
+            sections.append("|---|---|---|---|---|---|---|")
 
-        for entry in entries:
+        for entry in entry_list:
             off_hex = f"`0x{entry.offset:04X}`"
             off_dec = str(entry.offset)
             size_str = str(entry.size)
             name_str = f"`{entry.name}`" if entry.name else "-"
             type_str = f"`{entry.type_name}`"
             endian_str = entry.endian or "-"
-            val_str = format_value_preview(entry.value)
             desc_str = entry.description or "-"
-            sections.append(
-                f"| {off_hex} | {off_dec} | {size_str} | {name_str} | {type_str} | {endian_str} | {val_str} | {desc_str} |"
-            )
+            if include_values:
+                val_str = format_value_preview(entry.value)
+                sections.append(
+                    f"| {off_hex} | {off_dec} | {size_str} | {name_str} | {type_str} | {endian_str} | {val_str} | {desc_str} |"
+                )
+            else:
+                sections.append(
+                    f"| {off_hex} | {off_dec} | {size_str} | {name_str} | {type_str} | {endian_str} | {desc_str} |"
+                )
         sections.append("")
+
+    if not has_captions:
+        if section_packet_diagrams and diagram_type not in ("packet", "both"):
+            diag = generate_packet_diagram(
+                entries,
+                title=f"{title} Layout",
+                bits_per_row=bits_per_row,
+                expand_bitfields=expand_bitfields,
+                font_size=font_size,
+                bit_width=bit_width,
+                relative_offset=True,
+                include_values=include_values,
+            )
+            if diag:
+                sections.append(diag)
+                sections.append("")
+
+        _render_table_rows(entries)
     else:
         # Group by consecutive caption
         caption_groups: List[tuple[Optional[str], List[LayoutEntry]]] = []
@@ -364,23 +445,22 @@ def generate_manual(
             else:
                 sections.append(f"### (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
 
-            sections.append(
-                "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
-            )
-            sections.append("|---|---|---|---|---|---|---|---|")
-            for entry in c_entries:
-                off_hex = f"`0x{entry.offset:04X}`"
-                off_dec = str(entry.offset)
-                size_str = str(entry.size)
-                name_str = f"`{entry.name}`" if entry.name else "-"
-                type_str = f"`{entry.type_name}`"
-                endian_str = entry.endian or "-"
-                val_str = format_value_preview(entry.value)
-                desc_str = entry.description or "-"
-                sections.append(
-                    f"| {off_hex} | {off_dec} | {size_str} | {name_str} | {type_str} | {endian_str} | {val_str} | {desc_str} |"
+            if section_packet_diagrams:
+                sec_diag = generate_packet_diagram(
+                    c_entries,
+                    title=f"{cap} Layout" if cap else "",
+                    bits_per_row=bits_per_row,
+                    expand_bitfields=expand_bitfields,
+                    font_size=font_size,
+                    bit_width=bit_width,
+                    relative_offset=True,
+                    include_values=include_values,
                 )
-            sections.append("")
+                if sec_diag:
+                    sections.append(sec_diag)
+                    sections.append("")
+
+            _render_table_rows(c_entries)
 
     # 4. Bitfield breakdowns if any
     bitfields = [e for e in entries if e.subfields]
@@ -392,23 +472,38 @@ def generate_manual(
                 f"### `{bf_name}` (Offset: `0x{bf.offset:04X}`, Size: {bf.size}B)\n"
             )
             if include_bitfield_diagram:
-                diag = generate_bitfield_packet_diagram(bf)
+                diag = generate_bitfield_packet_diagram(
+                    bf,
+                    include_values=include_values,
+                )
                 if diag:
                     sections.append(diag)
                     sections.append("")
-            sections.append(
-                "| Bit Range | Field Name | Width | Value | Description |"
-            )
-            sections.append("|---|---|---|---|---|")
+            if include_values:
+                sections.append(
+                    "| Bit Range | Field Name | Width | Value | Description |"
+                )
+                sections.append("|---|---|---|---|---|")
+            else:
+                sections.append(
+                    "| Bit Range | Field Name | Width | Description |"
+                )
+                sections.append("|---|---|---|---|")
+
             for sub in bf.subfields:
                 bit_range = f"`[{sub.get('bit_start', 0)}:{sub.get('bit_end', 0)}]`"
                 sub_name = f"`{sub.get('name', '-')}`"
                 width_str = f"{sub.get('width', 1)} bit(s)"
-                sub_val = format_value_preview(sub.get("value"))
-                sub_desc = sub.get("description", "-")
-                sections.append(
-                    f"| {bit_range} | {sub_name} | {width_str} | {sub_val} | {sub_desc} |"
-                )
+                sub_desc = sub.get("description") or "-"
+                if include_values:
+                    sub_val = format_value_preview(sub.get("value"))
+                    sections.append(
+                        f"| {bit_range} | {sub_name} | {width_str} | {sub_val} | {sub_desc} |"
+                    )
+                else:
+                    sections.append(
+                        f"| {bit_range} | {sub_name} | {width_str} | {sub_desc} |"
+                    )
             sections.append("")
 
     return "\n".join(sections)
@@ -422,6 +517,11 @@ def write_manual(
     diagram_type: str = "flowchart",
     bits_per_row: int = 32,
     include_bitfield_diagram: bool = True,
+    expand_bitfields: bool = False,
+    font_size: Optional[str] = None,
+    bit_width: Optional[int] = None,
+    section_packet_diagrams: bool = False,
+    include_values: bool = False,
 ) -> str:
     """Convenience helper to write a manual from a BinaryWriter or @binary_struct instance."""
     from binary_master.writer import BinaryWriter
@@ -434,6 +534,11 @@ def write_manual(
             diagram_type=diagram_type,
             bits_per_row=bits_per_row,
             include_bitfield_diagram=include_bitfield_diagram,
+            expand_bitfields=expand_bitfields,
+            font_size=font_size,
+            bit_width=bit_width,
+            section_packet_diagrams=section_packet_diagrams,
+            include_values=include_values,
         )
 
     if hasattr(writer_or_struct, "__binary__"):
@@ -446,6 +551,11 @@ def write_manual(
             diagram_type=diagram_type,
             bits_per_row=bits_per_row,
             include_bitfield_diagram=include_bitfield_diagram,
+            expand_bitfields=expand_bitfields,
+            font_size=font_size,
+            bit_width=bit_width,
+            section_packet_diagrams=section_packet_diagrams,
+            include_values=include_values,
         )
 
     raise TypeError(

@@ -79,9 +79,13 @@ def test_manual_from_writer_primitives():
 
     # Assert Memory Layout Table
     assert "## Memory Layout Table" in md
-    assert "| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | `3735928559 (0xDEADBEEF)` | Magic header identifier |" in md
-    assert "| `0x0004` | 4 | 2 | `seq` | `UInt16` | Little | `42 (0x2A)` | Sequence counter |" in md
-    assert "| `0x0006` | 6 | 3 | `status` | `CString` | - | `'OK'` | Status text |" in md
+    assert "| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | Magic header identifier |" in md
+    assert "| `0x0004` | 4 | 2 | `seq` | `UInt16` | Little | Sequence counter |" in md
+    assert "| `0x0006` | 6 | 3 | `status` | `CString` | - | Status text |" in md
+
+    # Assert include_values=True restores Value / Preview column
+    md_with_val = writer.write_manual(title="Packet Specification", include_values=True)
+    assert "| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | `3735928559 (0xDEADBEEF)` | Magic header identifier |" in md_with_val
 
 
 def test_manual_from_binary_struct():
@@ -106,14 +110,19 @@ def test_manual_from_binary_struct():
     assert "## Bitfield Details" in md
     assert "### `flags`" in md
     assert "packet-beta" in md
-    assert '0: "enable (1)"' in md
-    assert '1-3: "mode (5)"' in md
-    assert '4-7: "priority (12)"' in md
-    assert '8-15: "reserved (171)"' in md
-    assert "| `[0:1]` | `enable` | 1 bit(s) | `1 (0x1)` | - |" in md
-    assert "| `[1:4]` | `mode` | 3 bit(s) | `5 (0x5)` | - |" in md
-    assert "| `[4:8]` | `priority` | 4 bit(s) | `12 (0xC)` | - |" in md
-    assert "| `[8:16]` | `reserved` | 8 bit(s) | `171 (0xAB)` | - |" in md
+    assert '0: "enable"' in md
+    assert '1-3: "mode"' in md
+    assert '4-7: "priority"' in md
+    assert '8-15: "reserved"' in md
+    assert "| `[0:1]` | `enable` | 1 bit(s) | - |" in md
+    assert "| `[1:4]` | `mode` | 3 bit(s) | - |" in md
+    assert "| `[4:8]` | `priority` | 4 bit(s) | - |" in md
+    assert "| `[8:16]` | `reserved` | 8 bit(s) | - |" in md
+
+    # With include_values=True
+    md_val = writer.write_manual(include_values=True)
+    assert '0: "enable (1)"' in md_val
+    assert "| `[0:1]` | `enable` | 1 bit(s) | `1 (0x1)` | - |" in md_val
 
 
 def test_write_manual_to_file(tmp_path: Path):
@@ -162,11 +171,15 @@ def test_generate_bitfield_packet_diagram():
     )
     diag = generate_bitfield_packet_diagram(entry)
     assert "packet-beta" in diag
-    assert '0: "a (1)"' in diag
+    assert '0: "a"' in diag
     assert '1: "(reserved)"' in diag
-    assert '2-3: "b (3)"' in diag
+    assert '2-3: "b"' in diag
     assert '4-7: "(reserved)"' in diag
     assert "bitsPerRow: 8" in diag
+
+    diag_val = generate_bitfield_packet_diagram(entry, include_values=True)
+    assert '0: "a (1)"' in diag_val
+    assert '2-3: "b (3)"' in diag_val
 
 
 def test_generate_packet_diagram():
@@ -202,5 +215,32 @@ def test_write_manual_diagram_types():
 
     # include_bitfield_diagram=False
     md_no_bf = writer.write_manual(include_bitfield_diagram=False)
-    assert "| Bit Range | Field Name | Width | Value | Description |" in md_no_bf
+    assert "| Bit Range | Field Name | Width | Description |" in md_no_bf
+
+    md_no_bf_val = writer.write_manual(include_bitfield_diagram=False, include_values=True)
+    assert "| Bit Range | Field Name | Width | Value | Description |" in md_no_bf_val
+
+
+def test_write_manual_section_packet_diagrams():
+    """Test generating packet diagrams per section under Memory Layout Table."""
+    writer = BinaryWriter()
+    writer.caption("Header Section")
+    writer.write_uint16(0x1234, name="magic")
+    writer.write_uint16(1, name="version")
+
+    writer.caption("Body Section")
+    writer.write_uint32(100, name="data")
+
+    md = writer.write_manual(diagram_type="flowchart", section_packet_diagrams=True)
+    assert "## Memory Layout Table" in md
+    assert "### Header Section (0x0000 - 0x0004, 4B)" in md
+    assert "title Header Section Layout" in md
+    assert '0-15: "magic (UInt16)"' in md
+    assert '16-31: "version (UInt16)"' in md
+
+    assert "### Body Section (0x0004 - 0x0008, 4B)" in md
+    assert "title Body Section Layout" in md
+    # Notice relative offset: data starts at 0 bit inside Body Section!
+    assert '0-31: "data (UInt32)"' in md
+
 

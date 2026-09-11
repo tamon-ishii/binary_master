@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import inspect
+import re
 import sys
 from dataclasses import dataclass
-from typing import Any, Generic, Optional, TypeVar, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, Generic, Optional, TypeVar, get_args, get_origin, get_type_hints
 
 from binary_master.enums import Endian, EndianType, normalize_endian
 
@@ -115,22 +117,80 @@ class Bits:
 
 
 # ==========================================================
-# binary_struct
+# Description Extractor & binary_struct
 # ==========================================================
 
+def extract_field_descriptions(cls: type) -> dict[str, str]:
+    """Extract field descriptions from Annotated type hints or source comments."""
+    descriptions: dict[str, str] = {}
+
+    # 1. Extract from typing.Annotated if present
+    annotations = getattr(cls, "__annotations__", {})
+    for name, ann in annotations.items():
+        if get_origin(ann) is Annotated:
+            args = get_args(ann)
+            for arg in args[1:]:
+                if isinstance(arg, str):
+                    descriptions[name] = arg
+                    break
+
+    # 2. Extract from source code comments
+    try:
+        source = inspect.getsource(cls)
+        lines = source.splitlines()
+        prev_comment = ""
+        for line in lines:
+            stripped = line.strip()
+            # Standalone comment above field
+            if stripped.startswith("#") and not stripped.startswith("#:"):
+                prev_comment = stripped.lstrip("#").strip()
+                continue
+            if stripped.startswith("#:"):
+                prev_comment = stripped.lstrip("#:").strip()
+                continue
+
+            # Inline comment: field: Type ... # comment
+            m = re.match(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:[^#]*#(.*)$", line)
+            if m:
+                fname = m.group(1).strip()
+                comment = m.group(2).strip()
+                if fname not in descriptions and comment:
+                    descriptions[fname] = comment
+                prev_comment = ""
+                continue
+
+            # Field without inline comment but preceded by comment
+            m2 = re.match(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:", line)
+            if m2:
+                fname = m2.group(1).strip()
+                if fname not in descriptions and prev_comment:
+                    descriptions[fname] = prev_comment
+                prev_comment = ""
+            else:
+                prev_comment = ""
+    except Exception:
+        pass
+
+    return descriptions
+
+
 class BinaryMetadata(dict):
-    """Metadata container for binary_struct with lazy type hint resolution."""
+    """Metadata container for binary_struct with lazy type hint and description resolution."""
 
     def __init__(self, cls, endian="little", bits=None):
         super().__init__({
             "endian": endian,
             "bits": bits,
+            "descriptions": {},
         })
         self._cls = cls
         self._fields = None
+        self._descriptions = None
         try:
             self._fields = get_type_hints(cls)
             self["fields"] = self._fields
+            self._descriptions = extract_field_descriptions(cls)
+            self["descriptions"] = self._descriptions
         except NameError:
             pass
 
@@ -145,22 +205,34 @@ class BinaryMetadata(dict):
                 return getattr(self._cls, "__annotations__", {})
         return self._fields
 
+    def _resolve_descriptions(self):
+        if self._descriptions is None:
+            self._descriptions = extract_field_descriptions(self._cls)
+            self["descriptions"] = self._descriptions
+        return self._descriptions
+
     def __getitem__(self, item):
         if item == "fields" and self._fields is None:
             return self._resolve_fields()
+        if item == "descriptions" and self._descriptions is None:
+            return self._resolve_descriptions()
         return super().__getitem__(item)
 
     def get(self, item, default=None):
         if item == "fields" and self._fields is None:
             return self._resolve_fields()
+        if item == "descriptions" and self._descriptions is None:
+            return self._resolve_descriptions()
         return super().get(item, default)
 
     def items(self):
         self._resolve_fields()
+        self._resolve_descriptions()
         return super().items()
 
     def values(self):
         self._resolve_fields()
+        self._resolve_descriptions()
         return super().values()
 
 
@@ -190,9 +262,11 @@ def _write_bitfield(
     total_bits: int,
     field_name: str = "",
     parent_struct: Optional[str] = None,
+    desc: str = "",
 ) -> None:
     import struct
     fields = instance.__binary__["fields"]
+    descriptions = instance.__binary__.get("descriptions", {})
     packed_value = 0
     shift = 0
     subfields = []
@@ -207,6 +281,7 @@ def _write_bitfield(
             "bit_start": shift,
             "bit_end": shift + width,
             "value": val,
+            "description": descriptions.get(name, ""),
         })
         shift += width
 
@@ -238,6 +313,7 @@ def _write_bitfield(
             value=packed_value,
             name=field_name or instance.__class__.__name__,
             endian=endian.name.capitalize(),
+            description=desc,
             struct_name=parent_struct or instance.__class__.__name__,
             subfields=subfields,
         )
@@ -295,6 +371,7 @@ def write_struct(
     endian: Optional[EndianType] = None,
     parent_field_name: str = "",
     parent_struct_name: Optional[str] = None,
+    desc: str = "",
 ) -> Any:
     """Serialize a @binary_struct instance to a BinaryWriter stream."""
     import struct
@@ -321,14 +398,27 @@ def write_struct(
             total_bits,
             field_name=parent_field_name or instance.__class__.__name__,
             parent_struct=current_struct_name,
+            desc=desc,
         )
         return writer
 
     fields = meta.get("fields", {})
+    descriptions = meta.get("descriptions", {})
     deferred_offsets = []
 
     for name, ftype in fields.items():
         val = getattr(instance, name, None)
+        f_desc = descriptions.get(name, "")
+
+        # Unwrap Annotated[T, description] if used
+        if get_origin(ftype) is Annotated:
+            args = get_args(ftype)
+            if not f_desc:
+                for arg in args[1:]:
+                    if isinstance(arg, str):
+                        f_desc = arg
+                        break
+            ftype = args[0]
 
         # Check Offset[T]
         is_offset = (
@@ -349,14 +439,14 @@ def write_struct(
             offset_placeholder_idx = len(writer._entries) if hasattr(writer, "_entries") else -1
             placeholder_pos = writer.tell()
             if target is None:
-                writer._pack_write("I", 0, endian=active_endian, name=name, struct_name=current_struct_name)
+                writer._pack_write("I", 0, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
             elif isinstance(target, int):
-                writer._pack_write("I", target, endian=active_endian, name=name, struct_name=current_struct_name)
+                writer._pack_write("I", target, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
                 if offset_placeholder_idx >= 0 and offset_placeholder_idx < len(writer._entries):
                     writer._entries[offset_placeholder_idx].type_name = type_label
                     writer._entries[offset_placeholder_idx].target_offset = target
             elif hasattr(target, "__binary__"):
-                writer._pack_write("I", 0, endian=active_endian, name=name, struct_name=current_struct_name)
+                writer._pack_write("I", 0, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
                 if offset_placeholder_idx >= 0 and offset_placeholder_idx < len(writer._entries):
                     writer._entries[offset_placeholder_idx].type_name = type_label
                 deferred_offsets.append((offset_placeholder_idx, placeholder_pos, target, active_endian))
@@ -386,6 +476,7 @@ def write_struct(
                     value=val,
                     name=name,
                     endian=active_endian.name.capitalize(),
+                    description=f_desc,
                     struct_name=current_struct_name,
                 )
             continue
@@ -408,6 +499,7 @@ def write_struct(
                     value=val,
                     name=name,
                     endian=active_endian.name.capitalize(),
+                    description=f_desc,
                     struct_name=current_struct_name,
                 )
             continue
@@ -420,6 +512,7 @@ def write_struct(
                 endian=active_endian,
                 parent_field_name=name,
                 parent_struct_name=current_struct_name,
+                desc=f_desc,
             )
             continue
 
@@ -427,20 +520,20 @@ def write_struct(
         if isinstance(ftype, type) and issubclass(ftype, BinaryType):
             fmt = ftype._fmt
             if fmt:
-                writer._pack_write(fmt, val, endian=active_endian, name=name, struct_name=current_struct_name)
+                writer._pack_write(fmt, val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
             continue
 
         # Standard Python types fallback
         if ftype is int or (isinstance(val, int) and not isinstance(val, bool)):
-            writer._pack_write("I", val, endian=active_endian, name=name, struct_name=current_struct_name)
+            writer._pack_write("I", val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
         elif ftype is float or isinstance(val, float):
-            writer._pack_write("f", val, endian=active_endian, name=name, struct_name=current_struct_name)
+            writer._pack_write("f", val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name)
         elif ftype is bool or isinstance(val, bool):
-            writer.write_bool(val, name=name)
+            writer.write_bool(val, name=name, desc=f_desc)
         elif ftype is bytes or isinstance(val, (bytes, bytearray)):
-            writer.write_bytes(val, name=name)
+            writer.write_bytes(val, name=name, desc=f_desc)
         elif ftype is str or isinstance(val, str):
-            writer.write_cstring(val, name=name)
+            writer.write_cstring(val, name=name, desc=f_desc)
         else:
             raise TypeError(f"Unsupported field type for {name}: {ftype}")
 

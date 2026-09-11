@@ -14,7 +14,8 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
 ## 主な特徴
 
 - 🚀 **宣言的バイナリ構造体 (`@binary_struct`)**  
-  Python の型ヒントとデータクラス記法を用いて、バイナリヘッダーやパケットフォーマットを直感的に定義可能。
+  - Python の型ヒントとデータクラス記法を用いて、バイナリヘッダーやパケットフォーマットを直感的に定義可能。
+  - **コメントの自動抽出**: コード上のインラインコメント（`# ...`）や `Annotated[Type, "説明"]` を自動抽出し、仕様書の `Description` 列に反映。
 - 🧩 **高度な型サポート**  
   - 符号付き / 符号なし整数（8, 16, 32, 64-bit）
   - 浮動小数点数（Float32, Float64）
@@ -266,13 +267,18 @@ write_manual(
     diagram_type="both",      # 'flowchart', 'packet', 'both'
     diagram_direction="TD",   # フローチャートの向き ('TD', 'LR')
     bits_per_row=32,          # パケット図の1行あたりのビット数 (8, 16, 32)
+    bit_width=40,             # パケット図の1ビットあたりの横幅 (px)。横に大きく広げたい場合に指定
     include_bitfield_diagram=True,  # ビットフィールドの詳細パケット図を含めるか
+    section_packet_diagrams=True,   # Memory Layout Tableの各セクション(caption)ごとにパケット図を埋め込むか
+    include_values=False,     # 実行時の値(Value / Preview)を含めるか (デフォルト: False、純粋な仕様書として出力)
 )
 ```
 
 - **`diagram_type="flowchart"`**: 構造体の入れ子構造やオフセット参照（矢印）を可視化するフローチャート。
 - **`diagram_type="packet"`**: RFC風のパケットレイアウト図（`packet-beta` 記法）を生成。
 - **`diagram_type="both"`**: フローチャートとパケット図の両方を並記。
+- **`section_packet_diagrams=True`**: `caption` で区切られた各メモリ領域（ヘッダー、ボディ等）の直前に、その領域専用のパケット図を埋め込みます。ブロックごとのビット配置が直感的に把握できます。
+- **`include_values=False` (デフォルト)**: フォーマット仕様書として不要な特定インスタンスのダミー値（`Value / Preview` 列やパケット図内の値表示）を省き、すっきりとした表を出力します。デバッグ時などで値も確認したい場合は `True` を指定できます。
 
 ---
 

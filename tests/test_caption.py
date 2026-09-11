@@ -71,10 +71,14 @@ def test_caption_manual_generation():
     assert "### Payload Block (0x0006 - 0x000E, 8B)" in md
 
     # Entries in table
-    assert "| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | `3405691582 (0xCAFEBABE)` | Magic header identifier |" in md
-    assert "| `0x0004` | 4 | 2 | `version` | `UInt16` | Little | `2 (0x2)` | Format version |" in md
-    assert "| `0x0006` | 6 | 6 | `greeting` | `CString` | - | `'Hello'` | Greeting text |" in md
-    assert "| `0x000C` | 12 | 2 | `checksum` | `UInt16` | Little | `100 (0x64)` | Payload checksum |" in md
+    assert "| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | Magic header identifier |" in md
+    assert "| `0x0004` | 4 | 2 | `version` | `UInt16` | Little | Format version |" in md
+    assert "| `0x0006` | 6 | 6 | `greeting` | `CString` | - | Greeting text |" in md
+    assert "| `0x000C` | 12 | 2 | `checksum` | `UInt16` | Little | Payload checksum |" in md
+
+    # When include_values=True, Value / Preview is present
+    md_val = writer.write_manual(include_values=True)
+    assert "| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | `3405691582 (0xCAFEBABE)` | Magic header identifier |" in md_val
 
 
 def test_caption_with_japanese_text():

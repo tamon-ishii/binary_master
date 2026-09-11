@@ -546,6 +546,11 @@ class BinaryWriter:
         diagram_type: str = "flowchart",
         bits_per_row: int = 32,
         include_bitfield_diagram: bool = True,
+        expand_bitfields: bool = False,
+        font_size: Optional[str] = None,
+        bit_width: Optional[int] = None,
+        section_packet_diagrams: bool = False,
+        include_values: bool = False,
     ) -> str:
         """Generate a Mermaid-powered Markdown manual documenting the written binary layout.
 
@@ -556,6 +561,11 @@ class BinaryWriter:
             diagram_type: Type of structure diagram ('flowchart', 'packet', or 'both').
             bits_per_row: Number of bits per row in packet diagrams (default: 32).
             include_bitfield_diagram: Whether to include packet diagrams in bitfield breakdown.
+            expand_bitfields: Whether to expand bitfield subfields in packet diagrams (default: False).
+            font_size: Optional font size for Mermaid diagrams (e.g. '14px', '16px').
+            bit_width: Optional pixel width per bit in packet diagrams to widen the diagram (e.g. 40, 50, 60).
+            section_packet_diagrams: Whether to include a packet diagram for each section in the Memory Layout Table (default: False).
+            include_values: Whether to include runtime value preview in tables and diagrams (default: False).
 
         Returns:
             The generated Markdown manual as a string.
@@ -570,6 +580,11 @@ class BinaryWriter:
             diagram_type=diagram_type,
             bits_per_row=bits_per_row,
             include_bitfield_diagram=include_bitfield_diagram,
+            expand_bitfields=expand_bitfields,
+            font_size=font_size,
+            bit_width=bit_width,
+            section_packet_diagrams=section_packet_diagrams,
+            include_values=include_values,
         )
         if path_or_file is not None:
             if isinstance(path_or_file, (str, Path)):
