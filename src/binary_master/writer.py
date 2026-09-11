@@ -62,6 +62,7 @@ class BinaryWriter:
         """
         self._default_endian = normalize_endian(default_endian)
         self._entries: list[Any] = []
+        self._current_caption: Optional[str] = None
         if stream is None:
             self._stream = io.BytesIO()
             self._close_stream = auto_close if auto_close is not None else False
@@ -70,6 +71,26 @@ class BinaryWriter:
             self._stream = stream
             self._close_stream = auto_close if auto_close is not None else False
             self._is_memory = isinstance(stream, io.BytesIO)
+
+    def caption(self, title: Optional[str] = None) -> BinaryWriter:
+        """Set the active section caption/title for subsequent binary writes.
+
+        Fields and structures written after this call will be grouped under
+        this caption in generated manuals and diagrams until a new caption is set.
+
+        Args:
+            title: The caption or title string. Pass None or an empty string to clear.
+
+        Returns:
+            self for method chaining.
+        """
+        self._current_caption = title if title else None
+        return self
+
+    @property
+    def current_caption(self) -> Optional[str]:
+        """Get the currently active section caption."""
+        return self._current_caption
 
     @classmethod
     def to_memory(cls, default_endian: EndianType = Endian.LITTLE) -> BinaryWriter:
@@ -162,9 +183,11 @@ class BinaryWriter:
         struct_name: Optional[str] = None,
         target_offset: Optional[int] = None,
         subfields: Optional[list] = None,
+        caption: Optional[str] = None,
     ) -> None:
         from binary_master.manual import LayoutEntry
 
+        active_caption = caption if caption is not None else self._current_caption
         self._entries.append(
             LayoutEntry(
                 offset=offset,
@@ -177,6 +200,7 @@ class BinaryWriter:
                 struct_name=struct_name,
                 target_offset=target_offset,
                 subfields=subfields,
+                caption=active_caption,
             )
         )
 
@@ -555,3 +579,4 @@ class BinaryWriter:
         return content
 
 
+Writer = BinaryWriter

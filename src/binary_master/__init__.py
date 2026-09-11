@@ -1,7 +1,7 @@
 """Binary Master: High-level binary writing library."""
 
 from .enums import Endian, EndianType, normalize_endian
-from .writer import BinaryWriter
+from .writer import BinaryWriter, Writer
 from .binary_struct import (
     BinaryType,
     UInt8,
@@ -34,6 +34,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "BinaryWriter",
+    "Writer",
     "Endian",
     "EndianType",
     "normalize_endian",

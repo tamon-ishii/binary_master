@@ -22,9 +22,10 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - **オフセット自動計算 (`Offset[T]`)**: ヘッダーのオフセット値の自動バックパッチと参照先構造体の追跡
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
   - 構造体のネスト
-- ✍️ **柔軟な手続き的ライター (`BinaryWriter`)**  
+- ✍️ **柔軟な手続き的ライター (`BinaryWriter` / `Writer`)**  
   - インメモリ（`BytesIO`）またはファイル/ストリームへの直接出力
   - メソッドチェーン対応
+  - **セクションタイトルの付与 (`writer.caption(str)`)**: 後続のバイナリをグループ化し、マニュアルにセクション見出しやMermaidサブグラフを自動反映
   - 各種文字列形式（C言語スタイルの Null 終端、Pascal スタイルの長さプレフィックス、固定長パディング）
   - バイト境界アライメント（`align`）およびパディング（`pad`）
   - 厳格な境界チェック（オーバーフロー/アンダーフローの即時エラー検知）
@@ -189,12 +190,14 @@ from binary_master import BinaryWriter, Endian
 
 writer = BinaryWriter(default_endian=Endian.LITTLE)
 
-# 整数・浮動小数点数
+# セクションタイトル（キャプション）の設定
+# これを呼ぶと、それ以降のバイナリがこのキャプションの内容としてマニュアルにグループ化されます
+writer.caption("File Header")
 writer.write_uint32(0xDEADBEEF, name="magic", desc="マジックナンバー")
 writer.write_uint16(1, name="version")
-writer.write_float32(3.14, endian=Endian.BIG, name="ratio") # 個別のエンディアン指定
 
-# 文字列の書き込み戦略
+# 新しいキャプションを設定すると、以降は新しいグループに属します
+writer.caption("Payload Data")
 writer.write_cstring("Hello", name="c_str")                         # Null終端 (b"Hello\x00")
 writer.write_prefixed_string("World", prefix_bytes=2, name="p_str")  # 2バイト長さプレフィックス
 writer.write_fixed_string("Fixed", length=10, pad_byte=b"\x00")    # 10バイト固定長パディング
@@ -206,9 +209,8 @@ writer.align(16, name="alignment")                # 16バイト境界へアラ�
 # 結果の取得
 binary_data: bytes = writer.to_bytes()
 
-# ファイルへの直接出力
-with BinaryWriter.to_file("output.bin", default_endian=Endian.BIG) as f_writer:
-    f_writer.write_uint32(100)
+# 仕様書を出力すると、各キャプションごとの見出しやMermaidサブグラフが自動生成されます
+writer.write_manual("output_spec.md", title="Protocol Specification")
 ```
 
 ### 2. `@binary_struct` の詳細機能
@@ -297,6 +299,7 @@ write_manual(
 - **文字列**: `write_cstring`, `write_prefixed_string`, `write_fixed_string`, `write_string`
 - **構造体**: `write_struct(instance, endian=None)`
 - **位置制御**: `tell()`, `seek(offset, whence)`
+- **セクションタイトル**: `caption(title=None)`（マニュアル・図のグループ化見出しを設定）
 - **パディング & アライメント**: `pad(count, pad_byte)`, `align(boundary, pad_byte)`
 - **仕様書生成**: `write_manual(path_or_file, title=..., diagram_type=...)`
 - **データ取り出し**: `to_bytes()`, `to_bytearray()`

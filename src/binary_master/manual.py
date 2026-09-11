@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, IO, List, Optional, Union
@@ -21,6 +22,7 @@ class LayoutEntry:
     struct_name: Optional[str] = None
     target_offset: Optional[int] = None
     subfields: Optional[List[dict]] = None
+    caption: Optional[str] = None
 
 
 def format_value_preview(val: Any) -> str:
@@ -50,41 +52,56 @@ def generate_mermaid_diagram(
     """Generate a Mermaid flowchart visualizing memory layout and structures."""
     lines = [f"```mermaid\nflowchart {direction}"]
 
-    # Group entries by struct_name
-    struct_groups: dict[str, List[tuple[int, LayoutEntry]]] = {}
-    standalone_entries: List[tuple[int, LayoutEntry]] = []
+    # Consecutive entries with the same group key are grouped together
+    groups: List[tuple[Optional[str], List[tuple[int, LayoutEntry]]]] = []
+    current_key: Optional[str] = None
+    current_items: List[tuple[int, LayoutEntry]] = []
 
     for idx, entry in enumerate(entries):
-        if entry.struct_name:
-            struct_groups.setdefault(entry.struct_name, []).append((idx, entry))
+        key = entry.caption or entry.struct_name
+        if key != current_key:
+            if current_items:
+                groups.append((current_key, current_items))
+            current_key = key
+            current_items = [(idx, entry)]
         else:
-            standalone_entries.append((idx, entry))
+            current_items.append((idx, entry))
+    if current_items:
+        groups.append((current_key, current_items))
 
     node_ids: List[str] = []
+    used_subgraph_ids: set[str] = set()
 
-    # Render struct subgraphs
-    for struct_name, s_entries in struct_groups.items():
-        min_off = s_entries[0][1].offset
-        max_off = s_entries[-1][1].offset + s_entries[-1][1].size
-        total_size = max_off - min_off
-        lines.append(
-            f'    subgraph SG_{struct_name} ["{struct_name} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)"]'
-        )
-        for idx, entry in s_entries:
-            nid = f"N{idx}"
-            node_ids.append(nid)
-            name_label = entry.name or entry.type_name
-            label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
-            lines.append(f'        {nid}["{label}"]')
-        lines.append("    end")
+    for group_idx, (group_key, s_entries) in enumerate(groups):
+        if group_key is not None:
+            min_off = s_entries[0][1].offset
+            max_off = s_entries[-1][1].offset + s_entries[-1][1].size
+            total_size = max_off - min_off
 
-    # Render standalone nodes
-    for idx, entry in standalone_entries:
-        nid = f"N{idx}"
-        node_ids.append(nid)
-        name_label = entry.name or entry.type_name
-        label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
-        lines.append(f'    {nid}["{label}"]')
+            # Generate valid Mermaid subgraph ID
+            clean_key = re.sub(r"[^a-zA-Z0-9_]", "_", group_key)
+            clean_key = re.sub(r"_+", "_", clean_key).strip("_")
+            sg_id = f"SG_{clean_key}" if clean_key else f"SG_grp_{group_idx}"
+            if sg_id in used_subgraph_ids:
+                sg_id = f"{sg_id}_{group_idx}"
+            used_subgraph_ids.add(sg_id)
+
+            label = f"{group_key} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)"
+            lines.append(f'    subgraph {sg_id} ["{label}"]')
+            for idx, entry in s_entries:
+                nid = f"N{idx}"
+                node_ids.append(nid)
+                name_label = entry.name or entry.type_name
+                node_label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
+                lines.append(f'        {nid}["{node_label}"]')
+            lines.append("    end")
+        else:
+            for idx, entry in s_entries:
+                nid = f"N{idx}"
+                node_ids.append(nid)
+                name_label = entry.name or entry.type_name
+                node_label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
+                lines.append(f'    {nid}["{node_label}"]')
 
     # Sequential connections between adjacent blocks
     for i in range(len(node_ids) - 1):
@@ -298,24 +315,72 @@ def generate_manual(
 
     # 3. Layout Table
     sections.append("## Memory Layout Table\n")
-    sections.append(
-        "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
-    )
-    sections.append("|---|---|---|---|---|---|---|---|")
 
-    for entry in entries:
-        off_hex = f"`0x{entry.offset:04X}`"
-        off_dec = str(entry.offset)
-        size_str = str(entry.size)
-        name_str = f"`{entry.name}`" if entry.name else "-"
-        type_str = f"`{entry.type_name}`"
-        endian_str = entry.endian or "-"
-        val_str = format_value_preview(entry.value)
-        desc_str = entry.description or "-"
+    has_captions = any(e.caption for e in entries)
+
+    if not has_captions:
         sections.append(
-            f"| {off_hex} | {off_dec} | {size_str} | {name_str} | {type_str} | {endian_str} | {val_str} | {desc_str} |"
+            "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
         )
-    sections.append("")
+        sections.append("|---|---|---|---|---|---|---|---|")
+
+        for entry in entries:
+            off_hex = f"`0x{entry.offset:04X}`"
+            off_dec = str(entry.offset)
+            size_str = str(entry.size)
+            name_str = f"`{entry.name}`" if entry.name else "-"
+            type_str = f"`{entry.type_name}`"
+            endian_str = entry.endian or "-"
+            val_str = format_value_preview(entry.value)
+            desc_str = entry.description or "-"
+            sections.append(
+                f"| {off_hex} | {off_dec} | {size_str} | {name_str} | {type_str} | {endian_str} | {val_str} | {desc_str} |"
+            )
+        sections.append("")
+    else:
+        # Group by consecutive caption
+        caption_groups: List[tuple[Optional[str], List[LayoutEntry]]] = []
+        current_cap: Optional[str] = None
+        current_cap_entries: List[LayoutEntry] = []
+
+        for entry in entries:
+            cap = entry.caption
+            if cap != current_cap:
+                if current_cap_entries:
+                    caption_groups.append((current_cap, current_cap_entries))
+                current_cap = cap
+                current_cap_entries = [entry]
+            else:
+                current_cap_entries.append(entry)
+        if current_cap_entries:
+            caption_groups.append((current_cap, current_cap_entries))
+
+        for cap, c_entries in caption_groups:
+            min_off = c_entries[0].offset
+            max_off = c_entries[-1].offset + c_entries[-1].size
+            total_size = max_off - min_off
+            if cap:
+                sections.append(f"### {cap} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+            else:
+                sections.append(f"### (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+
+            sections.append(
+                "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
+            )
+            sections.append("|---|---|---|---|---|---|---|---|")
+            for entry in c_entries:
+                off_hex = f"`0x{entry.offset:04X}`"
+                off_dec = str(entry.offset)
+                size_str = str(entry.size)
+                name_str = f"`{entry.name}`" if entry.name else "-"
+                type_str = f"`{entry.type_name}`"
+                endian_str = entry.endian or "-"
+                val_str = format_value_preview(entry.value)
+                desc_str = entry.description or "-"
+                sections.append(
+                    f"| {off_hex} | {off_dec} | {size_str} | {name_str} | {type_str} | {endian_str} | {val_str} | {desc_str} |"
+                )
+            sections.append("")
 
     # 4. Bitfield breakdowns if any
     bitfields = [e for e in entries if e.subfields]
