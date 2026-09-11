@@ -1,0 +1,206 @@
+"""Tests for Mermaid Markdown manual generation via write_manual."""
+
+from pathlib import Path
+import pytest
+
+from binary_master import (
+    BinaryWriter,
+    Endian,
+    UInt8,
+    UInt16,
+    UInt32,
+    Offset,
+    Array,
+    FixedArray,
+    Bits,
+    binary_struct,
+    write_manual,
+    LayoutEntry,
+    generate_bitfield_packet_diagram,
+    generate_packet_diagram,
+)
+
+
+
+@binary_struct(bits=16)
+class Flags:
+    enable: Bits[1]
+    mode: Bits[3]
+    priority: Bits[4]
+    reserved: Bits[8]
+
+
+@binary_struct(endian="little")
+class Header:
+    magic: UInt32
+    version: UInt16
+    flags: Flags
+    image_offset: Offset["Image"]
+
+
+@binary_struct(endian="little")
+class Image:
+    width: UInt16
+    height: UInt16
+    pixels: Array[UInt8]
+
+
+@binary_struct(endian="big")
+class Packet:
+    id: UInt16
+    count: UInt8
+    payload: FixedArray[UInt8, 64]
+
+
+def test_manual_from_writer_primitives():
+    """Test generating a manual from direct BinaryWriter primitive writes."""
+    writer = BinaryWriter(default_endian=Endian.LITTLE)
+    writer.write_uint32(0xDEADBEEF, name="magic", desc="Magic header identifier")
+    writer.write_uint16(42, name="seq", desc="Sequence counter")
+    writer.write_cstring("OK", name="status", desc="Status text")
+
+    md = writer.write_manual(title="Packet Specification")
+
+    # Assert Markdown structure
+    assert "# Packet Specification" in md
+    assert "## Overview" in md
+    assert "- **Total Size**: 9 bytes (`0x0009`)" in md
+    assert "- **Default Endianness**: Little" in md
+    assert "- **Total Fields**: 3" in md
+
+    # Assert Mermaid diagram
+    assert "```mermaid" in md
+    assert "flowchart TD" in md
+    assert 'N0["0x0000: magic (UInt32, 4B)"]' in md
+    assert 'N1["0x0004: seq (UInt16, 2B)"]' in md
+    assert 'N2["0x0006: status (CString, 3B)"]' in md
+    assert "N0 --> N1" in md
+    assert "N1 --> N2" in md
+
+    # Assert Memory Layout Table
+    assert "## Memory Layout Table" in md
+    assert "| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | `3735928559 (0xDEADBEEF)` | Magic header identifier |" in md
+    assert "| `0x0004` | 4 | 2 | `seq` | `UInt16` | Little | `42 (0x2A)` | Sequence counter |" in md
+    assert "| `0x0006` | 6 | 3 | `status` | `CString` | - | `'OK'` | Status text |" in md
+
+
+def test_manual_from_binary_struct():
+    """Test generating a manual from binary_struct with bitfields and offset references."""
+    flags = Flags(enable=1, mode=5, priority=12, reserved=0xAB)
+    img = Image(width=2, height=2, pixels=b"\x01\x02\x03\x04")
+    hdr = Header(magic=0x42494E59, version=1, flags=flags, image_offset=img)
+
+    writer = BinaryWriter()
+    writer.write_struct(hdr)
+    md = writer.write_manual(title="Image File Format Manual", diagram_direction="LR")
+
+    # Assert Mermaid diagram and subgraphs
+    assert "flowchart LR" in md
+    assert 'subgraph SG_Header ["Header (0x0000 - 0x000C, 12B)"]' in md
+    assert 'subgraph SG_Image ["Image (0x000C - 0x0014, 8B)"]' in md
+
+    # Assert offset pointer relationship in Mermaid diagram
+    assert '-.->|"offset: 0x000C"|' in md
+
+    # Assert Bitfield Details section
+    assert "## Bitfield Details" in md
+    assert "### `flags`" in md
+    assert "packet-beta" in md
+    assert '0: "enable (1)"' in md
+    assert '1-3: "mode (5)"' in md
+    assert '4-7: "priority (12)"' in md
+    assert '8-15: "reserved (171)"' in md
+    assert "| `[0:1]` | `enable` | 1 bit(s) | `1 (0x1)` | - |" in md
+    assert "| `[1:4]` | `mode` | 3 bit(s) | `5 (0x5)` | - |" in md
+    assert "| `[4:8]` | `priority` | 4 bit(s) | `12 (0xC)` | - |" in md
+    assert "| `[8:16]` | `reserved` | 8 bit(s) | `171 (0xAB)` | - |" in md
+
+
+def test_write_manual_to_file(tmp_path: Path):
+    """Test writing the manual directly to a markdown file on disk."""
+    file_path = tmp_path / "format_manual.md"
+    pkt = Packet(id=0x100, count=4, payload=b"TEST")
+
+    writer = BinaryWriter(default_endian=Endian.BIG)
+    writer.write_struct(pkt)
+    returned_md = writer.write_manual(path_or_file=file_path)
+
+    assert file_path.exists()
+    content = file_path.read_text(encoding="utf-8")
+    assert content == returned_md
+    assert "# Binary Specification Manual" in content
+    assert "SG_Packet" in content
+
+
+def test_write_manual_helper_function():
+    """Test the module-level write_manual convenience function."""
+    pkt = Packet(id=1, count=1, payload=b"A")
+    md_from_struct = write_manual(pkt, title="Packet Doc")
+    assert "# Packet Doc" in md_from_struct
+    assert "Packet" in md_from_struct
+
+    writer = BinaryWriter()
+    writer.write_uint8(10, name="version")
+    md_from_writer = write_manual(writer, title="Writer Doc")
+    assert "# Writer Doc" in md_from_writer
+
+    with pytest.raises(TypeError, match="Expected BinaryWriter"):
+        write_manual("invalid_object")
+
+
+def test_generate_bitfield_packet_diagram():
+    """Test generating a Mermaid packet-beta diagram for bitfields with gaps and single bits."""
+    entry = LayoutEntry(
+        offset=0,
+        size=1,
+        type_name="TestFlags",
+        name="flags",
+        subfields=[
+            {"name": "a", "width": 1, "bit_start": 0, "bit_end": 1, "value": 1},
+            {"name": "b", "width": 2, "bit_start": 2, "bit_end": 4, "value": 3},
+        ],
+    )
+    diag = generate_bitfield_packet_diagram(entry)
+    assert "packet-beta" in diag
+    assert '0: "a (1)"' in diag
+    assert '1: "(reserved)"' in diag
+    assert '2-3: "b (3)"' in diag
+    assert '4-7: "(reserved)"' in diag
+    assert "bitsPerRow: 8" in diag
+
+
+def test_generate_packet_diagram():
+    """Test generating a full binary layout packet diagram."""
+    writer = BinaryWriter()
+    writer.write_uint16(0x1234, name="port")
+    writer.write_uint8(1, name="proto")
+    diag = generate_packet_diagram(writer._entries, title="Network Header")
+    assert "packet-beta" in diag
+    assert "title Network Header" in diag
+    assert '0-15: "port (UInt16)"' in diag
+    assert '16-23: "proto (UInt8)"' in diag
+
+
+def test_write_manual_diagram_types():
+    """Test write_manual with different diagram_type parameters."""
+    flags = Flags(enable=1, mode=1, priority=2, reserved=0)
+    img = Image(width=10, height=10, pixels=b"\x00")
+    hdr = Header(magic=0x12345678, version=1, flags=flags, image_offset=img)
+
+    writer = BinaryWriter()
+    writer.write_struct(hdr)
+
+    # diagram_type="packet"
+    md_packet = writer.write_manual(diagram_type="packet")
+    assert "## Structure Diagram (Packet)" in md_packet
+    assert "packet-beta" in md_packet
+
+    # diagram_type="both"
+    md_both = writer.write_manual(diagram_type="both")
+    assert "## Structure Diagram (Flowchart)" in md_both
+    assert "## Structure Diagram (Packet)" in md_both
+
+    # include_bitfield_diagram=False
+    md_no_bf = writer.write_manual(include_bitfield_diagram=False)
+    assert "| Bit Range | Field Name | Width | Value | Description |" in md_no_bf
+
