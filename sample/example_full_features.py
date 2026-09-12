@@ -102,7 +102,8 @@ def main():
     table.write_target(1, payload)
 
     # 仕様書を出力
-    output_path = "sample_full_manual.md"
+    from pathlib import Path
+    output_path = Path(__file__).parent / "sample_full_manual.md"
     md_content = writer.write_manual(
         path_or_file=output_path,
         title="バイナリコンテナフォーマット仕様書",

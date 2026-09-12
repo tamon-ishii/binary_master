@@ -33,7 +33,8 @@ def main():
     print(f"Serialized binary size: {len(binary_data)} bytes")
 
     # 仕様書 (Markdown) の出力
-    output_path = "sample_caption_manual.md"
+    from pathlib import Path
+    output_path = Path(__file__).parent / "sample_caption_manual.md"
     writer.write_manual(
         output_path,
         title="ゲームセーブデータ仕様書",

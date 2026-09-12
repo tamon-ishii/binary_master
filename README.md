@@ -86,7 +86,7 @@ python -m build
 生成された `.whl` ファイルは、別の環境やオフライン環境、自社リポジトリ等へ配布し、`pip` で直接インストールできます：
 
 ```bash
-pip install dist/binary_master-0.1.0-py3-none-any.whl
+pip install dist/binary_master-0.2.0-py3-none-any.whl
 ```
 
 

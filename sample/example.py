@@ -43,7 +43,8 @@ def main():
     writer = BinaryWriter()
     writer.write_struct(header)
 
-    output_path = "sample_manual.md"
+    from pathlib import Path
+    output_path = Path(__file__).parent / "sample_manual.md"
     writer.write_manual(output_path, title="Sample Image File Format Manual")
     print(f"Manual successfully written to {output_path}")
 

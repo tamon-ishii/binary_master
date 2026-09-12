@@ -72,8 +72,8 @@ def main():
     print(" Binary Master: 総合サンプルプログラム")
     print("=" * 65)
 
-    bin_file = Path("sample_output.bin")
-    manual_file = Path("sample_manual.md")
+    bin_file = Path(__file__).parent / "sample_output.bin"
+    manual_file = Path(__file__).parent / "sample_manual.md"
 
     # ------------------------------------------------------
     # STEP 1: バイナリデータの構築 & 書き込み (BinaryWriter)

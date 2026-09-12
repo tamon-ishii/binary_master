@@ -33,7 +33,8 @@ def main():
         hp=9999,
     )
 
-    output_path = "player_manual.md"
+    from pathlib import Path
+    output_path = Path(__file__).parent / "player_manual.md"
     write_manual(
         player,
         output_path,
