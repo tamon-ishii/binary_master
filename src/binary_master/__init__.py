@@ -38,7 +38,7 @@ from .manual import (
     write_manual,
     inspect_struct_layout,
 )
-from .manual_builder import ManualBuilder, BuilderReadResult
+from .builder import BinaryBuilder, Builder, ManualBuilder, BuilderReadResult
 from .c_header import to_c_header, write_c_header, to_c_struct
 from .code_gen import (
     generate_code,
@@ -97,6 +97,8 @@ __all__ = [
     "generate_bitfield_packet_diagram",
     "write_manual",
     "inspect_struct_layout",
+    "BinaryBuilder",
+    "Builder",
     "ManualBuilder",
     "BuilderReadResult",
     "to_c_header",

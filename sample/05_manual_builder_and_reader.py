@@ -1,12 +1,12 @@
-"""Sample 05: Schema-First ManualBuilder and Automated Reader.
+"""Sample 05: Schema-First Builder and Automated Reader.
 
 Demonstrates:
-- Constructing specification manuals upfront without runtime instances
+- Constructing specification schemas upfront with Builder
 - Narrative documentation chapters with builder.add_document()
 - Declarative polymorphic choices with builder.add_choice()
 - Conditional structures with condition expressions
 - Writing the Markdown manual to file with builder.write("path.md")
-- Mermaid flowchart diagrams with decision diamond nodes
+- Exporting multi-language definitions (C, Rust, C++, C#, Go)
 - Automated schema-driven binary deserialization with builder.read(data)
 """
 
@@ -14,9 +14,9 @@ from pathlib import Path
 
 from binary_master import (
     BinaryWriter,
+    Builder,
     FixedArray,
     Float32,
-    ManualBuilder,
     UInt8,
     UInt16,
     UInt32,
@@ -63,10 +63,10 @@ class ChecksumFooter:
 
 
 def main():
-    print("=== Sample 05: Schema-First ManualBuilder & Automated Reader ===")
+    print("=== Sample 05: Schema-First Builder & Automated Reader ===")
 
-    # 1. Create ManualBuilder schema
-    builder = ManualBuilder(
+    # 1. Create Builder schema
+    builder = Builder(
         title="Network Telemetry Protocol Specification",
         version="1.0.0",
         default_endian="little",

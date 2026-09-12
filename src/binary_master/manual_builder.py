@@ -153,11 +153,12 @@ def _clean_mermaid_id(name: str) -> str:
     return clean or "node"
 
 
-class ManualBuilder:
-    """Declarative specification builder and automated deserializer for binary protocols.
+class BinaryBuilder:
+    """Declarative specification builder, multi-language code generator, and automated deserializer.
 
     Enables schema-first manual generation with conditional branches, polymorphic variants,
-    narrative document chapters, and automated schema-driven reading.
+    narrative document chapters, multi-language code export (C, Rust, C++, C#, Go),
+    and automated schema-driven reading.
     """
 
     def __init__(
@@ -175,7 +176,7 @@ class ManualBuilder:
             Union[DocumentElement, StructElement, ChoiceElement, SectionElement, FieldElement]
         ] = []
 
-    def add_document(self, title: str, content: str) -> ManualBuilder:
+    def add_document(self, title: str, content: str) -> BinaryBuilder:
         """Add a narrative documentation chapter or explanatory markdown section.
 
         Args:
@@ -196,7 +197,7 @@ class ManualBuilder:
         condition: Optional[str] = None,
         condition_func: Optional[Callable[[Any], bool]] = None,
         count: Optional[Union[int, str, Callable[[Any], int]]] = None,
-    ) -> ManualBuilder:
+    ) -> BinaryBuilder:
         """Register a @binary_struct class in the specification layout.
 
         Args:
@@ -233,7 +234,7 @@ class ManualBuilder:
         desc: str = "",
         condition: Optional[str] = None,
         condition_func: Optional[Callable[[Any], bool]] = None,
-    ) -> ManualBuilder:
+    ) -> BinaryBuilder:
         """Register a polymorphic branch or choice point dispatched by a tag field.
 
         Args:
@@ -260,7 +261,7 @@ class ManualBuilder:
         )
         return self
 
-    def add_section(self, title: str, desc: str = "") -> ManualBuilder:
+    def add_section(self, title: str, desc: str = "") -> BinaryBuilder:
         """Add a section divider grouping subsequent elements.
 
         Args:
@@ -282,7 +283,7 @@ class ManualBuilder:
         endian: Optional[str] = None,
         condition: Optional[str] = None,
         condition_func: Optional[Callable[[Any], bool]] = None,
-    ) -> ManualBuilder:
+    ) -> BinaryBuilder:
         """Add an ad-hoc field entry without requiring a full struct class.
 
         Args:
@@ -924,3 +925,8 @@ class ManualBuilder:
         if "float64" in t:
             return reader.read_float64(endian=endian)
         return reader.read_bytes(elem.size)
+
+
+# Canonical aliases
+Builder = BinaryBuilder
+ManualBuilder = BinaryBuilder

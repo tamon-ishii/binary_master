@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 src/binary_master/__init__.py
 src/binary_master/binary_struct.py
+src/binary_master/builder.py
 src/binary_master/c_header.py
 src/binary_master/enums.py
 src/binary_master/manual.py

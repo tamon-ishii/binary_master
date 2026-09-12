@@ -288,3 +288,23 @@ def test_builder_error_handling():
     w.write_struct(Header(magic=1, version=1, msg_type=99, payload_size=0))
     with pytest.raises(ValueError, match="did not match any variant"):
         builder.read(w.to_bytes())
+
+
+def test_builder_aliases():
+    """Verify BinaryBuilder, Builder, and ManualBuilder are all identical and functional."""
+    from binary_master import BinaryBuilder, Builder, ManualBuilder
+    from binary_master.builder import BinaryBuilder as BB1, Builder as B1, ManualBuilder as MB1
+
+    assert BinaryBuilder is Builder
+    assert ManualBuilder is BinaryBuilder
+    assert BB1 is BinaryBuilder
+    assert B1 is Builder
+    assert MB1 is ManualBuilder
+
+    b = Builder(title="Alias Test", version="1.0")
+    b.add_struct(Header, name="header")
+    assert len(b.elements) == 1
+
+    bb = BinaryBuilder(title="Alias Test 2")
+    bb.add_struct(Header, name="header")
+    assert len(bb.elements) == 1

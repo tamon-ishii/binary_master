@@ -540,12 +540,14 @@ reader.align(8)
 header = reader.read_struct(Header)
 ```
 
-### 5. 事前スキーマ定義による仕様書生成 & 自動リーダー (`ManualBuilder`)
+### 5. プロトコル全体の事前スキーマ定義・仕様書・多言語・リーダー統合 (`Builder` / `BinaryBuilder`)
 
-実行時のダミーインスタンスを作成することなく、プロトコルの構造定義（ヘッダー、条件分岐、多態バリアント、説明文）を事前に宣言して仕様書を生成し、さらにそのスキーマ定義から直接バイナリデータを自動パースできます。
+実行時のダミーインスタンスを作成することなく、プロトコルの構造定義（ヘッダー、条件分岐、多態バリアント、説明文）を事前に宣言して仕様書を生成し、多言語コードのエクスポートや直接のバイナリ自動パースが可能です。
+
+`binary_master` では、バイナリを「書く」`Writer`、バイナリを「読む」`Reader` に対し、プロトコル全体を「建てる」**`Builder`**（正式名: `BinaryBuilder`、互換エイリアス: `ManualBuilder`）を提供しています。
 
 ```python
-from binary_master import ManualBuilder, binary_struct, UInt8, UInt16, UInt32, Float32, FixedArray
+from binary_master import Builder, binary_struct, UInt8, UInt16, UInt32, Float32, FixedArray
 
 @binary_struct
 class Header:
@@ -568,7 +570,7 @@ class Footer:
     crc32: UInt32
 
 # 1. スキーマの事前定義
-builder = ManualBuilder(title="Telemetry Protocol", version="1.0.0")
+builder = Builder(title="Telemetry Protocol", version="1.0.0")
 
 # 説明文・ドキュメントの章を追加
 builder.add_document("プロトコル概要", "このプロトコルはネットワークテレメトリを送信します。")
@@ -665,7 +667,7 @@ if "footer" in result:
 - **デシリアライズ**: `Cls.from_bytes(data, endian=None)` または `read_struct(Cls, reader)`
 - **他言語コード生成**: `Cls.to_c()` / `Cls.to_c_struct()`, `Cls.to_rust()`, `Cls.to_cpp()`, `Cls.to_csharp()`, `Cls.to_go()`
 
-### `ManualBuilder` 主要メソッド
+### `Builder` / `BinaryBuilder` 主要メソッド（旧 `ManualBuilder`）
 - **章・説明文の追加**: `add_document(title, content)`（Markdown 形式の説明文・章を追加）
 - **構造体の登録**: `add_struct(cls, name=None, desc="", condition=None, condition_func=None, count=None)`（`@binary_struct` クラスを登録。条件分岐やリピート件数に対応）
 - **多態バリアント分岐の登録**: `add_choice(name, tag_field, variants, desc="", condition=None, condition_func=None)`（タグフィールドに基づくバリアント選択点を登録）
@@ -682,7 +684,7 @@ if "footer" in result:
 - **スキーマ駆動自動読み込み**: `read(reader_or_bytes, endian=None)`（バイナリデータをスキーマに基づいて自動パースし `BuilderReadResult` を返却）
 
 
-### `BinaryWriter` 主要メソッド
+### `BinaryWriter` / `Writer` 主要メソッド
 - **整数書き込み**: `write_uint8`, `write_int8`, `write_uint16`, `write_int16`, `write_uint32`, `write_int32`, `write_uint64`, `write_int64`
 - **浮動小数点数**: `write_float32`, `write_float64`
 - **論理値 / バイト**: `write_bool`, `write_bytes`
@@ -696,7 +698,7 @@ if "footer" in result:
 - **仕様書生成**: `write_manual(path_or_file, title=..., diagram_type=...)`
 - **データ取り出し**: `to_bytes()`, `to_bytearray()`
 
-### `BinaryReader` 主要メソッド
+### `BinaryReader` / `Reader` 主要メソッド
 - **整数読み込み**: `read_uint8`, `read_int8`, `read_uint16`, `read_int16`, `read_uint32`, `read_int32`, `read_uint64`, `read_int64`
 - **浮動小数点数**: `read_float32`, `read_float64`
 - **論理値 / バイト**: `read_bool`, `read_bytes(count=None)`
@@ -717,7 +719,7 @@ if "footer" in result:
 | [`sample/02_bitfields_and_alignment.py`](sample/02_bitfields_and_alignment.py) | ビットフィールドとアライメント | `Bits[N]` によるビットパッキング、`align=4` によるパディング、`auto_align=True` 自然アライメント |
 | [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) | 相対ポインタ & オフセットテーブル | `Offset[T, Base.SELF]`、オフセット演算（`Base.SELF + 0x20`）、`OffsetTable`、自動デリファレンス |
 | [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング、`write_manual()` |
-| [`sample/05_manual_builder_and_reader.py`](sample/05_manual_builder_and_reader.py) | ManualBuilder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、条件分岐、`builder.write()`、`builder.read()` |
+| [`sample/05_manual_builder_and_reader.py`](sample/05_manual_builder_and_reader.py) | Builder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、多言語出力（C/Rust/C++/C#/Go）、`builder.write()`、`builder.read()` |
 | [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 5 本のサンプルを順番に自動実行・検証するオーケストレーター |
 
 ```bash
