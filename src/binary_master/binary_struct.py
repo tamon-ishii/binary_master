@@ -889,13 +889,15 @@ def write_struct(
                 desc=f_desc,
                 base_offset=actual_base,
             )
-            if isinstance(val, (list, tuple)):
-                for i, target_item in enumerate(val):
+            target_list = val if isinstance(val, (list, tuple)) else getattr(val, "_targets", None)
+            if target_list is not None:
+                for i, target_item in enumerate(target_list):
                     if i < count:
                         if hasattr(target_item, "__binary__"):
                             deferred_offsets.append(("table_entry", table_handle, i, target_item, active_endian))
                         elif isinstance(target_item, int):
                             table_handle.set_offset(i, target_item)
+                table_handle._targets = list(target_list)
             try:
                 setattr(instance, name, table_handle)
             except Exception:
