@@ -21,6 +21,7 @@ from binary_master import (
     write_struct,
     read_struct,
 )
+from binary_master.manual import generate_manual
 
 
 # ==========================================================
@@ -51,8 +52,9 @@ def test_struct_docstring_in_manual():
         length=100,
     )
     writer = BinaryWriter()
+    assert not hasattr(writer, "write_manual")
     writer.write_struct(pkt)
-    md = writer.write_manual(title="Documented Protocol Manual")
+    md = generate_manual(writer.entries, title="Documented Protocol Manual")
 
     # Struct docstring should be in ## Overview
     assert "## Overview" in md
@@ -71,7 +73,7 @@ def test_caption_description_in_manual():
     writer.caption("Body Section", "Payload contents follow.")
     writer.write_uint16(42, name="data")
 
-    md = writer.write_manual()
+    md = generate_manual(writer.entries)
     assert "### Header Section" in md
     assert "This section contains protocol metadata." in md
     assert "### Body Section" in md
@@ -231,7 +233,7 @@ def test_offset_table_manual_reflection():
     table.set_offset(1, pos1)
     writer.write_uint32(0xFEEDFACE, name="block_b", desc="Data block B")
 
-    md = writer.write_manual(title="Offset Table Specification")
+    md = generate_manual(writer.entries, title="Offset Table Specification")
 
     # Layout Table should contain target markers
     assert f"`-> 0x{pos0:04X}`" in md
@@ -279,7 +281,7 @@ def test_offset_table_in_binary_struct():
     assert off1 == 18
 
     # Check that manual reflects offsets
-    md = writer.write_manual()
+    md = generate_manual(writer.entries)
     assert f"`-> 0x{off0:04X}`" in md
     assert f"`-> 0x{off1:04X}`" in md
 
@@ -311,7 +313,7 @@ def test_offset_table_base_offset_procedural():
     assert stored_off1 == 12
 
     # Manual should show stored value 8 & 12, but target pointing to absolute 40 & 44
-    md = writer.write_manual(include_values=True)
+    md = generate_manual(writer.entries, include_values=True)
     assert "`-> 0x0028`" in md  # 40 in hex
     assert "`-> 0x002C`" in md  # 44 in hex
 

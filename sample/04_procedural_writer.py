@@ -6,7 +6,6 @@ Demonstrates:
 - Alignment padding, cursor seeking, and overwriting
 - Layout captions and subcaptions for manual generation
 - Procedural stream reading using BinaryReader
-- Exporting concrete execution manuals with writer.write_manual()
 """
 
 from binary_master import BinaryReader, BinaryWriter
@@ -64,9 +63,6 @@ def main():
     assert doc_title == "Confidential Document"
     assert auth_tag == "AUTH"
 
-    # 5. Generate instance manual
-    manual_md = writer.write_manual(title="Procedural Container Manual")
-    print(f"\nGenerated manual length: {len(manual_md)} characters")
     print("Procedural writer and reader operations verified successfully!")
 
 

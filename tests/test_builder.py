@@ -139,9 +139,8 @@ def test_builder_write_file(tmp_path: Path):
     builder.write(buf)
     assert "Struct `Header` (Header)" in buf.getvalue()
 
-    # Test write_manual alias
-    alias_res = builder.write_manual()
-    assert alias_res == res
+    # Ensure write_manual is removed
+    assert not hasattr(builder, "write_manual")
 
 
 def test_builder_with_bitfield_diagram():

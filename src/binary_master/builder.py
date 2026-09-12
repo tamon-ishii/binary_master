@@ -640,14 +640,6 @@ class BinaryBuilder:
                 raise TypeError(f"Invalid path_or_file: {type(path_or_file).__name__}")
         return content
 
-    def write_manual(
-        self,
-        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
-        **kwargs,
-    ) -> str:
-        """Alias for write() matching BinaryWriter naming."""
-        return self.write(path_or_file, **kwargs)
-
     def to_c_header(self, guard: Optional[str] = None, pack: bool = True) -> str:
         """Generate a complete C99/C11 header file from this specification schema.
 

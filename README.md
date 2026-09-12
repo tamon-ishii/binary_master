@@ -39,7 +39,7 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - バイト境界アライメント（`align`）およびパディング（`pad`）
   - メソッドチェーン対応ライター、カーソル操作（`seek`, `tell`, `skip`, `remaining`）
   - **キャプション & サブキャプション (`caption`, `subcaption`)**: セクションとサブセクションの階層化、多態バリアント候補の指定
-- 📊 **仕様書 & Mermaid 図の自動生成 (`write_manual` / `builder.write`)**  
+- 📊 **仕様書 & Mermaid 図の自動生成 (`Builder` / `builder.write`)**  
   - シリアライズされた全フィールドのオフセット（16進/10進）、サイズ、エンディアン、参照先ターゲット（`-> 0xXXXX`）を記録した Markdown ドキュメントを出力
   - **Mermaid Flowchart**: 条件分岐ひし形ノード、バリアント選択ノード、サブグラフとオフセット参照矢印の描画
   - **Mermaid packet-beta**: ネットワークパケット形式のビット/バイト配置図およびビットフィールド詳細図の生成
@@ -157,14 +157,17 @@ print(len(header))          # len(instance) でも取得可能 -> 19 バイト
 
 ### 2. 仕様書（Markdown & Mermaid）の自動生成
 
-バイナリを書き込むだけで、フォーマット仕様書（マニュアル）が自動生成されます。
+プロトコルスキーマを定義して、フォーマット仕様書（マニュアル）を自動生成できます。
 
 ```python
-writer = BinaryWriter()
-writer.write_struct(header)
+from binary_master import Builder
+
+builder = Builder(title="Sample Image File Specification")
+builder.add_struct(Header)
+builder.add_struct(Image)
 
 # 仕様書を Markdown ファイルに出力
-writer.write_manual("image_spec.md", title="Sample Image File Specification")
+builder.write("image_spec.md")
 ```
 
 #### 生成される仕様書のイメージ
@@ -260,9 +263,6 @@ writer.align(16, name="alignment")                # 16バイト境界へアラ�
 
 # 結果の取得
 binary_data: bytes = writer.to_bytes()
-
-# 仕様書を出力すると、各キャプションごとの見出しやMermaidサブグラフが自動生成されます
-writer.write_manual("output_spec.md", title="Protocol Specification")
 ```
 
 ### 2. `@binary_struct` の詳細機能
@@ -480,31 +480,28 @@ class NetworkPacket:
 
 ### 3. 仕様書（マニュアル）生成オプション
 
-`write_manual` では、出力形式やダイアグラムの表示スタイルを柔軟にカスタマイズできます。
+`Builder` では、出力形式やダイアグラムの表示スタイルを柔軟にカスタマイズできます。
 
 ```python
-from binary_master import write_manual
+from binary_master import Builder
 
-# 構造体インスタンスまたは BinaryWriter から直接出力可能
-write_manual(
-    header,
-    path_or_file="spec.md",
-    title="Network Protocol Spec",
+builder = Builder(title="Network Protocol Spec")
+builder.add_struct(Header)
+
+# 仕様書出力オプション
+builder.write(
+    "spec.md",
     diagram_type="both",      # 'flowchart', 'packet', 'both'
     diagram_direction="TD",   # フローチャートの向き ('TD', 'LR')
     bits_per_row=32,          # パケット図の1行あたりのビット数 (8, 16, 32)
     bit_width=40,             # パケット図の1ビットあたりの横幅 (px)。横に大きく広げたい場合に指定
     include_bitfield_diagram=True,  # ビットフィールドの詳細パケット図を含めるか
-    section_packet_diagrams=True,   # Memory Layout Tableの各セクション(caption)ごとにパケット図を埋め込むか
-    include_values=False,     # 実行時の値(Value / Preview)を含めるか (デフォルト: False、純粋な仕様書として出力)
 )
 ```
 
 - **`diagram_type="flowchart"`**: 構造体の入れ子構造やオフセット参照（矢印）を可視化するフローチャート。
 - **`diagram_type="packet"`**: RFC風のパケットレイアウト図（`packet-beta` 記法）を生成。
 - **`diagram_type="both"`**: フローチャートとパケット図の両方を並記。
-- **`section_packet_diagrams=True`**: `caption` で区切られた各メモリ領域（ヘッダー、ボディ等）の直前に、その領域専用のパケット図を埋め込みます。ブロックごとのビット配置が直感的に把握できます。
-- **`include_values=False` (デフォルト)**: フォーマット仕様書として不要な特定インスタンスのダミー値（`Value / Preview` 列やパケット図内の値表示）を省き、すっきりとした表を出力します。デバッグ時などで値も確認したい場合は `True` を指定できます。
 
 ### 4. バイナリの読み込みとデシリアライズ (`BinaryReader` / `from_bytes`)
 
@@ -674,7 +671,7 @@ if "footer" in result:
 - **セクション区切り**: `add_section(title, desc="")`
 - **アドホックフィールド**: `add_field(name, type_name, size, desc="", endian=None, condition=None)`
 - **仕様書テキスト生成**: `build(...)` / `to_markdown(...)`（Markdown 文字列を返却）
-- **仕様書ファイル書き出し**: `write(path_or_file, ...)`（ファイルまたはストリームへ出力して Markdown 文字列を返却、`write_manual` エイリアスあり）
+- **仕様書ファイル書き出し**: `write(path_or_file, ...)`（ファイルまたはストリームへ出力して Markdown 文字列を返却）
 - **C言語ヘッダー出力**: `to_c_header(guard=None, pack=True)`, `write_c_header(path_or_file, ...)`
 - **Rustコード出力**: `to_rust()`, `write_rust(path_or_file)`
 - **C++ヘッダー出力**: `to_cpp()`, `write_cpp(path_or_file)`
@@ -695,7 +692,6 @@ if "footer" in result:
 - **セクションタイトル**: `caption(title=None, desc="", variants=None)`（マニュアル・図のグループ化見出し、説明、候補バリアントを設定）
 - **サブセクションタイトル**: `subcaption(title=None, desc="")`（大見出し内の階層的サブグループを設定）
 - **パディング & アライメント**: `pad(count, pad_byte)`, `align(boundary, pad_byte)`
-- **仕様書生成**: `write_manual(path_or_file, title=..., diagram_type=...)`
 - **データ取り出し**: `to_bytes()`, `to_bytearray()`
 
 ### `BinaryReader` / `Reader` 主要メソッド
@@ -718,8 +714,8 @@ if "footer" in result:
 | [`sample/01_basic_struct.py`](sample/01_basic_struct.py) | 基本的な宣言的構造体 | `@binary_struct` の定義、数値型・固定長配列、`to_bytes()`、`read_struct()`、`sizeof()`、エンディアン制御 |
 | [`sample/02_bitfields_and_alignment.py`](sample/02_bitfields_and_alignment.py) | ビットフィールドとアライメント | `Bits[N]` によるビットパッキング、`align=4` によるパディング、`auto_align=True` 自然アライメント |
 | [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) | 相対ポインタ & オフセットテーブル | `Offset[T, Base.SELF]`、オフセット演算（`Base.SELF + 0x20`）、`OffsetTable`、自動デリファレンス |
-| [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング、`write_manual()` |
-| [`sample/05_manual_builder_and_reader.py`](sample/05_manual_builder_and_reader.py) | Builder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、多言語出力（C/Rust/C++/C#/Go）、`builder.write()`、`builder.read()` |
+| [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング |
+| [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) | Builder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、多言語出力（C/Rust/C++/C#/Go）、`builder.write()`、`builder.read()` |
 | [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 5 本のサンプルを順番に自動実行・検証するオーケストレーター |
 
 ```bash

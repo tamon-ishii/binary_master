@@ -5,13 +5,15 @@ from typing import Annotated
 from binary_master import (
     BinaryWriter,
     Bits,
+    Builder,
     FixedArray,
     UInt8,
     UInt16,
     UInt32,
     binary_struct,
-    write_manual,
 )
+import binary_master
+from binary_master.manual import generate_manual
 
 
 @binary_struct(bits=8)
@@ -41,7 +43,11 @@ def test_extract_inline_and_preceding_comments():
         tags=[1, 2, 3, 4],
     )
 
-    md = write_manual(char, title="Character Spec")
+    assert not hasattr(binary_master, "write_manual")
+
+    writer = BinaryWriter()
+    writer.write_struct(char)
+    md = generate_manual(writer.entries, title="Character Spec")
 
     # Assert field descriptions in Memory Layout Table (without runtime values)
     assert "| `0x0000` | 0 | 2 | `id` | `UInt16` | Little | キャラクターID |" in md
@@ -56,6 +62,15 @@ def test_extract_inline_and_preceding_comments():
     assert "| `[2:8]` | `reserved` | 6 bit(s) | 予約領域 |" in md
 
     # When include_values=True, Value column is included
-    md_with_val = write_manual(char, title="Character Spec", include_values=True)
+    md_with_val = generate_manual(writer.entries, title="Character Spec", include_values=True)
     assert "| `0x0000` | 0 | 2 | `id` | `UInt16` | Little | `1001 (0x3E9)` | キャラクターID |" in md_with_val
     assert "| `[0:1]` | `active` | 1 bit(s) | `1 (0x1)` | 有効状態フラグ |" in md_with_val
+
+    # Test that Builder also extracts comments when documenting schemas
+    builder = Builder(title="Character Spec")
+    builder.add_struct(Character)
+    b_md = builder.build()
+    assert "キャラクターID" in b_md
+    assert "キャラクターのレベル" in b_md
+    assert "現在の合計スコア" in b_md
+    assert "有効状態フラグ" in b_md

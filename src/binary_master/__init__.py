@@ -35,7 +35,6 @@ from .manual import (
     generate_mermaid_diagram,
     generate_packet_diagram,
     generate_bitfield_packet_diagram,
-    write_manual,
     inspect_struct_layout,
 )
 from .builder import BinaryBuilder, Builder, BuilderReadResult
@@ -95,7 +94,6 @@ __all__ = [
     "generate_mermaid_diagram",
     "generate_packet_diagram",
     "generate_bitfield_packet_diagram",
-    "write_manual",
     "inspect_struct_layout",
     "BinaryBuilder",
     "Builder",

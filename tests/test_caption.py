@@ -2,6 +2,7 @@
 
 import pytest
 from binary_master import BinaryWriter, Writer, Endian, UInt16, UInt8, binary_struct
+from binary_master.manual import generate_manual
 
 
 @binary_struct
@@ -13,6 +14,7 @@ class SimplePayload:
 def test_caption_basic_and_chaining():
     """Test setting and clearing captions with method chaining."""
     writer = BinaryWriter()
+    assert not hasattr(writer, "write_manual")
     assert writer.current_caption is None
 
     writer.caption("Header").write_uint32(0x12345678, name="magic")
@@ -57,7 +59,7 @@ def test_caption_manual_generation():
     writer.write_cstring("Hello", name="greeting", desc="Greeting text")
     writer.write_uint16(100, name="checksum", desc="Payload checksum")
 
-    md = writer.write_manual(title="Captioned Binary Spec")
+    md = generate_manual(writer.entries, title="Captioned Binary Spec")
 
     # Structure Diagram should have subgraphs for each caption
     assert "subgraph SG_File_Header" in md
@@ -77,7 +79,7 @@ def test_caption_manual_generation():
     assert "| `0x000C` | 12 | 2 | `checksum` | `UInt16` | Little | Payload checksum |" in md
 
     # When include_values=True, Value / Preview is present
-    md_val = writer.write_manual(include_values=True)
+    md_val = generate_manual(writer.entries, include_values=True)
     assert "| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | `3405691582 (0xCAFEBABE)` | Magic header identifier |" in md_val
 
 
@@ -90,7 +92,7 @@ def test_caption_with_japanese_text():
     writer.caption("データ本体")
     writer.write_uint32(12345, name="count")
 
-    md = writer.write_manual(title="日本語テスト")
+    md = generate_manual(writer.entries, title="日本語テスト")
 
     # Japanese label in subgraph
     assert '["ヘッダー情報 (0x0000 - 0x0002, 2B)"]' in md
@@ -111,5 +113,5 @@ def test_caption_with_binary_struct():
     assert writer.entries[0].caption == "Command Packet"
     assert writer.entries[1].caption == "Command Packet"
 
-    md = writer.write_manual()
+    md = generate_manual(writer.entries)
     assert "### Command Packet (0x0000 - 0x0003, 3B)" in md

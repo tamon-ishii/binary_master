@@ -1,4 +1,4 @@
-"""Tests for Mermaid Markdown manual generation via write_manual."""
+"""Tests for Mermaid Markdown manual generation."""
 
 from pathlib import Path
 import pytest
@@ -14,11 +14,13 @@ from binary_master import (
     FixedArray,
     Bits,
     binary_struct,
-    write_manual,
+    generate_manual,
+    Builder,
     LayoutEntry,
     generate_bitfield_packet_diagram,
     generate_packet_diagram,
 )
+import binary_master
 
 
 
@@ -55,11 +57,12 @@ class Packet:
 def test_manual_from_writer_primitives():
     """Test generating a manual from direct BinaryWriter primitive writes."""
     writer = BinaryWriter(default_endian=Endian.LITTLE)
+    assert not hasattr(writer, "write_manual")
     writer.write_uint32(0xDEADBEEF, name="magic", desc="Magic header identifier")
     writer.write_uint16(42, name="seq", desc="Sequence counter")
     writer.write_cstring("OK", name="status", desc="Status text")
 
-    md = writer.write_manual(title="Packet Specification")
+    md = generate_manual(writer.entries, title="Packet Specification")
 
     # Assert Markdown structure
     assert "# Packet Specification" in md
@@ -84,7 +87,7 @@ def test_manual_from_writer_primitives():
     assert "| `0x0006` | 6 | 3 | `status` | `CString` | - | Status text |" in md
 
     # Assert include_values=True restores Value / Preview column
-    md_with_val = writer.write_manual(title="Packet Specification", include_values=True)
+    md_with_val = generate_manual(writer.entries, title="Packet Specification", include_values=True)
     assert "| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | `3735928559 (0xDEADBEEF)` | Magic header identifier |" in md_with_val
 
 
@@ -96,7 +99,7 @@ def test_manual_from_binary_struct():
 
     writer = BinaryWriter()
     writer.write_struct(hdr)
-    md = writer.write_manual(title="Image File Format Manual", diagram_direction="LR")
+    md = generate_manual(writer.entries, title="Image File Format Manual", diagram_direction="LR")
 
     # Assert Mermaid diagram and subgraphs
     assert "flowchart LR" in md
@@ -120,41 +123,33 @@ def test_manual_from_binary_struct():
     assert "| `[8:16]` | `reserved` | 8 bit(s) | - |" in md
 
     # With include_values=True
-    md_val = writer.write_manual(include_values=True)
+    md_val = generate_manual(writer.entries, include_values=True)
     assert '0: "enable (1)"' in md_val
     assert "| `[0:1]` | `enable` | 1 bit(s) | `1 (0x1)` | - |" in md_val
 
 
-def test_write_manual_to_file(tmp_path: Path):
-    """Test writing the manual directly to a markdown file on disk."""
+def test_builder_write_to_file(tmp_path: Path):
+    """Test writing the specification directly to a markdown file on disk via Builder."""
     file_path = tmp_path / "format_manual.md"
-    pkt = Packet(id=0x100, count=4, payload=b"TEST")
 
-    writer = BinaryWriter(default_endian=Endian.BIG)
-    writer.write_struct(pkt)
-    returned_md = writer.write_manual(path_or_file=file_path)
+    builder = Builder(title="Binary Specification Manual", default_endian="big")
+    builder.add_struct(Packet)
+    returned_md = builder.write(file_path)
 
     assert file_path.exists()
     content = file_path.read_text(encoding="utf-8")
     assert content == returned_md
     assert "# Binary Specification Manual" in content
-    assert "SG_Packet" in content
+    assert "Packet" in content
 
 
-def test_write_manual_helper_function():
-    """Test the module-level write_manual convenience function."""
-    pkt = Packet(id=1, count=1, payload=b"A")
-    md_from_struct = write_manual(pkt, title="Packet Doc")
-    assert "# Packet Doc" in md_from_struct
-    assert "Packet" in md_from_struct
-
+def test_no_write_manual_exists():
+    """Verify that write_manual is completely removed from writer, builder, and module."""
     writer = BinaryWriter()
-    writer.write_uint8(10, name="version")
-    md_from_writer = write_manual(writer, title="Writer Doc")
-    assert "# Writer Doc" in md_from_writer
-
-    with pytest.raises(TypeError, match="Expected BinaryWriter"):
-        write_manual("invalid_object")
+    assert not hasattr(writer, "write_manual")
+    assert not hasattr(binary_master, "write_manual")
+    builder = Builder()
+    assert not hasattr(builder, "write_manual")
 
 
 def test_generate_bitfield_packet_diagram():
@@ -194,8 +189,8 @@ def test_generate_packet_diagram():
     assert '16-23: "proto (UInt8)"' in diag
 
 
-def test_write_manual_diagram_types():
-    """Test write_manual with different diagram_type parameters."""
+def test_generate_manual_diagram_types():
+    """Test generate_manual with different diagram_type parameters."""
     flags = Flags(enable=1, mode=1, priority=2, reserved=0)
     img = Image(width=10, height=10, pixels=b"\x00")
     hdr = Header(magic=0x12345678, version=1, flags=flags, image_offset=img)
@@ -204,24 +199,24 @@ def test_write_manual_diagram_types():
     writer.write_struct(hdr)
 
     # diagram_type="packet"
-    md_packet = writer.write_manual(diagram_type="packet")
+    md_packet = generate_manual(writer.entries, diagram_type="packet")
     assert "## Structure Diagram (Packet)" in md_packet
     assert "packet-beta" in md_packet
 
     # diagram_type="both"
-    md_both = writer.write_manual(diagram_type="both")
+    md_both = generate_manual(writer.entries, diagram_type="both")
     assert "## Structure Diagram (Flowchart)" in md_both
     assert "## Structure Diagram (Packet)" in md_both
 
     # include_bitfield_diagram=False
-    md_no_bf = writer.write_manual(include_bitfield_diagram=False)
+    md_no_bf = generate_manual(writer.entries, include_bitfield_diagram=False)
     assert "| Bit Range | Field Name | Width | Description |" in md_no_bf
 
-    md_no_bf_val = writer.write_manual(include_bitfield_diagram=False, include_values=True)
+    md_no_bf_val = generate_manual(writer.entries, include_bitfield_diagram=False, include_values=True)
     assert "| Bit Range | Field Name | Width | Value | Description |" in md_no_bf_val
 
 
-def test_write_manual_section_packet_diagrams():
+def test_generate_manual_section_packet_diagrams():
     """Test generating packet diagrams per section under Memory Layout Table."""
     writer = BinaryWriter()
     writer.caption("Header Section")
@@ -231,7 +226,7 @@ def test_write_manual_section_packet_diagrams():
     writer.caption("Body Section")
     writer.write_uint32(100, name="data")
 
-    md = writer.write_manual(diagram_type="flowchart", section_packet_diagrams=True)
+    md = generate_manual(writer.entries, diagram_type="flowchart", section_packet_diagrams=True)
     assert "## Memory Layout Table" in md
     assert "### Header Section (0x0000 - 0x0004, 4B)" in md
     assert "title Header Section Layout" in md
