@@ -30,6 +30,74 @@ class LayoutEntry:
     caption_variants: Optional[list] = None
 
 
+def create_dummy_instance(struct_cls: type) -> Any:
+    """Create a dummy instance of a @binary_struct class for layout inspection."""
+    if not hasattr(struct_cls, "__binary__"):
+        return None
+    from typing import get_origin, get_args, Annotated
+    from binary_master.binary_struct import BinaryType, FixedArray, Array, Offset, UInt8, OffsetTable
+
+    meta = struct_cls.__binary__
+    fields = meta.get("fields", {})
+    if meta.get("bits") is not None:
+        dummy_kwargs = {fn: 0 for fn in fields}
+        try:
+            return struct_cls(**dummy_kwargs)
+        except Exception:
+            try:
+                return struct_cls()
+            except Exception:
+                return None
+
+    dummy_kwargs = {}
+    for fn, ft in fields.items():
+        if get_origin(ft) is Annotated:
+            ft = get_args(ft)[0]
+
+        is_fixed = (isinstance(ft, tuple) and len(ft) >= 3 and ft[0] is FixedArray) or (get_origin(ft) is FixedArray)
+        is_arr = (isinstance(ft, tuple) and len(ft) >= 2 and ft[0] is Array) or (get_origin(ft) is Array)
+        is_offset = (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is Offset) or (get_origin(ft) is Offset)
+        is_offset_tbl = (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is OffsetTable) or (get_origin(ft) is OffsetTable)
+
+        if isinstance(ft, type) and issubclass(ft, BinaryType):
+            dummy_kwargs[fn] = 0
+        elif is_fixed:
+            cnt = ft[2] if isinstance(ft, tuple) else get_args(ft)[1]
+            elem_t = ft[1] if isinstance(ft, tuple) else get_args(ft)[0]
+            if elem_t is UInt8:
+                dummy_kwargs[fn] = b"\x00" * cnt
+            elif hasattr(elem_t, "__binary__"):
+                dummy_kwargs[fn] = [create_dummy_instance(elem_t)] * cnt
+            else:
+                dummy_kwargs[fn] = [0] * cnt
+        elif is_arr:
+            dummy_kwargs[fn] = b""
+        elif is_offset:
+            dummy_kwargs[fn] = 0
+        elif is_offset_tbl:
+            dummy_kwargs[fn] = []
+        elif hasattr(ft, "__binary__"):
+            dummy_kwargs[fn] = create_dummy_instance(ft)
+        else:
+            dummy_kwargs[fn] = 0
+
+    return struct_cls(**dummy_kwargs)
+
+
+def inspect_struct_layout(struct_cls: type) -> List[LayoutEntry]:
+    """Inspect the memory layout of a @binary_struct class without requiring user data."""
+    if not hasattr(struct_cls, "__binary__"):
+        return []
+    from binary_master.writer import BinaryWriter
+    try:
+        dummy = create_dummy_instance(struct_cls)
+        w = BinaryWriter()
+        w.write_struct(dummy)
+        return w.entries
+    except Exception:
+        return []
+
+
 def format_value_preview(val: Any) -> str:
     """Format a value for display in manual tables and diagrams."""
     if val is None:
@@ -385,49 +453,8 @@ def generate_manual(
     has_captions = any(e.caption for e in entries)
 
     def _inspect_struct_layout(struct_cls: type) -> List[LayoutEntry]:
-        if not hasattr(struct_cls, "__binary__"):
-            return []
-        from typing import get_origin, get_args, Annotated
-        from binary_master.binary_struct import BinaryType, FixedArray, Array, Offset, UInt8
-        from binary_master.writer import BinaryWriter
+        return inspect_struct_layout(struct_cls)
 
-        meta = struct_cls.__binary__
-        fields = meta.get("fields", {})
-        dummy_kwargs = {}
-        for fn, ft in fields.items():
-            if get_origin(ft) is Annotated:
-                ft = get_args(ft)[0]
-
-            is_fixed = (isinstance(ft, tuple) and len(ft) >= 3 and ft[0] is FixedArray) or (get_origin(ft) is FixedArray)
-            is_arr = (isinstance(ft, tuple) and len(ft) >= 2 and ft[0] is Array) or (get_origin(ft) is Array)
-            is_offset = (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is Offset) or (get_origin(ft) is Offset)
-
-            if isinstance(ft, type) and issubclass(ft, BinaryType):
-                dummy_kwargs[fn] = 0
-            elif is_fixed:
-                cnt = ft[2] if isinstance(ft, tuple) else get_args(ft)[1]
-                elem_t = ft[1] if isinstance(ft, tuple) else get_args(ft)[0]
-                if elem_t is UInt8:
-                    dummy_kwargs[fn] = b"\x00" * cnt
-                else:
-                    dummy_kwargs[fn] = [0] * cnt
-            elif is_arr:
-                dummy_kwargs[fn] = b""
-            elif is_offset:
-                dummy_kwargs[fn] = 0
-            elif hasattr(ft, "__binary__"):
-                sub_entries = _inspect_struct_layout(ft)
-                dummy_kwargs[fn] = None
-            else:
-                dummy_kwargs[fn] = 0
-
-        try:
-            dummy = struct_cls(**dummy_kwargs)
-            w = BinaryWriter()
-            w.write_struct(dummy)
-            return w.entries
-        except Exception:
-            return []
 
     def _render_variant_table_rows(v_entries: List[LayoutEntry], sec_list: List[str], inc_values: bool) -> None:
         if inc_values:

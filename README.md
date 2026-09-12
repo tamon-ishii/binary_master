@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-78%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-93%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・読み込み（シリアライズ／デシリアライズ）＆仕様書自動生成ライブラリです。
 
@@ -29,6 +29,9 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - **多態チャンク & タグ付き共用体 (`Variant[TagField, Mapping]`)**: 種別IDに応じて切り替わる多態構造体の自動ディスパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
   - 構造体のネスト
+- 📐 **事前設計型仕様書ビルダー & 自動リーダー (`ManualBuilder`)**  
+  - バイナリデータを実際に書き出すことなく、構造体クラス（`@binary_struct`）、説明文（`add_document`）、条件分岐（`condition`）、多態バリアント（`add_choice`）を事前定義して仕様書を生成（`builder.write("spec.md")`）。
+  - 事前に定義したスキーマ情報をもとに、バイナリバイト列から各構造体・バリアントを自動判別して復元する **スキーマ駆動自動リーダー (`builder.read(data)`)** を提供。
 - ✍️ **柔軟な手続き的ライター & リーダー (`BinaryWriter` / `BinaryReader`)**  
   - インメモリ（`BytesIO` / `bytes`）またはファイル/ストリームへの直接読み書き
   - 厳格な境界・EOFチェック（オーバーフローや切り捨ての即時エラー検知）
@@ -36,11 +39,12 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - バイト境界アライメント（`align`）およびパディング（`pad`）
   - メソッドチェーン対応ライター、カーソル操作（`seek`, `tell`, `skip`, `remaining`）
   - **キャプション & サブキャプション (`caption`, `subcaption`)**: セクションとサブセクションの階層化、多態バリアント候補の指定
-- 📊 **仕様書 & Mermaid 図の自動生成 (`write_manual`)**  
+- 📊 **仕様書 & Mermaid 図の自動生成 (`write_manual` / `builder.write`)**  
   - シリアライズされた全フィールドのオフセット（16進/10進）、サイズ、エンディアン、参照先ターゲット（`-> 0xXXXX`）を記録した Markdown ドキュメントを出力
-  - **Mermaid Flowchart**: 構造体ごとのサブグラフとオフセット参照関係の矢印表示
+  - **Mermaid Flowchart**: 条件分岐ひし形ノード、バリアント選択ノード、サブグラフとオフセット参照矢印の描画
   - **Mermaid packet-beta**: ネットワークパケット形式のビット/バイト配置図およびビットフィールド詳細図の生成
   - **多態チャンク・バリアント仕様の自動展開**: 条件に応じて格納される候補構造体のレイアウト表と相対パケット図の自動生成
+
 
 ---
 
@@ -536,6 +540,67 @@ reader.align(8)
 header = reader.read_struct(Header)
 ```
 
+### 5. 事前スキーマ定義による仕様書生成 & 自動リーダー (`ManualBuilder`)
+
+実行時のダミーインスタンスを作成することなく、プロトコルの構造定義（ヘッダー、条件分岐、多態バリアント、説明文）を事前に宣言して仕様書を生成し、さらにそのスキーマ定義から直接バイナリデータを自動パースできます。
+
+```python
+from binary_master import ManualBuilder, binary_struct, UInt8, UInt16, UInt32, Float32, FixedArray
+
+@binary_struct
+class Header:
+    magic: UInt32
+    msg_type: UInt16
+    flags: UInt16
+
+@binary_struct
+class TextPayload:
+    length: UInt16
+    content: FixedArray[UInt8, 16]
+
+@binary_struct
+class SensorPayload:
+    sensor_id: UInt32
+    temperature: Float32
+
+@binary_struct
+class Footer:
+    crc32: UInt32
+
+# 1. スキーマの事前定義
+builder = ManualBuilder(title="Telemetry Protocol", version="1.0.0")
+
+# 説明文・ドキュメントの章を追加
+builder.add_document("プロトコル概要", "このプロトコルはネットワークテレメトリを送信します。")
+
+# 順次構造体の登録
+builder.add_struct(Header, name="header", desc="メッセージヘッダー")
+
+# タグフィールドに基づく多態バリアント分岐（フローチャートにひし形分岐ノードを自動生成）
+builder.add_choice(
+    name="payload",
+    tag_field="msg_type",
+    variants={
+        1: (TextPayload, "テキストメッセージ"),
+        2: (SensorPayload, "センサーデータ"),
+    },
+)
+
+# 条件付き構造体（flags & 1 の場合のみフッターが存在）
+builder.add_struct(Footer, name="footer", condition="flags & 0x01 != 0")
+
+# 2. 仕様書を Markdown ファイルに出力
+builder.write("protocol_spec.md")
+
+# 3. 定義したスキーマに基づく自動デシリアライズ
+# （タグ値に応じたバリアント選択や条件判定を自動実行）
+result = builder.read(binary_bytes)
+print(result.header.magic)
+print(result.payload)       # TextPayload または SensorPayload インスタンス
+if "footer" in result:
+    print(result.footer.crc32)
+```
+
 ---
 
 ## API リファレンス
@@ -562,6 +627,16 @@ header = reader.read_struct(Header)
 - **シリアライズ**: `instance.to_bytes(endian=None)` または `write_struct(instance)`
 - **デシリアライズ**: `Cls.from_bytes(data, endian=None)` または `read_struct(Cls, reader)`
 
+### `ManualBuilder` 主要メソッド
+- **章・説明文の追加**: `add_document(title, content)`（Markdown 形式の説明文・章を追加）
+- **構造体の登録**: `add_struct(cls, name=None, desc="", condition=None, condition_func=None, count=None)`（`@binary_struct` クラスを登録。条件分岐やリピート件数に対応）
+- **多態バリアント分岐の登録**: `add_choice(name, tag_field, variants, desc="", condition=None, condition_func=None)`（タグフィールドに基づくバリアント選択点を登録）
+- **セクション区切り**: `add_section(title, desc="")`
+- **アドホックフィールド**: `add_field(name, type_name, size, desc="", endian=None, condition=None)`
+- **仕様書テキスト生成**: `build(...)` / `to_markdown(...)`（Markdown 文字列を返却）
+- **仕様書ファイル書き出し**: `write(path_or_file, ...)`（ファイルまたはストリームへ出力して Markdown 文字列を返却、`write_manual` エイリアスあり）
+- **スキーマ駆動自動読み込み**: `read(reader_or_bytes, endian=None)`（バイナリデータをスキーマに基づいて自動パースし `BuilderReadResult` を返却）
+
 ### `BinaryWriter` 主要メソッド
 - **整数書き込み**: `write_uint8`, `write_int8`, `write_uint16`, `write_int16`, `write_uint32`, `write_int32`, `write_uint64`, `write_int64`
 - **浮動小数点数**: `write_float32`, `write_float64`
@@ -587,6 +662,26 @@ header = reader.read_struct(Header)
 
 ---
 
+## サンプルコード一覧
+
+`sample/` ディレクトリには、基本機能から高度な応用まで系統立てて学べるサンプルスクリプトが用意されています：
+
+| ファイル | テーマ | 主な内容 |
+|---|---|---|
+| [`sample/01_basic_struct.py`](sample/01_basic_struct.py) | 基本的な宣言的構造体 | `@binary_struct` の定義、数値型・固定長配列、`to_bytes()`、`read_struct()`、`sizeof()`、エンディアン制御 |
+| [`sample/02_bitfields_and_alignment.py`](sample/02_bitfields_and_alignment.py) | ビットフィールドとアライメント | `Bits[N]` によるビットパッキング、`align=4` によるパディング、`auto_align=True` 自然アライメント |
+| [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) | 相対ポインタ & オフセットテーブル | `Offset[T, Base.SELF]`、オフセット演算（`Base.SELF + 0x20`）、`OffsetTable`、自動デリファレンス |
+| [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング、`write_manual()` |
+| [`sample/05_manual_builder_and_reader.py`](sample/05_manual_builder_and_reader.py) | ManualBuilder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、条件分岐、`builder.write()`、`builder.read()` |
+| [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 5 本のサンプルを順番に自動実行・検証するオーケストレーター |
+
+```bash
+# 全サンプルの実行
+python sample/main.py
+```
+
+---
+
 ## テストの実行
 
 テストスイートは `pytest` を使用して実行できます。
@@ -600,3 +695,4 @@ pytest
 ## ライセンス
 
 MIT License
+

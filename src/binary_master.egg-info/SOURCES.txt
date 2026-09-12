@@ -4,6 +4,7 @@ src/binary_master/__init__.py
 src/binary_master/binary_struct.py
 src/binary_master/enums.py
 src/binary_master/manual.py
+src/binary_master/manual_builder.py
 src/binary_master/reader.py
 src/binary_master/writer.py
 src/binary_master.egg-info/PKG-INFO
@@ -16,6 +17,7 @@ tests/test_binary_struct.py
 tests/test_caption.py
 tests/test_comments.py
 tests/test_manual.py
+tests/test_manual_builder.py
 tests/test_reader.py
 tests/test_variants.py
 tests/test_writer.py

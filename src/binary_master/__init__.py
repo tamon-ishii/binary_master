@@ -36,7 +36,10 @@ from .manual import (
     generate_packet_diagram,
     generate_bitfield_packet_diagram,
     write_manual,
+    inspect_struct_layout,
 )
+from .manual_builder import ManualBuilder, BuilderReadResult
+
 
 __version__ = "0.2.0"
 
@@ -79,5 +82,9 @@ __all__ = [
     "generate_packet_diagram",
     "generate_bitfield_packet_diagram",
     "write_manual",
+    "inspect_struct_layout",
+    "ManualBuilder",
+    "BuilderReadResult",
 ]
+
 
