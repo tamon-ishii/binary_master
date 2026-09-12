@@ -25,6 +25,9 @@ class LayoutEntry:
     caption: Optional[str] = None
     struct_doc: Optional[str] = None
     caption_desc: Optional[str] = None
+    subcaption: Optional[str] = None
+    subcaption_desc: Optional[str] = None
+    caption_variants: Optional[list] = None
 
 
 def format_value_preview(val: Any) -> str:
@@ -316,6 +319,8 @@ def generate_manual(
     include_values: bool = False,
 ) -> str:
     """Generate a comprehensive Markdown manual with Mermaid diagram and tables."""
+    if hasattr(entries, "entries"):
+        entries = getattr(entries, "entries")
     total_bytes = 0
     if entries:
         total_bytes = max(e.offset + e.size for e in entries)
@@ -378,6 +383,81 @@ def generate_manual(
     sections.append("## Memory Layout Table\n")
 
     has_captions = any(e.caption for e in entries)
+
+    def _inspect_struct_layout(struct_cls: type) -> List[LayoutEntry]:
+        if not hasattr(struct_cls, "__binary__"):
+            return []
+        from typing import get_origin, get_args, Annotated
+        from binary_master.binary_struct import BinaryType, FixedArray, Array, Offset, UInt8
+        from binary_master.writer import BinaryWriter
+
+        meta = struct_cls.__binary__
+        fields = meta.get("fields", {})
+        dummy_kwargs = {}
+        for fn, ft in fields.items():
+            if get_origin(ft) is Annotated:
+                ft = get_args(ft)[0]
+
+            is_fixed = (isinstance(ft, tuple) and len(ft) >= 3 and ft[0] is FixedArray) or (get_origin(ft) is FixedArray)
+            is_arr = (isinstance(ft, tuple) and len(ft) >= 2 and ft[0] is Array) or (get_origin(ft) is Array)
+            is_offset = (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is Offset) or (get_origin(ft) is Offset)
+
+            if isinstance(ft, type) and issubclass(ft, BinaryType):
+                dummy_kwargs[fn] = 0
+            elif is_fixed:
+                cnt = ft[2] if isinstance(ft, tuple) else get_args(ft)[1]
+                elem_t = ft[1] if isinstance(ft, tuple) else get_args(ft)[0]
+                if elem_t is UInt8:
+                    dummy_kwargs[fn] = b"\x00" * cnt
+                else:
+                    dummy_kwargs[fn] = [0] * cnt
+            elif is_arr:
+                dummy_kwargs[fn] = b""
+            elif is_offset:
+                dummy_kwargs[fn] = 0
+            elif hasattr(ft, "__binary__"):
+                sub_entries = _inspect_struct_layout(ft)
+                dummy_kwargs[fn] = None
+            else:
+                dummy_kwargs[fn] = 0
+
+        try:
+            dummy = struct_cls(**dummy_kwargs)
+            w = BinaryWriter()
+            w.write_struct(dummy)
+            return w.entries
+        except Exception:
+            return []
+
+    def _render_variant_table_rows(v_entries: List[LayoutEntry], sec_list: List[str], inc_values: bool) -> None:
+        if inc_values:
+            sec_list.append(
+                "| Relative Offset | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
+            )
+            sec_list.append("|---|---|---|---|---|---|---|")
+        else:
+            sec_list.append(
+                "| Relative Offset | Size (B) | Field Name | Type | Endian | Description |"
+            )
+            sec_list.append("|---|---|---|---|---|---|")
+
+        for entry in v_entries:
+            rel_off = f"`+0x{entry.offset:02X}`"
+            size_str = str(entry.size)
+            name_str = f"`{entry.name}`" if entry.name else "-"
+            type_str = f"`{entry.type_name}`"
+            endian_str = entry.endian or "-"
+            desc_str = entry.description or "-"
+            if inc_values:
+                val_str = format_value_preview(entry.value)
+                sec_list.append(
+                    f"| {rel_off} | {size_str} | {name_str} | {type_str} | {endian_str} | {val_str} | {desc_str} |"
+                )
+            else:
+                sec_list.append(
+                    f"| {rel_off} | {size_str} | {name_str} | {type_str} | {endian_str} | {desc_str} |"
+                )
+        sec_list.append("")
 
     def _render_table_rows(entry_list: List[LayoutEntry]) -> None:
         if include_values:
@@ -479,7 +559,100 @@ def generate_manual(
                     sections.append(sec_diag)
                     sections.append("")
 
-            _render_table_rows(c_entries)
+            # Check if subcaptions exist
+            has_subcaptions = any(e.subcaption for e in c_entries)
+            if has_subcaptions:
+                sub_groups: List[tuple[Optional[str], Optional[str], List[LayoutEntry]]] = []
+                curr_sub: Optional[str] = None
+                curr_sub_desc: Optional[str] = None
+                curr_sub_entries: List[LayoutEntry] = []
+                for entry in c_entries:
+                    if entry.subcaption != curr_sub:
+                        if curr_sub_entries:
+                            sub_groups.append((curr_sub, curr_sub_desc, curr_sub_entries))
+                        curr_sub = entry.subcaption
+                        curr_sub_desc = entry.subcaption_desc
+                        curr_sub_entries = [entry]
+                    else:
+                        curr_sub_entries.append(entry)
+                if curr_sub_entries:
+                    sub_groups.append((curr_sub, curr_sub_desc, curr_sub_entries))
+
+                for sub_title, s_desc, s_entries in sub_groups:
+                    if sub_title:
+                        s_min = s_entries[0].offset
+                        s_max = s_entries[-1].offset + s_entries[-1].size
+                        s_size = s_max - s_min
+                        sections.append(f"#### {sub_title} (0x{s_min:04X} - 0x{s_max:04X}, {s_size}B)\n")
+                        if s_desc:
+                            sections.append(f"{s_desc}\n")
+                        if section_packet_diagrams:
+                            s_diag = generate_packet_diagram(
+                                s_entries,
+                                title=f"{sub_title} Layout",
+                                bits_per_row=bits_per_row,
+                                expand_bitfields=expand_bitfields,
+                                font_size=font_size,
+                                bit_width=bit_width,
+                                relative_offset=True,
+                                include_values=include_values,
+                            )
+                            if s_diag:
+                                sections.append(s_diag)
+                                sections.append("")
+                    _render_table_rows(s_entries)
+            else:
+                _render_table_rows(c_entries)
+
+            # Check if variants are registered on this caption
+            variants = None
+            for e in c_entries:
+                if e.caption_variants:
+                    variants = e.caption_variants
+                    break
+
+            if variants:
+                sections.append("この領域には、条件（種別タグ等）に応じて以下のいずれかの構造体が格納されます。\n")
+                var_list = []
+                if isinstance(variants, dict):
+                    for k, v in variants.items():
+                        var_list.append((k, v, getattr(v, "__doc__", "") or ""))
+                elif isinstance(variants, (list, tuple)):
+                    for item in variants:
+                        if isinstance(item, tuple) and len(item) == 3:
+                            var_list.append(item)
+                        elif isinstance(item, tuple) and len(item) == 2:
+                            var_list.append((item[0], item[1], getattr(item[1], "__doc__", "") or ""))
+                        elif hasattr(item, "__binary__"):
+                            var_list.append(("-", item, getattr(item, "__doc__", "") or ""))
+
+                for tag, v_cls, v_desc in var_list:
+                    cls_name = getattr(v_cls, "__name__", str(v_cls))
+                    tag_str = f"Tag `0x{tag:04X}`" if isinstance(tag, int) else (f"Tag `{tag}`" if tag != "-" else "")
+                    header_str = f"#### [Variant] {tag_str + ': ' if tag_str else ''}`{cls_name}`\n"
+                    sections.append(header_str)
+                    doc_text = v_desc or getattr(v_cls, "__doc__", "") or ""
+                    if doc_text:
+                        import inspect
+                        sections.append(f"{inspect.cleandoc(doc_text)}\n")
+
+                    v_entries = _inspect_struct_layout(v_cls)
+                    if v_entries:
+                        if section_packet_diagrams:
+                            v_diag = generate_packet_diagram(
+                                v_entries,
+                                title=f"{cls_name} Layout",
+                                bits_per_row=bits_per_row,
+                                expand_bitfields=expand_bitfields,
+                                font_size=font_size,
+                                bit_width=bit_width,
+                                relative_offset=True,
+                                include_values=False,
+                            )
+                            if v_diag:
+                                sections.append(v_diag)
+                                sections.append("")
+                        _render_variant_table_rows(v_entries, sections, include_values)
 
     # 4. Bitfield breakdowns if any
     bitfields = [e for e in entries if e.subfields]

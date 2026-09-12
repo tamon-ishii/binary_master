@@ -64,6 +64,9 @@ class BinaryWriter:
         self._entries: list[Any] = []
         self._current_caption: Optional[str] = None
         self._current_caption_desc: str = ""
+        self._current_caption_variants: Optional[list] = None
+        self._current_subcaption: Optional[str] = None
+        self._current_subcaption_desc: str = ""
         if stream is None:
             self._stream = io.BytesIO()
             self._close_stream = auto_close if auto_close is not None else False
@@ -73,7 +76,12 @@ class BinaryWriter:
             self._close_stream = auto_close if auto_close is not None else False
             self._is_memory = isinstance(stream, io.BytesIO)
 
-    def caption(self, title: Optional[str] = None, desc: str = "") -> BinaryWriter:
+    def caption(
+        self,
+        title: Optional[str] = None,
+        desc: str = "",
+        variants: Optional[list] = None,
+    ) -> BinaryWriter:
         """Set the active section caption/title for subsequent binary writes.
 
         Fields and structures written after this call will be grouped under
@@ -82,12 +90,31 @@ class BinaryWriter:
         Args:
             title: The caption or title string. Pass None or an empty string to clear.
             desc: Optional description for this section/caption.
+            variants: Optional list of candidate variant structures for this section,
+                      e.g. [(tag, StructCls, desc), ...] or [StructCls, ...].
 
         Returns:
             self for method chaining.
         """
         self._current_caption = title if title else None
         self._current_caption_desc = desc
+        self._current_caption_variants = variants
+        self._current_subcaption = None
+        self._current_subcaption_desc = ""
+        return self
+
+    def subcaption(self, title: Optional[str] = None, desc: str = "") -> BinaryWriter:
+        """Set an active subcaption under the current section caption.
+
+        Args:
+            title: The subcaption title string.
+            desc: Optional description for this subcaption.
+
+        Returns:
+            self for method chaining.
+        """
+        self._current_subcaption = title if title else None
+        self._current_subcaption_desc = desc
         return self
 
     @property
@@ -99,6 +126,21 @@ class BinaryWriter:
     def current_caption_desc(self) -> str:
         """Get the description of the currently active section caption."""
         return self._current_caption_desc
+
+    @property
+    def current_caption_variants(self) -> Optional[list]:
+        """Get the candidate variants of the currently active section caption."""
+        return self._current_caption_variants
+
+    @property
+    def current_subcaption(self) -> Optional[str]:
+        """Get the currently active subcaption."""
+        return self._current_subcaption
+
+    @property
+    def current_subcaption_desc(self) -> str:
+        """Get the description of the currently active subcaption."""
+        return self._current_subcaption_desc
 
     @classmethod
     def to_memory(cls, default_endian: EndianType = Endian.LITTLE) -> BinaryWriter:
@@ -194,11 +236,17 @@ class BinaryWriter:
         caption: Optional[str] = None,
         struct_doc: Optional[str] = None,
         caption_desc: Optional[str] = None,
+        subcaption: Optional[str] = None,
+        subcaption_desc: Optional[str] = None,
+        caption_variants: Optional[list] = None,
     ) -> None:
         from binary_master.manual import LayoutEntry
 
         active_caption = caption if caption is not None else self._current_caption
         active_caption_desc = caption_desc if caption_desc is not None else self._current_caption_desc
+        active_subcaption = subcaption if subcaption is not None else self._current_subcaption
+        active_subcaption_desc = subcaption_desc if subcaption_desc is not None else self._current_subcaption_desc
+        active_variants = caption_variants if caption_variants is not None else self._current_caption_variants
         self._entries.append(
             LayoutEntry(
                 offset=offset,
@@ -214,6 +262,9 @@ class BinaryWriter:
                 caption=active_caption,
                 struct_doc=struct_doc,
                 caption_desc=active_caption_desc,
+                subcaption=active_subcaption,
+                subcaption_desc=active_subcaption_desc,
+                caption_variants=active_variants,
             )
         )
 

@@ -4,7 +4,7 @@ import inspect
 import re
 import sys
 from dataclasses import dataclass
-from typing import Annotated, Any, Generic, Optional, TypeVar, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, Generic, Optional, TypeVar, Union, get_args, get_origin, get_type_hints
 
 from binary_master.enums import Endian, EndianType, normalize_endian
 
@@ -127,6 +127,30 @@ class OffsetTable(Generic[T]):
             count = args
             offset_t = UInt32
         return cls, count, offset_t
+
+
+class Variant(Generic[T]):
+    """タグフィールドの値に応じて型が切り替わるバリアント型 (Tagged Union / Chunk Variants)"""
+
+    def __init__(
+        self,
+        value: Any = None,
+        *,
+        tag_field: Optional[str] = None,
+        mapping: Optional[dict[Any, type]] = None,
+    ):
+        self.value = value
+        self.tag_field = tag_field
+        self.mapping = mapping or {}
+
+    def __class_getitem__(cls, args):
+        if not isinstance(args, tuple) or len(args) < 2:
+            raise TypeError("Variant requires [tag_field_name, {tag_value: StructClass, ...}]")
+        tag_field, mapping = args[0], args[1]
+        return cls, tag_field, mapping
+
+    def __repr__(self) -> str:
+        return f"Variant({self.value!r})"
 
 
 # ==========================================================
@@ -433,6 +457,19 @@ def _get_field_alignment(ftype: Any, val: Any = None) -> int:
     if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is OffsetTable) or get_origin(ftype) is OffsetTable:
         offset_t = ftype[2] if isinstance(ftype, tuple) and len(ftype) >= 3 else UInt32
         return offset_t._size if hasattr(offset_t, "_size") else 4
+    is_variant = (
+        (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Variant)
+        or (get_origin(ftype) is Variant)
+    )
+    if is_variant:
+        mapping = (
+            ftype[2]
+            if isinstance(ftype, tuple) and len(ftype) >= 3
+            else (get_args(ftype)[1] if len(get_args(ftype)) > 1 else {})
+        )
+        if mapping:
+            return max([_get_field_alignment(c) for c in mapping.values()], default=4)
+        return 4
     return 1
 
 
@@ -573,6 +610,30 @@ def write_struct(
                 setattr(instance, name, table_handle)
             except Exception:
                 pass
+            continue
+
+        # Check Variant[tag_field, mapping]
+        is_variant = (
+            (isinstance(ftype, tuple) and len(ftype) >= 3 and ftype[0] is Variant)
+            or (get_origin(ftype) is Variant)
+        )
+        if is_variant:
+            tag_field = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
+            mapping = ftype[2] if isinstance(ftype, tuple) else get_args(ftype)[1]
+            if hasattr(writer, "_current_caption_variants") and writer._current_caption_variants is None:
+                writer._current_caption_variants = [(k, v, getattr(v, "__doc__", "") or "") for k, v in mapping.items()]
+            target_obj = val.value if isinstance(val, Variant) else val
+            if hasattr(target_obj, "__binary__"):
+                write_struct(
+                    target_obj,
+                    writer=writer,
+                    endian=active_endian,
+                    parent_field_name=name,
+                    parent_struct_name=current_struct_name,
+                    desc=f_desc,
+                )
+            elif isinstance(target_obj, (bytes, bytearray, memoryview)):
+                writer.write_bytes(bytes(target_obj), name=name, desc=f_desc)
             continue
 
         # Check FixedArray[T, N]
@@ -823,6 +884,32 @@ def read_struct(
                     off = reader.read_uint32(endian=active_endian)
                 offs.append(off)
             kwargs[name] = offs
+            continue
+
+        # Check Variant[tag_field, mapping]
+        is_variant = (
+            (isinstance(ftype, tuple) and len(ftype) >= 3 and ftype[0] is Variant)
+            or (get_origin(ftype) is Variant)
+        )
+        if is_variant:
+            tag_field = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
+            mapping = ftype[2] if isinstance(ftype, tuple) else get_args(ftype)[1]
+            tag_val = kwargs.get(tag_field)
+            if tag_val is None:
+                raise ValueError(
+                    f"Tag field '{tag_field}' must precede Variant field '{name}' in struct definition"
+                )
+            target_cls = mapping.get(tag_val)
+            if target_cls is None:
+                raise ValueError(
+                    f"Unknown variant tag {tag_val!r} for field '{name}' (known tags: {list(mapping.keys())})"
+                )
+            if hasattr(target_cls, "__binary__"):
+                kwargs[name] = read_struct(target_cls, reader=reader, endian=active_endian)
+            elif target_cls is bytes:
+                kwargs[name] = reader.read_bytes()
+            else:
+                kwargs[name] = reader.read_bytes()
             continue
 
         # Check FixedArray[T, N]

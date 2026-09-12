@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-60%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-68%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・読み込み（シリアライズ／デシリアライズ）＆仕様書自動生成ライブラリです。
 
@@ -25,6 +25,7 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング・アンパッキング
   - **オフセット自動計算 & 解決 (`Offset[T]`)**: ヘッダーのオフセット値の自動バックパッチおよび読み込み時の参照先自動インスタンス化
   - **オフセットテーブル (`OffsetTable[Count, Type]`)**: 複数エントリのオフセット配列の予約・自動バックパッチ
+  - **多態チャンク & タグ付き共用体 (`Variant[TagField, Mapping]`)**: 種別IDに応じて切り替わる多態構造体の自動ディスパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
   - 構造体のネスト
 - ✍️ **柔軟な手続き的ライター & リーダー (`BinaryWriter` / `BinaryReader`)**  
@@ -33,10 +34,12 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - 各種文字列形式（C言語スタイルの Null 終端、Pascal スタイルの長さプレフィックス、固定長パディング）
   - バイト境界アライメント（`align`）およびパディング（`pad`）
   - メソッドチェーン対応ライター、カーソル操作（`seek`, `tell`, `skip`, `remaining`）
+  - **キャプション & サブキャプション (`caption`, `subcaption`)**: セクションとサブセクションの階層化、多態バリアント候補の指定
 - 📊 **仕様書 & Mermaid 図の自動生成 (`write_manual`)**  
   - シリアライズされた全フィールドのオフセット（16進/10進）、サイズ、エンディアン、参照先ターゲット（`-> 0xXXXX`）を記録した Markdown ドキュメントを出力
   - **Mermaid Flowchart**: 構造体ごとのサブグラフとオフセット参照関係の矢印表示
   - **Mermaid packet-beta**: ネットワークパケット形式のビット/バイト配置図およびビットフィールド詳細図の生成
+  - **多態チャンク・バリアント仕様の自動展開**: 条件に応じて格納される候補構造体のレイアウト表と相対パケット図の自動生成
 
 ---
 
@@ -320,6 +323,72 @@ writer.write_cstring("Section 2 Data")
 ```
 ※ マニュアル出力時、オフセットテーブルの各スロットには参照先オフセットを示す `-> 0xXXXX` マーカーや Mermaid の矢印（`-.->|offset: 0xXXXX|`）が自動的に付与されます。
 
+#### 多態チャンク（タグ付き共用体 / バリアント）とサブキャプション
+チャンク形式のバイナリなど、**「同じオフセット位置に、種別タグやフラグに応じて異なる種類の構造体が格納される」** ケースを強力にサポートしています。
+
+**1. 宣言的タグ付き共用体 (`Variant[tag_field, mapping]`)**
+先行するタグフィールド（例: `chunk_type`）の値に基づいて、デシリアライズ先を自動分岐させます。
+
+```python
+from binary_master import Variant, UInt16, UInt32, binary_struct
+
+@binary_struct
+class HeaderChunk:
+    """設定ヘッダ情報"""
+    version: UInt16
+    flags: UInt16
+
+@binary_struct
+class TextChunk:
+    """文字列データ情報"""
+    length: UInt32
+
+@binary_struct
+class Chunk:
+    """多態チャンクコンテナ"""
+    chunk_type: UInt16
+    # chunk_type が 1 なら HeaderChunk、2 なら TextChunk に自動ディスパッチ
+    payload: Variant["chunk_type", {1: HeaderChunk, 2: TextChunk}]
+
+# 書き込み
+c = Chunk(chunk_type=1, payload=HeaderChunk(version=1, flags=0))
+raw = c.to_bytes()
+
+# 読み込み（タグ値に応じて自動的に HeaderChunk インスタンスとして復元されます）
+parsed = Chunk.from_bytes(raw)
+assert isinstance(parsed.payload, HeaderChunk)
+```
+
+**2. キャプションでの候補バリアント登録 & マニュアル自動展開 (`variants`)**
+同一領域に入る候補構造体を `caption(..., variants=[...])` に指定しておくと、マニュアル上に各候補構造体の説明、相対オフセット（`+0x00`）のパケット図およびレイアウト表が展開されます。
+
+```python
+writer = BinaryWriter()
+writer.caption(
+    "ペイロード領域",
+    desc="チャンク種別に応じていずれかの構造体が格納されます",
+    variants=[
+        (1, HeaderChunk, "種別1: ヘッダ"),
+        (2, TextChunk, "種別2: テキスト"),
+    ],
+)
+writer.write_struct(header_chunk)
+```
+
+**3. 階層的サブキャプション (`subcaption`)**
+共通セクションの中で種類ごとに手続き的に書き分けたい場合、`subcaption()` を使うと大見出しの下に小見出しが生成されます。
+
+```python
+writer = BinaryWriter()
+writer.caption("チャンクボディ", "多態データ領域")
+
+writer.subcaption("ヘッダ種別 (Type=1)", "Type 1 の設定パラメータ")
+writer.write_uint16(0x0100, name="version")
+
+writer.subcaption("テキスト種別 (Type=2)", "Type 2 の文字列パラメータ")
+writer.write_uint32(42, name="length")
+```
+
 #### Docstring の仕様書反映
 構造体やビットフィールドに記述した Python 標準の docstring（`"""..."""`）は、自動的に仕様書（マニュアル）の見出し下や概要欄にドキュメントとして反映されます。
 
@@ -412,6 +481,7 @@ header = reader.read_struct(Header)
 | `OffsetTable[Count, Type]` | `sizeof(Type) * Count` | オフセットテーブル配列（自動解決） |
 | `FixedArray[T, N]` | `sizeof(T) * N` | 固定長要素配列 |
 | `Array[T]` | 可変 | 可変長要素配列 |
+| `Variant[TagField, Mapping]` | 可変 | タグ値に応じた多態構造体（自動ディスパッチ） |
 
 ### `BinaryWriter` 主要メソッド
 - **整数書き込み**: `write_uint8`, `write_int8`, `write_uint16`, `write_int16`, `write_uint32`, `write_int32`, `write_uint64`, `write_int64`
@@ -421,7 +491,8 @@ header = reader.read_struct(Header)
 - **オフセットテーブル**: `write_offset_table(count, offset_size=4, ...)`（戻り値 `OffsetTableHandle` で `set_offset`, `write_offset`, `write_target` 等が可能）
 - **構造体**: `write_struct(instance, endian=None)`
 - **位置制御**: `tell()`, `seek(offset, whence)`
-- **セクションタイトル**: `caption(title=None, desc="")`（マニュアル・図のグループ化見出しや説明を設定）
+- **セクションタイトル**: `caption(title=None, desc="", variants=None)`（マニュアル・図のグループ化見出し、説明、候補バリアントを設定）
+- **サブセクションタイトル**: `subcaption(title=None, desc="")`（大見出し内の階層的サブグループを設定）
 - **パディング & アライメント**: `pad(count, pad_byte)`, `align(boundary, pad_byte)`
 - **仕様書生成**: `write_manual(path_or_file, title=..., diagram_type=...)`
 - **データ取り出し**: `to_bytes()`, `to_bytearray()`
