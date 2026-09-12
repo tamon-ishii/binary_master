@@ -112,6 +112,12 @@ If bit 0 of `flags` is set (`flags & 0x01 != 0`), a 4-byte `ChecksumFooter` is a
     builder.write(spec_path, diagram_direction="TD")
     print(f"Generated specification manual saved to: {spec_path.name}")
 
+    # 5. Export C language header file using builder.write_c_header()
+    header_path = Path(__file__).parent / "telemetry_protocol.h"
+    builder.write_c_header(header_path)
+    print(f"Generated C header file saved to:         {header_path.name}")
+
+
     # =========================================================================
     # 5. Automated Schema-Driven Reading (builder.read)
     # =========================================================================

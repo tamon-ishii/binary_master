@@ -39,6 +39,8 @@ from .manual import (
     inspect_struct_layout,
 )
 from .manual_builder import ManualBuilder, BuilderReadResult
+from .c_header import to_c_header, write_c_header, to_c_struct
+
 
 
 __version__ = "0.2.0"
@@ -85,6 +87,10 @@ __all__ = [
     "inspect_struct_layout",
     "ManualBuilder",
     "BuilderReadResult",
+    "to_c_header",
+    "write_c_header",
+    "to_c_struct",
 ]
+
 
 

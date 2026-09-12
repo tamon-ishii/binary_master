@@ -512,6 +512,13 @@ def from_bytes(cls, data: Union[bytes, bytearray], endian: Optional[EndianType] 
     return read_struct(cls, reader=data, endian=endian)
 
 
+def to_c_struct_method(cls, name: Optional[str] = None, desc: str = "") -> str:
+    """Generate a C typedef struct definition for this @binary_struct class."""
+    from binary_master.c_header import to_c_struct
+
+    return to_c_struct(cls, name=name, desc=desc)
+
+
 def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_align=False):
 
     def wrapper(target_cls):
@@ -527,9 +534,11 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
         )
         target_cls.to_bytes = to_bytes
         target_cls.from_bytes = classmethod(from_bytes)
+        target_cls.to_c_struct = classmethod(to_c_struct_method)
         target_cls.binary_size = _BinarySizeDescriptor()
         target_cls.__len__ = lambda self: sizeof(self)
         return target_cls
+
 
     if cls is not None:
         return wrapper(cls)

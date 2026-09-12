@@ -647,6 +647,41 @@ class ManualBuilder:
         """Alias for write() matching BinaryWriter naming."""
         return self.write(path_or_file, **kwargs)
 
+    def to_c_header(self, guard: Optional[str] = None, pack: bool = True) -> str:
+        """Generate a complete C99/C11 header file from this specification schema.
+
+        Args:
+            guard: Optional custom include guard name (e.g. 'MY_PROTOCOL_H').
+            pack: Whether to wrap structs with #pragma pack(push, 1) and #pragma pack(pop).
+
+        Returns:
+            The generated C header code as a string.
+        """
+        from binary_master.c_header import generate_c_header
+
+        return generate_c_header(self, guard=guard, pack=pack)
+
+    def write_c_header(
+        self,
+        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+        guard: Optional[str] = None,
+        pack: bool = True,
+    ) -> str:
+        """Generate C header code and optionally save it to a file or writable stream.
+
+        Args:
+            path_or_file: Target file path, Path object, or writable text stream.
+            guard: Optional custom include guard name.
+            pack: Whether to wrap structs with #pragma pack(push, 1) and #pragma pack(pop).
+
+        Returns:
+            The generated C header code as a string.
+        """
+        from binary_master.c_header import write_c_header
+
+        return write_c_header(self, path_or_file=path_or_file, guard=guard, pack=pack)
+
+
     def read(
         self,
         reader_or_bytes: Union[bytes, bytearray, BinaryReader, IO[bytes]],

@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-93%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-97%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・読み込み（シリアライズ／デシリアライズ）＆仕様書自動生成ライブラリです。
 
@@ -592,7 +592,10 @@ builder.add_struct(Footer, name="footer", condition="flags & 0x01 != 0")
 # 2. 仕様書を Markdown ファイルに出力
 builder.write("protocol_spec.md")
 
-# 3. 定義したスキーマに基づく自動デシリアライズ
+# 3. C言語ヘッダーファイル (.h) の出力（#pragma pack(1)、typedef struct、enum、union を自動生成）
+builder.write_c_header("protocol.h")
+
+# 4. 定義したスキーマに基づく自動デシリアライズ
 # （タグ値に応じたバリアント選択や条件判定を自動実行）
 result = builder.read(binary_bytes)
 print(result.header.magic)
@@ -600,6 +603,7 @@ print(result.payload)       # TextPayload または SensorPayload インスタ�
 if "footer" in result:
     print(result.footer.crc32)
 ```
+
 
 ---
 
@@ -626,6 +630,7 @@ if "footer" in result:
 - **バイナリサイズ取得**: `Cls.binary_size` / `sizeof(Cls)`（クラスから静的サイズを取得）、`instance.binary_size` / `sizeof(instance)` / `len(instance)`（インスタンスのシリアライズサイズを取得）
 - **シリアライズ**: `instance.to_bytes(endian=None)` または `write_struct(instance)`
 - **デシリアライズ**: `Cls.from_bytes(data, endian=None)` または `read_struct(Cls, reader)`
+- **C言語構造体生成**: `Cls.to_c_struct(name=None, desc="")`（C言語の `typedef struct` コードを生成）
 
 ### `ManualBuilder` 主要メソッド
 - **章・説明文の追加**: `add_document(title, content)`（Markdown 形式の説明文・章を追加）
@@ -635,7 +640,10 @@ if "footer" in result:
 - **アドホックフィールド**: `add_field(name, type_name, size, desc="", endian=None, condition=None)`
 - **仕様書テキスト生成**: `build(...)` / `to_markdown(...)`（Markdown 文字列を返却）
 - **仕様書ファイル書き出し**: `write(path_or_file, ...)`（ファイルまたはストリームへ出力して Markdown 文字列を返却、`write_manual` エイリアスあり）
+- **C言語ヘッダーテキスト生成**: `to_c_header(guard=None, pack=True)`（C言語ヘッダーコードを生成）
+- **C言語ヘッダーファイル書き出し**: `write_c_header(path_or_file, guard=None, pack=True)`（C言語ヘッダーファイルを出力）
 - **スキーマ駆動自動読み込み**: `read(reader_or_bytes, endian=None)`（バイナリデータをスキーマに基づいて自動パースし `BuilderReadResult` を返却）
+
 
 ### `BinaryWriter` 主要メソッド
 - **整数書き込み**: `write_uint8`, `write_int8`, `write_uint16`, `write_int16`, `write_uint32`, `write_int32`, `write_uint64`, `write_int64`
