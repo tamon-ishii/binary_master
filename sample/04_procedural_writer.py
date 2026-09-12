@@ -4,8 +4,9 @@ Demonstrates:
 - Imperative/procedural binary construction using BinaryWriter
 - Encoded string strategies: null-terminated, length-prefixed, fixed-length
 - Alignment padding, cursor seeking, and overwriting
-- Layout captions and subcaptions for manual generation
+- Layout captions and subcaptions
 - Procedural stream reading using BinaryReader
+- Specialized debug dumping: annotated hexdump, tabular trace, and reader cursor inspection
 """
 
 from binary_master import BinaryReader, BinaryWriter
@@ -63,7 +64,19 @@ def main():
     assert doc_title == "Confidential Document"
     assert auth_tag == "AUTH"
 
-    print("Procedural writer and reader operations verified successfully!")
+    # 5. Specialized Debug Dumping
+    print("\n--- Annotated Hexdump (writer.hexdump()) ---")
+    print(writer.hexdump())
+
+    print("\n--- Field Trace Table (writer.dump('table')) ---")
+    print(writer.dump("table"))
+
+    print("\n--- Reader Cursor Inspection (reader.hexdump()) ---")
+    # Reset reader and read 8 bytes to show cursor in action
+    reader.seek(8)
+    print(reader.hexdump())
+
+    print("\nProcedural writer, reader, and debug dump verified successfully!")
 
 
 if __name__ == "__main__":

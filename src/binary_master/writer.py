@@ -221,6 +221,55 @@ class BinaryWriter:
         """Get the recorded layout entries."""
         return self._entries
 
+    def hexdump(
+        self,
+        *,
+        width: int = 16,
+        color: bool = False,
+        annotate: bool = True,
+        show_ascii: bool = True,
+        show_header: bool = True,
+        max_bytes: Optional[int] = None,
+    ) -> str:
+        """Generate an annotated hexdump correlating bytes to written fields."""
+        from binary_master.debug import hexdump as _hexdump
+
+        return _hexdump(
+            self,
+            width=width,
+            color=color,
+            annotate=annotate,
+            show_ascii=show_ascii,
+            show_header=show_header,
+            max_bytes=max_bytes,
+        )
+
+    def dump(
+        self,
+        format: str = "hexdump",
+        **kwargs: Any,
+    ) -> Union[str, list[dict[str, Any]]]:
+        """Generate a debug dump of the written binary buffer and fields.
+
+        Formats: 'hexdump' (default), 'table', 'json', 'dict'.
+        """
+        from binary_master.debug import debug_dump as _debug_dump
+
+        return _debug_dump(self, format=format, **kwargs)
+
+    def diff(
+        self,
+        other: Any,
+        *,
+        name_left: str = "Self",
+        name_right: str = "Other",
+        color: bool = False,
+    ) -> str:
+        """Compare this writer's buffer and fields against another buffer or writer."""
+        from binary_master.debug import diff_dump as _diff_dump
+
+        return _diff_dump(self, other, name_left=name_left, name_right=name_right, color=color)
+
     def _record_entry(
         self,
         offset: int,

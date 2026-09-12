@@ -51,6 +51,14 @@ from .code_gen import (
     generate_go_code,
     write_go,
 )
+from .debug import (
+    hexdump,
+    debug_dump,
+    diff_dump,
+    dump_table,
+    dump_json,
+    dump_dict,
+)
 
 
 
@@ -111,6 +119,12 @@ __all__ = [
     "write_csharp",
     "generate_go_code",
     "write_go",
+    "hexdump",
+    "debug_dump",
+    "diff_dump",
+    "dump_table",
+    "dump_json",
+    "dump_dict",
 ]
 
 

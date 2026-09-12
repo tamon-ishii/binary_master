@@ -44,6 +44,13 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - **Mermaid Flowchart**: 条件分岐ひし形ノード、バリアント選択ノード、サブグラフとオフセット参照矢印の描画
   - **Mermaid packet-beta**: ネットワークパケット形式のビット/バイト配置図およびビットフィールド詳細図の生成
   - **多態チャンク・バリアント仕様の自動展開**: 条件に応じて格納される候補構造体のレイアウト表と相対パケット図の自動生成
+- 🔍 **専用デバッグダンプ & ストリーム検査 (`hexdump` / `dump` / `diff`)**  
+  - **注釈付き Hexdump (`hexdump`)**: 16バイト標準ヘックスダンプ＋ASCII文字表示＋出力されたフィールド名・型・値の注釈表示
+  - **ターミナル色分け表示 (`color=True`)**: ANSI カラーによるフィールド境界ごとの色分け、カーソル位置のハイライト
+  - **リーダー状態検査 (`reader.hexdump()`)**: 現在のカーソル位置（`--> CURSOR @ 0xXXXX`）、消費済み／残りバイト数の即時把握
+  - **表形式トレース (`dump("table")`)**: Offset, Size, Field Name, Type, Hex Bytes, Value, Caption を整然と表示するモノスペース表
+  - **構造化ダンプ (`dump("json")` / `dump("dict")`)**: ロギングやテスト検証のための辞書／JSON 配列エクスポート
+  - **バイナリ差分比較 (`diff_dump` / `writer.diff`)**: 2つのバッファ間のバイト単位・フィールド単位の差異を可視化
 
 
 ---
@@ -537,7 +544,63 @@ reader.align(8)
 header = reader.read_struct(Header)
 ```
 
-### 5. プロトコル全体の事前スキーマ定義・仕様書・多言語・リーダー統合 (`Builder` / `BinaryBuilder`)
+### 5. デバッグダンプ & ストリーム検査 (`hexdump` / `dump` / `diff`)
+
+シリアライズ時の実メモリ配置の確認、デシリアライズ時のカーソル追跡、バイナリ差分比較を行うための専門デバッグ機能が用意されています。
+
+#### ① 注釈付き Hexdump (`hexdump` / `writer.hexdump()`)
+バイト列とともに、どのオフセットがどのフィールド（型・値）に該当するかを同時に確認できます。
+
+```python
+from binary_master import BinaryWriter, hexdump
+
+writer = BinaryWriter()
+writer.write_uint32(0x46494C45, name="magic")
+writer.write_uint16(2, name="version")
+
+# ターミナルへ注釈付きで出力 (color=True で ANSI カラー色分け)
+print(writer.hexdump(color=True))
+```
+
+```text
+Offset    00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  |     ASCII      |  Field Annotations
+-------------------------------------------------------------------------------------------------
+00000000  45 4c 49 46 02 00                                 |ELIF..          |  magic=0x46494C45 (UInt32); version=2 (UInt16)
+  [Total: 6 bytes (`0x0006`) | Cursor: 0x0006 (6/6) | Remaining: 0 bytes]
+```
+
+#### ② リーダーのカーソル位置・未読込バイト検査 (`reader.hexdump()`)
+デシリアライズ中にどこまで読み進めたか、残り何バイトあるかを可視化します。
+
+```python
+reader = BinaryReader(binary_data)
+reader.read_uint32()
+
+# 現在のカーソル位置と残りバイト数が表示されます
+print(reader.hexdump())
+```
+
+#### ③ 表形式トレース・JSON エクスポート (`writer.dump()`)
+```python
+# モノスペース表形式で出力
+print(writer.dump("table"))
+
+# ログ出力・テスト自動検証用の JSON / 辞書リストとして取得
+records = writer.dump("dict")
+json_str = writer.dump("json")
+```
+
+#### ④ バイナリ差分比較 (`diff_dump` / `writer.diff()`)
+期待値と実際のシリアライズ結果でどのバイトやフィールドが不一致かを素早く検出します。
+
+```python
+from binary_master import diff_dump
+
+diff_text = writer_expected.diff(writer_actual)
+print(diff_text)
+```
+
+### 6. プロトコル全体の事前スキーマ定義・仕様書・多言語・リーダー統合 (`Builder` / `BinaryBuilder`)
 
 実行時のダミーインスタンスを作成することなく、プロトコルの構造定義（ヘッダー、条件分岐、多態バリアント、説明文）を事前に宣言して仕様書を生成し、多言語コードのエクスポートや直接のバイナリ自動パースが可能です。
 
@@ -692,6 +755,7 @@ if "footer" in result:
 - **セクションタイトル**: `caption(title=None, desc="", variants=None)`（マニュアル・図のグループ化見出し、説明、候補バリアントを設定）
 - **サブセクションタイトル**: `subcaption(title=None, desc="")`（大見出し内の階層的サブグループを設定）
 - **パディング & アライメント**: `pad(count, pad_byte)`, `align(boundary, pad_byte)`
+- **デバッグダンプ**: `hexdump(width=16, color=False, annotate=True)`（注釈付き Hexdump）、`dump(format="hexdump"|"table"|"json"|"dict")`、`diff(other, color=False)`（他バッファとの差分比較）
 - **データ取り出し**: `to_bytes()`, `to_bytearray()`
 
 ### `BinaryReader` / `Reader` 主要メソッド
@@ -701,7 +765,15 @@ if "footer" in result:
 - **文字列**: `read_cstring`, `read_prefixed_string`, `read_fixed_string`, `read_string`
 - **構造体**: `read_struct(cls, endian=None)`
 - **位置制御**: `tell()`, `seek(offset, whence)`, `skip(count)`, `remaining()`, `align(boundary)`
+- **デバッグダンプ**: `hexdump(width=16, color=False)`（カーソル位置・未読込バイト表示付き Hexdump）、`dump(format="hexdump")`
 - **初期化**: `BinaryReader(source)`, `BinaryReader.from_bytes(data)`, `BinaryReader.from_file(path)`
+
+### デバッグ & 検査ユーティリティ (`debug`)
+- **注釈付き Hexdump**: `hexdump(target, width=16, color=False, annotate=True)`（`bytes`, `BinaryWriter`, `BinaryReader` に対応）
+- **統一デバッグダンプ**: `debug_dump(target, format="hexdump"|"table"|"json"|"dict")`
+- **表形式トレース**: `dump_table(target, color=False)`
+- **構造化エクスポート**: `dump_json(target, indent=2)`, `dump_dict(target)`
+- **バイナリ差分比較**: `diff_dump(left, right, name_left="Expected", name_right="Actual", color=False)`
 
 ---
 
@@ -714,7 +786,7 @@ if "footer" in result:
 | [`sample/01_basic_struct.py`](sample/01_basic_struct.py) | 基本的な宣言的構造体 | `@binary_struct` の定義、数値型・固定長配列、`to_bytes()`、`read_struct()`、`sizeof()`、エンディアン制御 |
 | [`sample/02_bitfields_and_alignment.py`](sample/02_bitfields_and_alignment.py) | ビットフィールドとアライメント | `Bits[N]` によるビットパッキング、`align=4` によるパディング、`auto_align=True` 自然アライメント |
 | [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) | 相対ポインタ & オフセットテーブル | `Offset[T, Base.SELF]`、オフセット演算（`Base.SELF + 0x20`）、`OffsetTable`、自動デリファレンス |
-| [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング |
+| [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング、デバッグダンプ（`hexdump`, `dump`） |
 | [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) | Builder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、多言語出力（C/Rust/C++/C#/Go）、`builder.write()`、`builder.read()` |
 | [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 5 本のサンプルを順番に自動実行・検証するオーケストレーター |
 

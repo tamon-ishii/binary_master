@@ -4,6 +4,7 @@ src/binary_master/__init__.py
 src/binary_master/binary_struct.py
 src/binary_master/builder.py
 src/binary_master/c_header.py
+src/binary_master/debug.py
 src/binary_master/enums.py
 src/binary_master/manual.py
 src/binary_master/reader.py
@@ -24,6 +25,7 @@ tests/test_builder.py
 tests/test_c_header.py
 tests/test_caption.py
 tests/test_comments.py
+tests/test_debug.py
 tests/test_manual.py
 tests/test_multi_lang.py
 tests/test_reader.py

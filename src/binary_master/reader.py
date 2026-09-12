@@ -254,5 +254,39 @@ class BinaryReader:
 
         return read_struct(cls, reader=self, endian=endian)
 
+    # --- Debugging & Inspection ---
+
+    def hexdump(
+        self,
+        *,
+        width: int = 16,
+        color: bool = False,
+        show_ascii: bool = True,
+        show_header: bool = True,
+        max_bytes: Optional[int] = None,
+    ) -> str:
+        """Generate a hexdump of the reader's buffer showing cursor position and remaining bytes."""
+        from binary_master.debug import hexdump as _hexdump
+
+        return _hexdump(
+            self,
+            width=width,
+            color=color,
+            annotate=True,
+            show_ascii=show_ascii,
+            show_header=show_header,
+            max_bytes=max_bytes,
+        )
+
+    def dump(
+        self,
+        format: str = "hexdump",
+        **kwargs: Any,
+    ) -> Union[str, list[dict[str, Any]]]:
+        """Generate a debug dump of this reader's buffer and cursor position."""
+        from binary_master.debug import debug_dump as _debug_dump
+
+        return _debug_dump(self, format=format, **kwargs)
+
 
 Reader = BinaryReader
