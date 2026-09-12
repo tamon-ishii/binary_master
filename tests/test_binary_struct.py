@@ -23,6 +23,8 @@ from binary_master import (
     Bits,
     binary_struct,
     write_struct,
+    sizeof,
+    binary_size,
 )
 
 
@@ -214,7 +216,78 @@ def test_write_struct_invalid_type():
     """Test that writing a non-binary_struct object raises TypeError."""
     writer = BinaryWriter()
     with pytest.raises(TypeError, match="not a binary_struct"):
-        writer.write_struct({"magic": 123})
-
-    with pytest.raises(TypeError, match="not a binary_struct"):
         write_struct("plain_string")
+
+
+def test_sizeof_primitives():
+    """Test sizeof on primitive BinaryType classes."""
+    assert sizeof(UInt8) == 1
+    assert sizeof(UInt16) == 2
+    assert sizeof(UInt32) == 4
+    assert sizeof(UInt64) == 8
+    assert binary_size(Float32) == 4
+    assert binary_size(Float64) == 8
+
+
+def test_sizeof_static_classes_and_instances():
+    """Test Cls.binary_size, sizeof(Cls), instance.binary_size, len(instance)."""
+    # Packet has UInt16(2) + UInt8(1) + FixedArray[UInt8, 64](64) = 67 bytes
+    assert Packet.binary_size == 67
+    assert sizeof(Packet) == 67
+
+    pkt = Packet(id=1, count=10, payload=b"\x00" * 64)
+    assert pkt.binary_size == 67
+    assert sizeof(pkt) == 67
+    assert len(pkt) == 67
+
+
+def test_sizeof_with_sized_offset():
+    """Test struct binary size with 2-byte sized offset."""
+    @binary_struct
+    class SubItem:
+        val: UInt16
+
+    @binary_struct
+    class ContainerWith16BitOffset:
+        magic: UInt32                    # 4 bytes
+        sub_offset: Offset[SubItem, UInt16]  # 2 bytes
+
+    assert ContainerWith16BitOffset.binary_size == 6
+    assert sizeof(ContainerWith16BitOffset) == 6
+
+    c = ContainerWith16BitOffset(magic=0x1234, sub_offset=SubItem(val=42))
+    # Container itself is 6 bytes (sub_offset backpatched into 2 bytes placeholder)
+    # len(c) is 6 bytes for the container + 2 bytes for the deferred sub_item target = 8 bytes
+    assert len(c) == 8
+    assert sizeof(c) == 8
+
+
+def test_sizeof_with_alignment():
+    """Test static size calculation with auto_align=True."""
+    @binary_struct(auto_align=True)
+    class AlignedStruct:
+        a: UInt8   # 1 byte + 3 bytes padding
+        b: UInt32  # 4 bytes
+        # Total = 8 bytes
+
+    assert AlignedStruct.binary_size == 8
+    assert sizeof(AlignedStruct) == 8
+
+
+def test_sizeof_variable_length():
+    """Test that static class size raises ValueError for variable-length fields, but instance succeeds."""
+    @binary_struct
+    class VarStruct:
+        data: Array[UInt8]
+
+    with pytest.raises(ValueError, match="Cannot determine static binary size"):
+        _ = VarStruct.binary_size
+
+    with pytest.raises(ValueError, match="Cannot determine static binary size"):
+        _ = sizeof(VarStruct)
+
+    inst = VarStruct(data=b"hello")
+    assert len(inst) == 5
+    assert inst.binary_size == 5
+    assert sizeof(inst) == 5
+

@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-73%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-78%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・読み込み（シリアライズ／デシリアライズ）＆仕様書自動生成ライブラリです。
 
@@ -16,6 +16,7 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
 - 🚀 **宣言的バイナリ構造体 (`@binary_struct`)**  
   - Python の型ヒントとデータクラス記法を用いて、バイナリヘッダーやパケットフォーマットを直感的に定義可能。
   - **双方向シリアライズ**: `instance.to_bytes()` による書き込みと `Cls.from_bytes(data)` による自動デシリアライズの両方に対応。
+  - **バイナリサイズ取得 (`Cls.binary_size`, `sizeof(Cls)`, `len(instance)`)**: クラス定義からの静的計算や、インスタンスからの動的バイト数取得に対応。
   - **Docstring の仕様書自動反映**: クラスの docstring（`"""..."""`）が仕様書の概要やビットフィールド詳細にそのまま自動反映。
   - **コメントの自動抽出**: コード上のインラインコメント（`# ...`）や `Annotated[Type, "説明"]` を自動抽出し、仕様書の `Description` 列に反映。
   - **自動アライメント & パディング (`auto_align=True`, `align=N`)**: C言語の構造体アライメント規則に基づき、メンバ境界や構造体サイズのアライメントパディングを自動挿入。
@@ -108,6 +109,12 @@ header = Header(
 # バイト列に変換
 data: bytes = header.to_bytes()
 print(f"Serialized {len(data)} bytes: {data.hex()}")
+
+# バイナリサイズの取得 (sizeof / binary_size / len)
+print(Header.binary_size)   # クラス定義から静的サイズを取得 -> 11 バイト
+print(sizeof(Header))       # sizeof() 関数でも取得可能 -> 11 バイト
+print(header.binary_size)   # インスタンスから取得（参照先含む） -> 19 バイト
+print(len(header))          # len(instance) でも取得可能 -> 19 バイト
 ```
 
 ### 2. 仕様書（Markdown & Mermaid）の自動生成
@@ -495,6 +502,11 @@ header = reader.read_struct(Header)
 | `FixedArray[T, N]` | `sizeof(T) * N` | 固定長要素配列 |
 | `Array[T]` | 可変 | 可変長要素配列 |
 | `Variant[TagField, Mapping]` | 可変 | タグ値に応じた多態構造体（自動ディスパッチ） |
+
+### 構造体操作 & ユーティリティ (`@binary_struct`)
+- **バイナリサイズ取得**: `Cls.binary_size` / `sizeof(Cls)`（クラスから静的サイズを取得）、`instance.binary_size` / `sizeof(instance)` / `len(instance)`（インスタンスのシリアライズサイズを取得）
+- **シリアライズ**: `instance.to_bytes(endian=None)` または `write_struct(instance)`
+- **デシリアライズ**: `Cls.from_bytes(data, endian=None)` または `read_struct(Cls, reader)`
 
 ### `BinaryWriter` 主要メソッド
 - **整数書き込み**: `write_uint8`, `write_int8`, `write_uint16`, `write_int16`, `write_uint32`, `write_int32`, `write_uint64`, `write_int64`

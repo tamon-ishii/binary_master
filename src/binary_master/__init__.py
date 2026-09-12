@@ -24,6 +24,8 @@ from .binary_struct import (
     binary_struct,
     write_struct,
     read_struct,
+    sizeof,
+    binary_size,
 )
 from .manual import (
     LayoutEntry,
@@ -65,6 +67,8 @@ __all__ = [
     "binary_struct",
     "write_struct",
     "read_struct",
+    "sizeof",
+    "binary_size",
     "LayoutEntry",
     "generate_manual",
     "generate_mermaid_diagram",
