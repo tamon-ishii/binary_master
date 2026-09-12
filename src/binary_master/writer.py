@@ -622,6 +622,8 @@ class BinaryWriter:
             raise ValueError(f"count must be non-negative, got {count}")
         if offset_size not in (1, 2, 4, 8):
             raise ValueError(f"offset_size must be 1, 2, 4, or 8, got {offset_size}")
+        if hasattr(base_offset, "resolve"):
+            base_offset = base_offset.resolve(self.tell(), self.tell())
         if base_offset < 0:
             raise ValueError(f"base_offset must be non-negative, got {base_offset}")
 

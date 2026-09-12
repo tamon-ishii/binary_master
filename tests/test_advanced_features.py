@@ -14,8 +14,12 @@ from binary_master import (
     Offset,
     OffsetTable,
     OffsetTableHandle,
+    Base,
+    RelativeBase,
+    sizeof,
     binary_struct,
     write_struct,
+    read_struct,
 )
 
 
@@ -435,5 +439,208 @@ def test_sized_offset_with_base_offset():
     parsed = RelativeSizedOffsetContainer.from_bytes(raw)
     assert isinstance(parsed.off_16_rel, TargetPayload)
     assert parsed.off_16_rel.val == 0x5555
+
+
+# ==========================================================
+# 7. RelativeBase & Base.SELF Tests
+# ==========================================================
+
+def test_relative_base_operators():
+    """Test Base.SELF and Base.FIELD arithmetic and string representation."""
+    b_self = Base.SELF
+    assert b_self.target == "self"
+    assert b_self.delta == 0
+    assert repr(b_self) == "Base.SELF"
+    assert Base.STRUCT == Base.SELF
+
+    b_add = Base.SELF + 0x20
+    assert isinstance(b_add, RelativeBase)
+    assert b_add.delta == 32
+    assert repr(b_add) == "Base.SELF+0x20"
+    assert b_add.resolve(struct_start=100) == 132
+
+    b_sub = Base.SELF - 0x10
+    assert b_sub.delta == -16
+    assert repr(b_sub) == "Base.SELF-0x10"
+    assert b_sub.resolve(struct_start=100) == 84
+
+    b_field = Base.FIELD + 4
+    assert b_field.target == "field"
+    assert b_field.delta == 4
+    assert repr(b_field) == "Base.FIELD+4"
+    assert b_field.resolve(struct_start=100, field_pos=108) == 112
+
+
+@binary_struct(endian="little")
+class InnerPayload:
+    val: UInt32
+
+
+@binary_struct(endian="little")
+class ChunkRelativeStruct:
+    magic: UInt32
+    # Relative to struct start
+    offset_rel_self: Offset[InnerPayload, UInt32, Base.SELF]
+
+
+@binary_struct(endian="little")
+class ChunkRelativeDelta:
+    magic: UInt32
+    # 24-byte padding so struct header is 32 bytes (0x20)
+    pad: UInt64
+    pad2: UInt64
+    pad3: UInt64
+    # Relative to struct start + 0x20
+    offset_rel_delta: Offset[InnerPayload, UInt32, Base.SELF + 0x20]
+
+
+@binary_struct(endian="little")
+class ChunkShorthandSyntax:
+    magic: UInt32
+    # Shorthand omitting UInt32
+    offset_shorthand: Offset[InnerPayload, Base.SELF]
+
+
+@binary_struct(endian="little")
+class ChunkRelativeTable:
+    magic: UInt32
+    offsets: OffsetTable[2, UInt32, Base.SELF]
+
+
+@binary_struct(endian="little")
+class ChunkFieldRelative:
+    magic: UInt32
+    # Relative to the offset field itself
+    offset_rel_field: Offset[InnerPayload, UInt32, Base.FIELD]
+
+
+def test_base_self_offset_at_start_and_offset():
+    """Test that Base.SELF calculates identical relative offsets regardless of struct placement."""
+    p = InnerPayload(val=0x11223344)
+    c = ChunkRelativeStruct(magic=0x53454C46, offset_rel_self=p)
+
+    # 1. Serialized at stream start (0)
+    raw = c.to_bytes()
+    # magic: 4B (0..4), offset: 4B (4..8), payload at 8.
+    # Stored offset should be 8 - 0 = 8.
+    stored = struct.unpack("<I", raw[4:8])[0]
+    assert stored == 8
+
+    parsed = ChunkRelativeStruct.from_bytes(raw)
+    assert isinstance(parsed.offset_rel_self, InnerPayload)
+    assert parsed.offset_rel_self.val == 0x11223344
+
+    # 2. Serialized at non-zero stream position (e.g. 100 bytes into a stream)
+    writer = BinaryWriter()
+    writer.write_bytes(b"\xAA" * 100)
+    writer.write_struct(c)
+    full_data = writer.to_bytes()
+
+    # Struct begins at 100, field is at 104, payload is written at 108.
+    # Stored offset must STILL be 108 - 100 = 8!
+    stored_nested = struct.unpack("<I", full_data[104:108])[0]
+    assert stored_nested == 8
+
+    # Deserializing at position 100
+    from binary_master import BinaryReader
+    reader = BinaryReader(full_data)
+    reader.seek(100)
+    parsed_nested = read_struct(ChunkRelativeStruct, reader)
+    assert isinstance(parsed_nested.offset_rel_self, InnerPayload)
+    assert parsed_nested.offset_rel_self.val == 0x11223344
+
+
+def test_base_self_with_delta():
+    """Test Base.SELF + 0x20 with header padding."""
+    p = InnerPayload(val=0x778899AA)
+    c = ChunkRelativeDelta(
+        magic=0x44454C54,
+        pad=0,
+        pad2=0,
+        pad3=0,
+        offset_rel_delta=p,
+    )
+    raw = c.to_bytes()
+    # magic (4) + pad (8) + pad2 (8) + pad3 (8) + offset (4) = 32 bytes (0x20)
+    # Payload starts at 32.
+    # Base is struct_start (0) + 32 = 32.
+    # Stored offset is 32 - 32 = 0.
+    stored = struct.unpack("<I", raw[28:32])[0]
+    assert stored == 0
+
+    parsed = ChunkRelativeDelta.from_bytes(raw)
+    assert isinstance(parsed.offset_rel_delta, InnerPayload)
+    assert parsed.offset_rel_delta.val == 0x778899AA
+
+
+def test_shorthand_syntax_and_sizeof():
+    """Test shorthand Offset[Target, Base.SELF] and sizeof reflection."""
+    assert sizeof(ChunkShorthandSyntax) == 8
+
+    p = InnerPayload(val=0x55)
+    c = ChunkShorthandSyntax(magic=0x1234, offset_shorthand=p)
+    raw = c.to_bytes()
+    assert len(raw) == 12
+
+    stored = struct.unpack("<I", raw[4:8])[0]
+    assert stored == 8
+
+    parsed = ChunkShorthandSyntax.from_bytes(raw)
+    assert isinstance(parsed.offset_shorthand, InnerPayload)
+    assert parsed.offset_shorthand.val == 0x55
+
+
+def test_offset_table_with_base_self():
+    """Test OffsetTable with Base.SELF."""
+    p1 = InnerPayload(val=0x10)
+    p2 = InnerPayload(val=0x20)
+    c = ChunkRelativeTable(magic=0x9999, offsets=[p1, p2])
+
+    # Written at position 50
+    writer = BinaryWriter()
+    writer.write_bytes(b"\x00" * 50)
+    writer.write_struct(c)
+    data = writer.to_bytes()
+
+    # Struct at 50. magic (4) + table (8) = 12 bytes.
+    # Targets at 50 + 12 = 62 and 62 + 4 = 66.
+    # Base is 50.
+    # Stored table offsets must be 62 - 50 = 12, and 66 - 50 = 16.
+    off0, off1 = struct.unpack("<II", data[54:62])
+    assert off0 == 12
+    assert off1 == 16
+
+
+def test_offset_base_field():
+    """Test Base.FIELD relative offset."""
+    p = InnerPayload(val=0x99)
+    c = ChunkFieldRelative(magic=0x1111, offset_rel_field=p)
+
+    raw = c.to_bytes()
+    # magic: 4 bytes (0..4)
+    # field: 4 bytes (4..8), field pos is 4
+    # target at 8
+    # Stored offset: 8 - 4 = 4
+    stored = struct.unpack("<I", raw[4:8])[0]
+    assert stored == 4
+
+    parsed = ChunkFieldRelative.from_bytes(raw)
+    assert isinstance(parsed.offset_rel_field, InnerPayload)
+    assert parsed.offset_rel_field.val == 0x99
+
+
+def test_relative_base_negative_offset_raises():
+    """Test that negative offset for unsigned offset raises ValueError."""
+    @binary_struct(endian="little")
+    class InvalidTargetRel:
+        val: UInt32
+        off: Offset[InnerPayload, UInt32, Base.SELF + 100]
+
+    p = InnerPayload(val=1)
+    c = InvalidTargetRel(val=0, off=p)
+    # target pos will be 8, base will be 100 -> stored_val = -92 -> ValueError
+    with pytest.raises(ValueError, match="is negative"):
+        c.to_bytes()
+
 
 

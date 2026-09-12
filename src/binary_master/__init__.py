@@ -26,6 +26,8 @@ from .binary_struct import (
     read_struct,
     sizeof,
     binary_size,
+    Base,
+    RelativeBase,
 )
 from .manual import (
     LayoutEntry,
@@ -64,6 +66,8 @@ __all__ = [
     "Array",
     "FixedArray",
     "Bits",
+    "Base",
+    "RelativeBase",
     "binary_struct",
     "write_struct",
     "read_struct",

@@ -24,8 +24,8 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - 符号付き / 符号なし整数（8, 16, 32, 64-bit）
   - 浮動小数点数（Float32, Float64）
   - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング・アンパッキング
-  - **オフセット自動計算 & 解決 (`Offset[T, Size, BaseOffset]`)**: ヘッダーのオフセット値の自動バックパッチ（1, 2, 4, 8バイト指定可）および読み込み時の参照先自動インスタンス化
-  - **オフセットテーブル (`OffsetTable[Count, Type]`)**: 複数エントリのオフセット配列の予約・自動バックパッチ
+  - **オフセット自動計算 & 解決 (`Offset[T, Size, BaseOffset]`)**: ヘッダーのオフセット値の自動バックパッチ（1, 2, 4, 8バイト指定可、`Base.SELF + 0x20` などの構造体先頭相対指定対応）および読み込み時の参照先自動インスタンス化
+  - **オフセットテーブル (`OffsetTable[Count, Type, BaseOffset]`)**: 複数エントリのオフセット配列の予約・自動バックパッチ（`Base.SELF` などの相対指定対応）
   - **多態チャンク & タグ付き共用体 (`Variant[TagField, Mapping]`)**: 種別IDに応じて切り替わる多態構造体の自動ディスパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
   - 構造体のネスト
@@ -275,14 +275,23 @@ class ControlFlags:
     reserved: Bits[8]    # 8-15ビット目
 ```
 
-#### オフセット自動計算 (`Offset[T]`)
-ファイルフォーマットなどで頻出する「ヘッダー内に後続ブロックの開始オフセットを格納する」構造を自動処理します。
+#### オフセット自動計算 (`Offset[T, Size, BaseOffset]`)
+ファイルフォーマットなどで頻出する「ヘッダー内に後続ブロックの開始オフセットを格納する」構造を自動処理します。オフセットサイズ（1, 2, 4, 8バイト）のカスタマイズや、自身が含まれる構造体の先頭アドレス相対（`Base.SELF + delta`）も柔軟に指定できます。
 
 ```python
+from binary_master import Base, Offset, UInt16, UInt32, binary_struct
+
 @binary_struct
 class FileHeader:
     magic: UInt32
-    body_offset: Offset[FileBody]  # 自動的に FileBody の開始バイト位置が書き込まれます
+    # 1. 構造体先頭からの相対オフセット (Base.SELF)
+    body_offset: Offset[FileBody, UInt32, Base.SELF]
+    # 2. 構造体先頭 + 0x20 を基準とする相対オフセット（加減算対応）
+    data_offset: Offset[FileBody, UInt32, Base.SELF + 0x20]
+    # 3. 型を省略した短縮記法 (4バイトUInt32デフォルト)
+    short_offset: Offset[FileBody, Base.SELF + 0x20]
+    # 4. 2バイトオフセット (UInt16)
+    small_offset: Offset[FileBody, UInt16, Base.SELF]
 
 @binary_struct
 class FileBody:
@@ -291,7 +300,10 @@ class FileBody:
 
 header = FileHeader(
     magic=0x12345678,
-    body_offset=FileBody(data_length=128, raw_data=b"\xAA" * 128)
+    body_offset=FileBody(data_length=128, raw_data=b"\xAA" * 128),
+    data_offset=FileBody(data_length=64, raw_data=b"\xBB" * 64),
+    short_offset=FileBody(data_length=32, raw_data=b"\xCC" * 32),
+    small_offset=FileBody(data_length=16, raw_data=b"\xDD" * 16),
 )
 ```
 
@@ -364,17 +376,24 @@ writer.write_cstring("Section 2 Data")
 ```
 ※ マニュアル出力時、オフセットテーブルの各スロットには参照先オフセットを示す `-> 0xXXXX` マーカーや Mermaid の矢印（`-.->|offset: 0xXXXX|`）が自動的に付与されます。
 
-**3. オフセットの起点（`base_offset`）の設定**
-デフォルトではファイル先頭（`0`）からの絶対オフセットがテーブルに書き込まれますが、特定の位置（ヘッダー末尾やテーブル開始位置など）を起点とした**相対オフセット**を格納したい場合は、`base_offset` を指定できます。
+**3. オフセットの起点（`base_offset`）の設定と構造体先頭相対（`Base.SELF`）**
+デフォルトではファイル先頭（`0`）からの絶対オフセットが書き込まれますが、**自身が含まれる構造体の先頭アドレス相対**にしたい場合は、`Base.SELF`（または `Base.SELF + 0x20`、`Base.SELF - 0x10`）を指定できます。
 
 ```python
-# ファイル先頭ではなく、特定位置（例: ヘッダー直後 0x20）を起点にする
-header_end = writer.tell()
-table = writer.write_offset_table(count=2, base_offset=header_end)
+from binary_master import Base, Offset, OffsetTable, UInt32, binary_struct
 
-table.write_target(0, data_chunk1) # (ターゲットの絶対位置 - 0x20) がテーブルに書き込まれます
+@binary_struct
+class ChunkContainer:
+    magic: UInt32
+    # 構造体先頭を起点とした相対オフセット
+    data_offset: Offset[DataChunk, UInt32, Base.SELF]
+    # 構造体先頭 + 0x20 を起点とした相対オフセット
+    body_offset: Offset[DataChunk, UInt32, Base.SELF + 0x20]
+    # オフセットテーブルも同様に指定可能
+    chunk_offsets: OffsetTable[2, UInt32, Base.SELF + 0x20]
 ```
-※ `@binary_struct` の場合は、第3引数で起点を指定可能です（例: `OffsetTable[2, UInt32, 0x20]`）。  
+構造体がバイナリストリームの任意の位置（例: `0x0100`〜）や入れ子構造の中に配置されても、その構造体の開始位置を動的な基準として自動計算されます。
+また、オフセットフィールド自身の位置を基準とする `Base.FIELD` や、手続き的ライターでの固定位置指定（`write_offset_table(..., base_offset=pos)`）も可能です。
 ※ 仕様書（Markdown）出力時は、Value列に計算後の相対オフセット値（`target - base`）が表示され、参照先マーカー（`-> 0xXXXX`）や Mermaid 矢印は実際の格納先（絶対アドレス）を正確に指し示します。
 
 #### 多態チャンク（タグ付き共用体 / バリアント）とサブキャプション
@@ -531,8 +550,9 @@ header = reader.read_struct(Header)
 | `Float32` | 4 バイト | IEEE 754 単精度浮動小数点数 |
 | `Float64` | 8 バイト | IEEE 754 倍精度浮動小数点数 |
 | `Bits[N]` | N ビット | ビットフィールドのフィールド幅 |
-| `Offset[T, Size, BaseOffset]` | 指定サイズ（デフォルト: 4B） | 構造体 `T` へのバイトオフセット（自動解決。`UInt16` や `2` などサイズや起点を指定可） |
-| `OffsetTable[Count, Type, BaseOffset]` | `sizeof(Type) * Count` | オフセットテーブル配列（自動解決、BaseOffset で起点を指定可） |
+| `Offset[T, Size, BaseOffset]` | 指定サイズ（デフォルト: 4B） | 構造体 `T` へのバイトオフセット（自動解決。`UInt16` 等のサイズ指定や `Base.SELF + 0x20` 等の構造体先頭相対指定に対応） |
+| `OffsetTable[Count, Type, BaseOffset]` | `sizeof(Type) * Count` | オフセットテーブル配列（自動解決。`Base.SELF` 等の相対指定に対応） |
+| `Base.SELF` / `Base.FIELD` | - | 相対オフセット起点シンボル（`+`, `-` 演算子オーバーロードによる加減算に対応） |
 | `FixedArray[T, N]` | `sizeof(T) * N` | 固定長要素配列 |
 | `Array[T]` | 可変 | 可変長要素配列 |
 | `Variant[TagField, Mapping]` | 可変 | タグ値に応じた多態構造体（自動ディスパッチ） |
