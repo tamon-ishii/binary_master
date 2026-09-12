@@ -278,3 +278,75 @@ def test_offset_table_in_binary_struct():
     md = writer.write_manual()
     assert f"`-> 0x{off0:04X}`" in md
     assert f"`-> 0x{off1:04X}`" in md
+
+
+def test_offset_table_base_offset_procedural():
+    """Test write_offset_table with custom base_offset."""
+    writer = BinaryWriter(default_endian=Endian.LITTLE)
+    # Write 32 bytes of header
+    writer.write_bytes(b"\xAA" * 32, name="header", desc="Fixed header")
+    base_pos = writer.tell()  # 32
+
+    # Offset table starting at offset 32, with base_offset=32
+    table = writer.write_offset_table(count=2, offset_size=4, base_offset=base_pos, name="rel_offsets")
+    assert table.base_offset == 32
+
+    # Table takes 8 bytes (offset 32..40). Targets will be at 40 and 44.
+    table.write_target(0, DataChunk(code=0xAAAA1111))
+    table.write_target(1, DataChunk(code=0xBBBB2222))
+
+    assert table.get_target_offset(0) == 40
+    assert table.get_stored_offset(0) == 8  # 40 - 32
+    assert table.get_target_offset(1) == 44
+    assert table.get_stored_offset(1) == 12  # 44 - 32
+
+    data = writer.to_bytes()
+    assert len(data) == 32 + 8 + 4 + 4  # 48 bytes
+    stored_off0, stored_off1 = struct.unpack("<II", data[32:40])
+    assert stored_off0 == 8
+    assert stored_off1 == 12
+
+    # Manual should show stored value 8 & 12, but target pointing to absolute 40 & 44
+    md = writer.write_manual(include_values=True)
+    assert "`-> 0x0028`" in md  # 40 in hex
+    assert "`-> 0x002C`" in md  # 44 in hex
+
+
+def test_offset_table_base_offset_validation():
+    """Test validation errors for invalid base_offset or target < base."""
+    writer = BinaryWriter()
+    with pytest.raises(ValueError, match="base_offset must be non-negative"):
+        writer.write_offset_table(count=1, base_offset=-5)
+
+    table = writer.write_offset_table(count=1, base_offset=50)
+    with pytest.raises(ValueError, match="is negative"):
+        table.set_offset(0, 30)  # 30 - 50 < 0
+
+
+@binary_struct(endian="little")
+class ContainerRelativeTable:
+    magic: UInt32
+    num_chunks: UInt16
+    chunk_offsets: OffsetTable[2, UInt32, 14]  # Base offset 14
+
+
+def test_offset_table_base_offset_declarative():
+    """Test OffsetTable with base_offset in @binary_struct."""
+    c1 = DataChunk(code=0x11111111)
+    c2 = DataChunk(code=0x22222222)
+    container = ContainerRelativeTable(
+        magic=0x544F4254,
+        num_chunks=2,
+        chunk_offsets=[c1, c2],
+    )
+    writer = BinaryWriter()
+    writer.write_struct(container)
+    data = writer.to_bytes()
+
+    # Container size: 4 + 2 + 8 = 14 bytes.
+    # Targets start at 14 and 18.
+    # Stored offsets should be 14 - 14 = 0 and 18 - 14 = 4.
+    off0, off1 = struct.unpack("<II", data[6:14])
+    assert off0 == 0
+    assert off1 == 4
+

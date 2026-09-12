@@ -117,16 +117,18 @@ class Bits:
 
 
 class OffsetTable(Generic[T]):
-    """オフセットテーブル型: OffsetTable[Count, OffsetType] または OffsetTable[Count]"""
+    """オフセットテーブル型: OffsetTable[Count, OffsetType, BaseOffset] または OffsetTable[Count, OffsetType] または OffsetTable[Count]"""
 
     def __class_getitem__(cls, args):
         if isinstance(args, tuple):
             count = args[0]
             offset_t = args[1] if len(args) > 1 else UInt32
+            base_offset = args[2] if len(args) > 2 else 0
         else:
             count = args
             offset_t = UInt32
-        return cls, count, offset_t
+            base_offset = 0
+        return cls, count, offset_t, base_offset
 
 
 class Variant(Generic[T]):
@@ -586,10 +588,12 @@ def write_struct(
             if isinstance(ftype, tuple):
                 count = ftype[1]
                 offset_t = ftype[2] if len(ftype) >= 3 else UInt32
+                base_offset = ftype[3] if len(ftype) >= 4 else 0
             else:
                 args = get_args(ftype)
                 count = args[0]
                 offset_t = args[1] if len(args) > 1 else UInt32
+                base_offset = args[2] if len(args) > 2 else 0
 
             offset_size = offset_t._size if hasattr(offset_t, "_size") else 4
             table_handle = writer.write_offset_table(
@@ -598,6 +602,7 @@ def write_struct(
                 endian=active_endian,
                 name=name,
                 desc=f_desc,
+                base_offset=base_offset,
             )
             if isinstance(val, (list, tuple)):
                 for i, target_item in enumerate(val):

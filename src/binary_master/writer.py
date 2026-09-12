@@ -599,6 +599,7 @@ class BinaryWriter:
         endian: EndianType = None,
         name: str = "offsets",
         desc: str = "Offset Table",
+        base_offset: int = 0,
     ) -> OffsetTableHandle:
         """Reserve an offset table for `count` entries of `offset_size` bytes each.
 
@@ -611,6 +612,8 @@ class BinaryWriter:
             endian: Endianness for offset values (default: writer's default endian).
             name: Base name for the table entries (e.g. 'file_offsets').
             desc: Description of the offset table.
+            base_offset: The base origin (in bytes) subtracted from recorded target offsets
+                         (default: 0, file/stream beginning).
 
         Returns:
             OffsetTableHandle for recording/writing target offsets.
@@ -619,6 +622,8 @@ class BinaryWriter:
             raise ValueError(f"count must be non-negative, got {count}")
         if offset_size not in (1, 2, 4, 8):
             raise ValueError(f"offset_size must be 1, 2, 4, or 8, got {offset_size}")
+        if base_offset < 0:
+            raise ValueError(f"base_offset must be non-negative, got {base_offset}")
 
         order = normalize_endian(endian, self._default_endian)
         start_pos = self.tell()
@@ -649,6 +654,7 @@ class BinaryWriter:
             endian=order,
             entry_indices=entry_indices,
             name=name,
+            base_offset=base_offset,
         )
 
     def write_struct(self, instance: object, endian: EndianType = None) -> BinaryWriter:
@@ -733,6 +739,7 @@ class OffsetTableHandle:
         endian: Endian,
         entry_indices: list[int],
         name: str = "offsets",
+        base_offset: int = 0,
     ):
         self._writer = writer
         self._start_offset = start_offset
@@ -741,6 +748,7 @@ class OffsetTableHandle:
         self._endian = endian
         self._entry_indices = entry_indices
         self._name = name
+        self._base_offset = base_offset
         self._offsets: list[Optional[int]] = [None] * count
 
     @property
@@ -750,6 +758,24 @@ class OffsetTableHandle:
     @property
     def offset_size(self) -> int:
         return self._offset_size
+
+    @property
+    def base_offset(self) -> int:
+        """The base offset (origin) from which target offsets are calculated."""
+        return self._base_offset
+
+    def get_target_offset(self, index: int) -> Optional[int]:
+        """Get the absolute target offset recorded for slot `index`."""
+        if index < 0 or index >= self._count:
+            raise IndexError(f"OffsetTable index {index} out of range (count={self._count})")
+        return self._offsets[index]
+
+    def get_stored_offset(self, index: int) -> Optional[int]:
+        """Get the stored relative offset value (target - base) for slot `index`."""
+        target = self.get_target_offset(index)
+        if target is None:
+            return None
+        return target - self._base_offset
 
     def __len__(self) -> int:
         return self._count
@@ -766,13 +792,23 @@ class OffsetTableHandle:
         """Set the target offset at slot `index`.
 
         If target_offset is None, automatically sets it to the current stream position (writer.tell()).
-        Writes the value into the binary stream placeholder and updates the manual layout entry.
+        Writes the value (target_offset - base_offset) into the binary stream placeholder and updates
+        the manual layout entry.
+
+        Returns:
+            The stored relative offset value (target_offset - base_offset).
         """
         if index < 0 or index >= self._count:
             raise IndexError(f"OffsetTable index {index} out of range (count={self._count})")
 
         if target_offset is None:
             target_offset = self._writer.tell()
+
+        stored_value = target_offset - self._base_offset
+        if stored_value < 0:
+            raise ValueError(
+                f"Calculated offset {stored_value} is negative (target={target_offset}, base={self._base_offset})"
+            )
 
         self._offsets[index] = target_offset
         slot_pos = self._start_offset + index * self._offset_size
@@ -782,7 +818,7 @@ class OffsetTableHandle:
         if not fmt_char:
             raise ValueError(f"Unsupported offset_size: {self._offset_size}. Must be 1, 2, 4, or 8.")
 
-        packed = struct.pack(f"{self._endian.value}{fmt_char}", target_offset)
+        packed = struct.pack(f"{self._endian.value}{fmt_char}", stored_value)
         cur_pos = self._writer.tell()
         self._writer.seek(slot_pos)
         self._writer._stream.write(packed)
@@ -792,10 +828,10 @@ class OffsetTableHandle:
             entry_idx = self._entry_indices[index]
             if 0 <= entry_idx < len(self._writer._entries):
                 entry = self._writer._entries[entry_idx]
-                entry.value = target_offset
+                entry.value = stored_value
                 entry.target_offset = target_offset
 
-        return target_offset
+        return stored_value
 
     def write_offset(self, index: int, target_offset: Optional[int] = None) -> int:
         """Write the offset into slot `index` (synonym for set_offset)."""

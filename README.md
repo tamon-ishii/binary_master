@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-68%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-71%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・読み込み（シリアライズ／デシリアライズ）＆仕様書自動生成ライブラリです。
 
@@ -323,6 +323,19 @@ writer.write_cstring("Section 2 Data")
 ```
 ※ マニュアル出力時、オフセットテーブルの各スロットには参照先オフセットを示す `-> 0xXXXX` マーカーや Mermaid の矢印（`-.->|offset: 0xXXXX|`）が自動的に付与されます。
 
+**3. オフセットの起点（`base_offset`）の設定**
+デフォルトではファイル先頭（`0`）からの絶対オフセットがテーブルに書き込まれますが、特定の位置（ヘッダー末尾やテーブル開始位置など）を起点とした**相対オフセット**を格納したい場合は、`base_offset` を指定できます。
+
+```python
+# ファイル先頭ではなく、特定位置（例: ヘッダー直後 0x20）を起点にする
+header_end = writer.tell()
+table = writer.write_offset_table(count=2, base_offset=header_end)
+
+table.write_target(0, data_chunk1) # (ターゲットの絶対位置 - 0x20) がテーブルに書き込まれます
+```
+※ `@binary_struct` の場合は、第3引数で起点を指定可能です（例: `OffsetTable[2, UInt32, 0x20]`）。  
+※ 仕様書（Markdown）出力時は、Value列に計算後の相対オフセット値（`target - base`）が表示され、参照先マーカー（`-> 0xXXXX`）や Mermaid 矢印は実際の格納先（絶対アドレス）を正確に指し示します。
+
 #### 多態チャンク（タグ付き共用体 / バリアント）とサブキャプション
 チャンク形式のバイナリなど、**「同じオフセット位置に、種別タグやフラグに応じて異なる種類の構造体が格納される」** ケースを強力にサポートしています。
 
@@ -478,7 +491,7 @@ header = reader.read_struct(Header)
 | `Float64` | 8 バイト | IEEE 754 倍精度浮動小数点数 |
 | `Bits[N]` | N ビット | ビットフィールドのフィールド幅 |
 | `Offset[T]` | 4 バイト | 構造体 `T` へのバイトオフセット（自動解決） |
-| `OffsetTable[Count, Type]` | `sizeof(Type) * Count` | オフセットテーブル配列（自動解決） |
+| `OffsetTable[Count, Type, BaseOffset]` | `sizeof(Type) * Count` | オフセットテーブル配列（自動解決、BaseOffset で起点を指定可） |
 | `FixedArray[T, N]` | `sizeof(T) * N` | 固定長要素配列 |
 | `Array[T]` | 可変 | 可変長要素配列 |
 | `Variant[TagField, Mapping]` | 可変 | タグ値に応じた多態構造体（自動ディスパッチ） |
@@ -488,7 +501,7 @@ header = reader.read_struct(Header)
 - **浮動小数点数**: `write_float32`, `write_float64`
 - **論理値 / バイト**: `write_bool`, `write_bytes`
 - **文字列**: `write_cstring`, `write_prefixed_string`, `write_fixed_string`, `write_string`
-- **オフセットテーブル**: `write_offset_table(count, offset_size=4, ...)`（戻り値 `OffsetTableHandle` で `set_offset`, `write_offset`, `write_target` 等が可能）
+- **オフセットテーブル**: `write_offset_table(count, offset_size=4, endian=None, name="offsets", desc="Offset Table", base_offset=0)`（戻り値 `OffsetTableHandle` で `set_offset`, `write_offset`, `write_target`, `base_offset`, `get_target_offset`, `get_stored_offset` 等が可能）
 - **構造体**: `write_struct(instance, endian=None)`
 - **位置制御**: `tell()`, `seek(offset, whence)`
 - **セクションタイトル**: `caption(title=None, desc="", variants=None)`（マニュアル・図のグループ化見出し、説明、候補バリアントを設定）
