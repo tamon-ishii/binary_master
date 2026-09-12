@@ -5,7 +5,7 @@ Executes all numbered samples systematically:
 2. sample/02_bitfields_and_alignment.py
 3. sample/03_offsets_and_tables.py
 4. sample/04_procedural_writer.py
-5. sample/05_manual_builder_and_reader.py
+5. sample/05_builder_and_reader.py
 """
 
 import subprocess
@@ -31,7 +31,7 @@ def main():
         sample_dir / "02_bitfields_and_alignment.py",
         sample_dir / "03_offsets_and_tables.py",
         sample_dir / "04_procedural_writer.py",
-        sample_dir / "05_manual_builder_and_reader.py",
+        sample_dir / "05_builder_and_reader.py",
     ]
 
     print("======================================================================")

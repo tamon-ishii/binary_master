@@ -246,7 +246,7 @@ def generate_c_choice(
     emitted_structs: Optional[Set[str]] = None,
 ) -> str:
     """Generate C enum tag constants, variant structs, and union definition for a choice."""
-    from binary_master.manual_builder import _normalize_variants
+    from binary_master.builder import _normalize_variants
 
     if emitted_structs is None:
         emitted_structs = set()
@@ -304,8 +304,8 @@ def generate_c_header(
     guard: Optional[str] = None,
     pack: bool = True,
 ) -> str:
-    """Generate a complete C99/C11 header file from a ManualBuilder instance."""
-    from binary_master.manual_builder import (
+    """Generate a complete C99/C11 header file from a BinaryBuilder instance."""
+    from binary_master.builder import (
         ChoiceElement,
         DocumentElement,
         FieldElement,
@@ -433,7 +433,7 @@ def write_c_header(
     guard: Optional[str] = None,
     pack: bool = True,
 ) -> str:
-    """Generate C header code from a ManualBuilder and optionally save to file."""
+    """Generate C header code from a BinaryBuilder and optionally save to file."""
     content = generate_c_header(builder, guard=guard, pack=pack)
     if path_or_file is not None:
         if isinstance(path_or_file, (str, Path)):

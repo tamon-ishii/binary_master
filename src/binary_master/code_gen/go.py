@@ -215,7 +215,7 @@ def generate_go_choice(
     emitted_structs: Optional[Set[str]] = None,
 ) -> str:
     """Generate Go constants, variant structs, and interface for a choice."""
-    from binary_master.manual_builder import _normalize_variants
+    from binary_master.builder import _normalize_variants
 
     if emitted_structs is None:
         emitted_structs = set()
@@ -266,8 +266,8 @@ def generate_go_choice(
 
 
 def generate_go_code(builder: Any, package_name: str = "protocol") -> str:
-    """Generate complete Go source file from a ManualBuilder instance."""
-    from binary_master.manual_builder import (
+    """Generate complete Go source file from a BinaryBuilder instance."""
+    from binary_master.builder import (
         ChoiceElement,
         DocumentElement,
         FieldElement,
@@ -348,7 +348,7 @@ def write_go(
     path_or_file: Optional[Union[str, Path, IO[str]]] = None,
     package_name: str = "protocol",
 ) -> str:
-    """Generate Go code from a ManualBuilder and optionally save to file."""
+    """Generate Go code from a BinaryBuilder and optionally save to file."""
     content = generate_go_code(builder, package_name=package_name)
     if path_or_file is not None:
         if isinstance(path_or_file, (str, Path)):

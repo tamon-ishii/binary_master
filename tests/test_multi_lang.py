@@ -10,7 +10,7 @@ import pytest
 from binary_master import (
     FixedArray,
     Float32,
-    ManualBuilder,
+    Builder,
     Offset,
     OffsetTable,
     UInt8,
@@ -60,8 +60,8 @@ class SensorPayload:
     samples: FixedArray[UInt16, 4]
 
 
-def create_sample_builder() -> ManualBuilder:
-    builder = ManualBuilder(title="Telemetry Protocol", version="1.0.0")
+def create_sample_builder() -> Builder:
+    builder = Builder(title="Telemetry Protocol", version="1.0.0")
     builder.add_document("Protocol Overview", "This protocol transmits telemetry data.")
     builder.add_section("Header and Registers")
     builder.add_struct(PacketHeader, name="Header", desc="Standard protocol header")

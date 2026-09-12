@@ -8,7 +8,7 @@ from binary_master import (
     Bits,
     FixedArray,
     Float32,
-    ManualBuilder,
+    Builder,
     UInt8,
     UInt16,
     UInt32,
@@ -81,7 +81,7 @@ def test_to_c_struct_bitfield():
 
 def test_builder_to_c_header_full():
     """Test full C header generation including guards, pragmas, enums, unions, and docs."""
-    builder = ManualBuilder(
+    builder = Builder(
         title="Network Telemetry Protocol",
         version="1.0.0",
         description="A sample telemetry protocol for testing.",
@@ -138,7 +138,7 @@ def test_builder_to_c_header_full():
 
 def test_write_c_header_and_gcc_syntax_check(tmp_path: Path):
     """Test saving header file and verify C syntax validity with GCC."""
-    builder = ManualBuilder(title="GCC Compile Test Protocol")
+    builder = Builder(title="GCC Compile Test Protocol")
     builder.add_document("Intro", "C compiler test.")
     builder.add_struct(PacketHeader)
     builder.add_struct(DeviceFlags)

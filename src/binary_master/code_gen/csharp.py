@@ -224,7 +224,7 @@ def generate_csharp_choice(
     emitted_structs: Optional[Set[str]] = None,
 ) -> str:
     """Generate C# enum tag and explicit union for a choice."""
-    from binary_master.manual_builder import _normalize_variants
+    from binary_master.builder import _normalize_variants
 
     if emitted_structs is None:
         emitted_structs = set()
@@ -279,8 +279,8 @@ def generate_csharp_choice(
 
 
 def generate_csharp_code(builder: Any, namespace: str = "BinaryProtocol") -> str:
-    """Generate complete C# source file from a ManualBuilder instance."""
-    from binary_master.manual_builder import (
+    """Generate complete C# source file from a BinaryBuilder instance."""
+    from binary_master.builder import (
         ChoiceElement,
         DocumentElement,
         FieldElement,
@@ -368,7 +368,7 @@ def write_csharp(
     path_or_file: Optional[Union[str, Path, IO[str]]] = None,
     namespace: str = "BinaryProtocol",
 ) -> str:
-    """Generate C# code from a ManualBuilder and optionally save to file."""
+    """Generate C# code from a BinaryBuilder and optionally save to file."""
     content = generate_csharp_code(builder, namespace=namespace)
     if path_or_file is not None:
         if isinstance(path_or_file, (str, Path)):

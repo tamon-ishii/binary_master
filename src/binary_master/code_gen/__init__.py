@@ -67,7 +67,7 @@ def normalize_lang(lang: str) -> str:
 
 
 def generate_code(builder: Any, lang: str, **kwargs) -> str:
-    """Generate source code in the requested language from a ManualBuilder."""
+    """Generate source code in the requested language from a BinaryBuilder."""
     norm = normalize_lang(lang)
     if norm == "c":
         return generate_c_header(builder, **kwargs)

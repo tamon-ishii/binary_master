@@ -226,7 +226,7 @@ def generate_rust_choice(
     emitted_structs: Optional[Set[str]] = None,
 ) -> str:
     """Generate Rust enum tag constants, variant structs, and tagged union for a choice."""
-    from binary_master.manual_builder import _normalize_variants
+    from binary_master.builder import _normalize_variants
 
     if emitted_structs is None:
         emitted_structs = set()
@@ -279,8 +279,8 @@ def generate_rust_choice(
 
 
 def generate_rust_code(builder: Any) -> str:
-    """Generate complete Rust code from a ManualBuilder instance."""
-    from binary_master.manual_builder import (
+    """Generate complete Rust code from a BinaryBuilder instance."""
+    from binary_master.builder import (
         ChoiceElement,
         DocumentElement,
         FieldElement,
@@ -360,7 +360,7 @@ def write_rust(
     builder: Any,
     path_or_file: Optional[Union[str, Path, IO[str]]] = None,
 ) -> str:
-    """Generate Rust code from a ManualBuilder and optionally save to file."""
+    """Generate Rust code from a BinaryBuilder and optionally save to file."""
     content = generate_rust_code(builder)
     if path_or_file is not None:
         if isinstance(path_or_file, (str, Path)):

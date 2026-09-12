@@ -6,7 +6,6 @@ src/binary_master/builder.py
 src/binary_master/c_header.py
 src/binary_master/enums.py
 src/binary_master/manual.py
-src/binary_master/manual_builder.py
 src/binary_master/reader.py
 src/binary_master/writer.py
 src/binary_master.egg-info/PKG-INFO
@@ -21,11 +20,11 @@ src/binary_master/code_gen/go.py
 src/binary_master/code_gen/rust.py
 tests/test_advanced_features.py
 tests/test_binary_struct.py
+tests/test_builder.py
 tests/test_c_header.py
 tests/test_caption.py
 tests/test_comments.py
 tests/test_manual.py
-tests/test_manual_builder.py
 tests/test_multi_lang.py
 tests/test_reader.py
 tests/test_variants.py

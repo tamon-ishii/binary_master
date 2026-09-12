@@ -1,4 +1,4 @@
-"""Tests for schema-first ManualBuilder and automated reader."""
+"""Tests for schema-first Builder and automated reader."""
 
 import io
 from pathlib import Path
@@ -7,7 +7,8 @@ import pytest
 from binary_master import (
     Bits,
     FixedArray,
-    ManualBuilder,
+    BinaryBuilder,
+    Builder,
     UInt8,
     UInt16,
     UInt32,
@@ -15,7 +16,7 @@ from binary_master import (
     write_struct,
     BinaryWriter,
 )
-from binary_master.manual_builder import BuilderReadResult
+from binary_master.builder import BuilderReadResult
 
 
 # Sample structs for testing
@@ -61,7 +62,7 @@ class OptionalFooter:
 
 def test_builder_chaining_and_basic_build():
     """Test registering components and generating markdown output."""
-    builder = ManualBuilder(
+    builder = Builder(
         title="Protocol Specification",
         version="1.0.0",
         description="A test binary communication protocol.",
@@ -123,7 +124,7 @@ def test_builder_chaining_and_basic_build():
 
 def test_builder_write_file(tmp_path: Path):
     """Test builder.write() to a file and stream."""
-    builder = ManualBuilder(title="File Writing Test")
+    builder = Builder(title="File Writing Test")
     builder.add_struct(Header)
 
     out_file = tmp_path / "manual.md"
@@ -145,7 +146,7 @@ def test_builder_write_file(tmp_path: Path):
 
 def test_builder_with_bitfield_diagram():
     """Test that bitfields in structs are documented and packet diagrams generated."""
-    builder = ManualBuilder(title="Bitfield Protocol")
+    builder = Builder(title="Bitfield Protocol")
     builder.add_struct(StatusFlags, name="Flags")
 
     md = builder.build(include_bitfield_diagram=True)
@@ -159,7 +160,7 @@ def test_builder_with_bitfield_diagram():
 
 def test_builder_automated_read_choice():
     """Test automated deserialization of structs and choices from binary bytes."""
-    builder = ManualBuilder("Dynamic Protocol")
+    builder = Builder("Dynamic Protocol")
     builder.add_struct(Header, name="header")
     builder.add_choice(
         name="payload",
@@ -205,7 +206,7 @@ def test_builder_automated_read_choice():
 
 def test_builder_automated_read_condition():
     """Test condition evaluation during automated read."""
-    builder = ManualBuilder("Conditional Protocol")
+    builder = Builder("Conditional Protocol")
     builder.add_struct(Header, name="header")
     builder.add_struct(
         OptionalFooter,
@@ -236,7 +237,7 @@ def test_builder_automated_read_repeated_struct():
     class ListHeader:
         count: UInt16
 
-    builder = ManualBuilder("List Protocol")
+    builder = Builder("List Protocol")
     builder.add_struct(ListHeader, name="hdr")
     builder.add_struct(Item, name="items", count="count")
 
@@ -256,7 +257,7 @@ def test_builder_automated_read_repeated_struct():
 
 def test_builder_read_field_element():
     """Test ad-hoc primitive fields in builder."""
-    builder = ManualBuilder("Ad-hoc Protocol")
+    builder = Builder("Ad-hoc Protocol")
     builder.add_field("magic", "UInt32", 4)
     builder.add_field("flags", "UInt16", 2)
 
@@ -271,7 +272,7 @@ def test_builder_read_field_element():
 
 def test_builder_error_handling():
     """Test invalid configurations and unmatched tags."""
-    builder = ManualBuilder("Error Test")
+    builder = Builder("Error Test")
     builder.add_struct(Header, name="hdr")
     builder.add_choice(
         name="payload",
@@ -291,15 +292,17 @@ def test_builder_error_handling():
 
 
 def test_builder_aliases():
-    """Verify BinaryBuilder, Builder, and ManualBuilder are all identical and functional."""
-    from binary_master import BinaryBuilder, Builder, ManualBuilder
-    from binary_master.builder import BinaryBuilder as BB1, Builder as B1, ManualBuilder as MB1
+    """Verify BinaryBuilder and Builder are identical and functional, and ManualBuilder is removed."""
+    import binary_master
+    from binary_master import BinaryBuilder, Builder
+    from binary_master.builder import BinaryBuilder as BB1, Builder as B1
 
     assert BinaryBuilder is Builder
-    assert ManualBuilder is BinaryBuilder
     assert BB1 is BinaryBuilder
     assert B1 is Builder
-    assert MB1 is ManualBuilder
+
+    # Ensure ManualBuilder is completely removed
+    assert not hasattr(binary_master, "ManualBuilder")
 
     b = Builder(title="Alias Test", version="1.0")
     b.add_struct(Header, name="header")

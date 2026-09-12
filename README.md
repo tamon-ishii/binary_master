@@ -29,7 +29,7 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - **多態チャンク & タグ付き共用体 (`Variant[TagField, Mapping]`)**: 種別IDに応じて切り替わる多態構造体の自動ディスパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
   - 構造体のネスト
-- 📐 **事前設計型仕様書ビルダー & 自動リーダー (`ManualBuilder`)**  
+- 📐 **事前設計型プロトコルビルダー & 自動リーダー (`Builder` / `BinaryBuilder`)**  
   - バイナリデータを実際に書き出すことなく、構造体クラス（`@binary_struct`）、説明文（`add_document`）、条件分岐（`condition`）、多態バリアント（`add_choice`）を事前定義して仕様書を生成（`builder.write("spec.md")`）。
   - 事前に定義したスキーマ情報をもとに、バイナリバイト列から各構造体・バリアントを自動判別して復元する **スキーマ駆動自動リーダー (`builder.read(data)`)** を提供。
 - ✍️ **柔軟な手続き的ライター & リーダー (`BinaryWriter` / `BinaryReader`)**  
@@ -544,7 +544,7 @@ header = reader.read_struct(Header)
 
 実行時のダミーインスタンスを作成することなく、プロトコルの構造定義（ヘッダー、条件分岐、多態バリアント、説明文）を事前に宣言して仕様書を生成し、多言語コードのエクスポートや直接のバイナリ自動パースが可能です。
 
-`binary_master` では、バイナリを「書く」`Writer`、バイナリを「読む」`Reader` に対し、プロトコル全体を「建てる」**`Builder`**（正式名: `BinaryBuilder`、互換エイリアス: `ManualBuilder`）を提供しています。
+`binary_master` では、バイナリを「書く」`Writer`、バイナリを「読む」`Reader` に対し、プロトコル全体を「建てる」**`Builder`**（正式名: `BinaryBuilder`）を提供しています。
 
 ```python
 from binary_master import Builder, binary_struct, UInt8, UInt16, UInt32, Float32, FixedArray
@@ -628,9 +628,9 @@ if "footer" in result:
 
 ### 6. 多言語ヘッダー・構造体定義のエクスポート (C, Rust, C#, Modern C++, Go)
 
-`ManualBuilder` および `@binary_struct` は、Python 側で定義したバイナリレイアウト（1バイトパッキング整合）を保ったまま、主要なネイティブ・システムプログラミング言語向けのコードを自動生成できます。
+`Builder` / `BinaryBuilder` および `@binary_struct` は、Python 側で定義したバイナリレイアウト（1バイトパッキング整合）を保ったまま、主要なネイティブ・システムプログラミング言語向けのコードを自動生成できます。
 
-| 言語 | `ManualBuilder` メソッド | `@binary_struct` メソッド | 生成特徴 |
+| 言語 | `Builder` メソッド | `@binary_struct` メソッド | 生成特徴 |
 |---|---|---|---|
 | **C** | `to_c_header()` / `write_c_header()` | `Cls.to_c()` / `Cls.to_c_struct()` | `typedef struct`, `#pragma pack(push, 1)`, `union`, `enum` |
 | **Rust** | `to_rust()` / `write_rust()` | `Cls.to_rust()` / `Cls.to_rust_struct()` | `#[repr(C, packed)]`, `[T; N]`, タグ付共用体 `enum` |
@@ -667,7 +667,7 @@ if "footer" in result:
 - **デシリアライズ**: `Cls.from_bytes(data, endian=None)` または `read_struct(Cls, reader)`
 - **他言語コード生成**: `Cls.to_c()` / `Cls.to_c_struct()`, `Cls.to_rust()`, `Cls.to_cpp()`, `Cls.to_csharp()`, `Cls.to_go()`
 
-### `Builder` / `BinaryBuilder` 主要メソッド（旧 `ManualBuilder`）
+### `Builder` / `BinaryBuilder` 主要メソッド
 - **章・説明文の追加**: `add_document(title, content)`（Markdown 形式の説明文・章を追加）
 - **構造体の登録**: `add_struct(cls, name=None, desc="", condition=None, condition_func=None, count=None)`（`@binary_struct` クラスを登録。条件分岐やリピート件数に対応）
 - **多態バリアント分岐の登録**: `add_choice(name, tag_field, variants, desc="", condition=None, condition_func=None)`（タグフィールドに基づくバリアント選択点を登録）
