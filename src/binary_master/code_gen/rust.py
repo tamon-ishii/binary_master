@@ -1,4 +1,4 @@
-"""C/C++ header file generator for binary_master schemas and structs."""
+"""Rust code generator for binary_master schemas and structs."""
 
 from __future__ import annotations
 
@@ -36,63 +36,37 @@ from binary_master.binary_struct import (
     UInt32,
     UInt64,
 )
+from binary_master.c_header import to_pascal_case, to_screaming_snake_case, to_snake_case
 
 
-def to_snake_case(name: str) -> str:
-    """Convert PascalCase or camelCase name to snake_case."""
-    s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
-    s2 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1)
-    return s2.lower()
-
-
-def to_screaming_snake_case(name: str) -> str:
-    """Convert PascalCase, camelCase, or snake_case to SCREAMING_SNAKE_CASE."""
-    return to_snake_case(name).upper()
-
-
-def to_pascal_case(name: str) -> str:
-    """Convert snake_case or identifier to PascalCase."""
-    snake = to_snake_case(name)
-    parts = re.split(r"[^a-zA-Z0-9]+", snake)
-    return "".join(p.capitalize() for p in parts if p)
-
-
-def c_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
-    """Determine the C type, array count, and optional inline comment for a binary field type.
-
-    Returns:
-        (c_type_name, array_size_or_None, comment_annotation_or_None)
-    """
+def rust_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
+    """Determine the Rust type and optional documentation note."""
     if get_origin(field_type) is Annotated:
         args = get_args(field_type)
-        base_t = args[0]
-        c_name, arr_sz, _ = c_type_of(base_t)
-        ann_desc = str(args[1]) if len(args) > 1 else None
-        return c_name, arr_sz, ann_desc
+        return rust_type_of(args[0])
 
-    # Primitives
     if field_type is UInt8:
-        return "uint8_t", None, None
+        return "u8", None
     if field_type is UInt16:
-        return "uint16_t", None, None
+        return "u16", None
     if field_type is UInt32:
-        return "uint32_t", None, None
+        return "u32", None
     if field_type is UInt64:
-        return "uint64_t", None, None
+        return "u64", None
     if field_type is Int8:
-        return "int8_t", None, None
+        return "i8", None
     if field_type is Int16:
-        return "int16_t", None, None
+        return "i16", None
     if field_type is Int32:
-        return "int32_t", None, None
+        return "i32", None
     if field_type is Int64:
-        return "int64_t", None, None
+        return "i64", None
     if field_type is Float32:
-        return "float", None, None
+        return "f32", None
     if field_type is Float64:
-        return "double", None, None
+        return "f64", None
     if field_type is bool:
-        return "bool", None, None
+        return "bool", None
 
     # FixedArray[Elem, Count]
     is_fixed = (isinstance(field_type, tuple) and len(field_type) >= 3 and field_type[0] is FixedArray) or (
@@ -106,8 +80,8 @@ def c_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
             args = get_args(field_type)
             elem_t = args[0]
             cnt = args[1]
-        elem_c, _, _ = c_type_of(elem_t)
-        return elem_c, cnt, None
+        elem_rs, _ = rust_type_of(elem_t)
+        return f"[{elem_rs}; {cnt}]", None
 
     # Offset[Target, Size, Base]
     is_offset = (isinstance(field_type, tuple) and len(field_type) >= 1 and field_type[0] is Offset) or (
@@ -128,8 +102,8 @@ def c_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
             if len(args) >= 2 and args[1] in (UInt8, UInt16, UInt32, UInt64):
                 offset_t = args[1]
 
-        c_name, _, _ = c_type_of(offset_t)
-        return c_name, None, f"Offset to {target_name}"
+        rs_name, _ = rust_type_of(offset_t)
+        return rs_name, f"Offset to {target_name}"
 
     # OffsetTable[Count, Type, Base]
     is_offset_tbl = (isinstance(field_type, tuple) and len(field_type) >= 1 and field_type[0] is OffsetTable) or (
@@ -149,24 +123,23 @@ def c_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
                 count = args[0]
             if len(args) >= 2:
                 offset_t = args[1]
-        c_name, _, _ = c_type_of(offset_t)
-        return c_name, count, "Offset table"
+        rs_name, _ = rust_type_of(offset_t)
+        return f"[{rs_name}; {count}]", "Offset table"
 
     # Nested binary_struct
     if hasattr(field_type, "__binary__"):
-        return field_type.__name__, None, None
+        return field_type.__name__, None
 
-    # Fallback
-    return "uint8_t", None, None
+    return "u8", None
 
 
-def generate_c_struct(
+def generate_rust_struct(
     struct_cls: type,
     name: Optional[str] = None,
     desc: str = "",
     condition: Optional[str] = None,
 ) -> str:
-    """Generate a C typedef struct definition for a @binary_struct class."""
+    """Generate Rust struct definition for a @binary_struct class."""
     if not hasattr(struct_cls, "__binary__"):
         raise TypeError(f"Class {getattr(struct_cls, '__name__', str(struct_cls))} is not a binary_struct")
 
@@ -177,67 +150,74 @@ def generate_c_struct(
 
     lines: List[str] = []
 
-    # Doxygen docstring header
-    lines.append("/**")
+    # Rustdoc comments
     if field_alias:
-        lines.append(f" * @brief Logical Name: `{field_alias}`")
+        lines.append(f"/// Logical Name: `{field_alias}`")
     if doc_text:
         for d_line in inspect.cleandoc(doc_text).splitlines():
-            lines.append(f" * {d_line}")
+            lines.append(f"/// {d_line}")
     elif not field_alias:
-        lines.append(f" * @brief {cls_name} structure.")
-
+        lines.append(f"/// `{cls_name}` binary structure.")
     if condition:
-        lines.append(f" * @note Condition: {condition}")
-    lines.append(" */")
+        lines.append(f"///\n/// **Condition**: `{condition}`")
 
     total_bits = meta.get("bits")
     if total_bits is not None:
-        # Bitfield struct
+        # Bitfield packed container
         if total_bits <= 8:
-            base_type = "uint8_t"
+            base_type = "u8"
         elif total_bits <= 16:
-            base_type = "uint16_t"
+            base_type = "u16"
         elif total_bits <= 32:
-            base_type = "uint32_t"
+            base_type = "u32"
         else:
-            base_type = "uint64_t"
+            base_type = "u64"
 
-        lines.append(f"typedef struct {cls_name} {{")
+        lines.append("#[repr(C, packed)]")
+        lines.append("#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]")
+        lines.append(f"pub struct {cls_name} {{")
+        lines.append(f"    pub raw: {base_type},")
+        lines.append("}")
+
+        # Methods for bitfields
+        lines.append(f"\nimpl {cls_name} {{")
         fields = meta.get("fields", {})
         descriptions = meta.get("descriptions", {})
         shift = 0
         for fname, ftype in fields.items():
             width = ftype[1] if isinstance(ftype, tuple) and len(ftype) >= 2 else 1
             fdesc = descriptions.get(fname, "")
-            bit_end = shift + width - 1
-            bit_range = f"[{shift}:{bit_end}]" if width > 1 else f"[{shift}]"
-            comment = f" /**< Bit {bit_range}{': ' + fdesc if fdesc else ''} */"
-            lines.append(f"    {base_type} {fname} : {width};{comment}")
+            mask = (1 << width) - 1
+            method_name = to_snake_case(fname)
+            doc_comment = f"    /// Bits [{shift}:{shift + width - 1}]{': ' + fdesc if fdesc else ''}"
+            lines.append(doc_comment)
+            lines.append(f"    pub fn {method_name}(&self) -> {base_type} {{")
+            lines.append(f"        (self.raw >> {shift}) & 0x{mask:X}")
+            lines.append("    }")
             shift += width
-        lines.append(f"}} {cls_name};")
+        lines.append("}")
     else:
-        # Regular struct
-        lines.append(f"typedef struct {cls_name} {{")
+        # Regular packed struct
+        lines.append("#[repr(C, packed)]")
+        lines.append("#[derive(Debug, Clone, Copy, PartialEq)]")
+        lines.append(f"pub struct {cls_name} {{")
         fields = meta.get("fields", {})
         descriptions = meta.get("descriptions", {})
 
         for fname, ftype in fields.items():
-            c_name, arr_cnt, note = c_type_of(ftype)
+            rs_type, note = rust_type_of(ftype)
             fdesc = descriptions.get(fname, "") or note or ""
-            comment = f" /**< {fdesc} */" if fdesc else ""
+            f_snake = to_snake_case(fname)
+            if fdesc:
+                lines.append(f"    /// {fdesc}")
+            lines.append(f"    pub {f_snake}: {rs_type},")
 
-            if arr_cnt is not None:
-                lines.append(f"    {c_name} {fname}[{arr_cnt}];{comment}")
-            else:
-                lines.append(f"    {c_name} {fname};{comment}")
-
-        lines.append(f"}} {cls_name};")
+        lines.append("}")
 
     return "\n".join(lines)
 
 
-def generate_c_choice(
+def generate_rust_choice(
     choice_name: str,
     tag_field: Union[str, Any],
     variants: Any,
@@ -245,7 +225,7 @@ def generate_c_choice(
     condition: Optional[str] = None,
     emitted_structs: Optional[Set[str]] = None,
 ) -> str:
-    """Generate C enum tag constants, variant structs, and union definition for a choice."""
+    """Generate Rust enum tag constants, variant structs, and tagged union for a choice."""
     from binary_master.manual_builder import _normalize_variants
 
     if emitted_structs is None:
@@ -258,53 +238,48 @@ def generate_c_choice(
 
     # 1. Tag Enum definition
     enum_name = f"{to_pascal_case(choice_name)}Tag"
-    lines.append("/**")
-    lines.append(f" * @brief Tag values for choice `{choice_name}` (dispatched by `{tag_field_name}`).")
+    lines.append(f"/// Tag values for choice `{choice_name}` (dispatched by `{tag_field_name}`).")
     if desc:
-        lines.append(f" * {desc}")
+        lines.append(f"/// {desc}")
     if condition:
-        lines.append(f" * @note Condition: {condition}")
-    lines.append(" */")
-    lines.append(f"typedef enum {enum_name} {{")
+        lines.append(f"///\n/// **Condition**: `{condition}`")
+    lines.append("#[repr(u16)]")
+    lines.append("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]")
+    lines.append(f"pub enum {enum_name} {{")
 
-    prefix = to_screaming_snake_case(choice_name)
     for tag, v_cls, v_desc in norm_vars:
         v_cls_name = getattr(v_cls, "__name__", str(v_cls))
         tag_val_str = f"0x{tag:02X}" if isinstance(tag, int) else f"{tag}"
-        tag_enum_id = f"{prefix}_TAG_{to_screaming_snake_case(v_cls_name)}"
-        comment = f" /**< Tag {tag_val_str}: {v_desc or v_cls_name} */"
-        lines.append(f"    {tag_enum_id} = {tag_val_str},{comment}")
-    lines.append(f"}} {enum_name};\n")
+        variant_tag_name = to_pascal_case(v_cls_name)
+        if v_desc:
+            lines.append(f"    /// {v_desc}")
+        lines.append(f"    {variant_tag_name} = {tag_val_str},")
+    lines.append("}\n")
 
     # 2. Emit each variant struct if not already emitted
     for tag, v_cls, v_desc in norm_vars:
         v_cls_name = getattr(v_cls, "__name__", str(v_cls))
         if v_cls_name not in emitted_structs:
-            lines.append(generate_c_struct(v_cls, desc=v_desc))
+            lines.append(generate_rust_struct(v_cls, desc=v_desc))
             lines.append("")
             emitted_structs.add(v_cls_name)
 
-    # 3. Emit Union definition
+    # 3. Emit Rust Tagged Union Enum
     union_name = f"{to_pascal_case(choice_name)}Union"
-    lines.append("/**")
-    lines.append(f" * @brief Polymorphic union for choice `{choice_name}`.")
-    lines.append(" */")
-    lines.append(f"typedef union {union_name} {{")
+    lines.append(f"/// Polymorphic container for choice `{choice_name}`.")
+    lines.append("#[derive(Debug, Clone, Copy, PartialEq)]")
+    lines.append(f"pub enum {union_name} {{")
     for tag, v_cls, v_desc in norm_vars:
         v_cls_name = getattr(v_cls, "__name__", str(v_cls))
-        member_name = to_snake_case(v_cls_name)
-        lines.append(f"    {v_cls_name} {member_name};")
-    lines.append(f"}} {union_name};")
+        variant_member = to_pascal_case(v_cls_name)
+        lines.append(f"    {variant_member}({v_cls_name}),")
+    lines.append("}")
 
     return "\n".join(lines)
 
 
-def generate_c_header(
-    builder: Any,
-    guard: Optional[str] = None,
-    pack: bool = True,
-) -> str:
-    """Generate a complete C99/C11 header file from a ManualBuilder instance."""
+def generate_rust_code(builder: Any) -> str:
+    """Generate complete Rust code from a ManualBuilder instance."""
     from binary_master.manual_builder import (
         ChoiceElement,
         DocumentElement,
@@ -317,70 +292,41 @@ def generate_c_header(
     version = getattr(builder, "version", None)
     elements = getattr(builder, "elements", [])
 
-    if guard is None:
-        clean_title = re.sub(r"[^a-zA-Z0-9_]", "_", title).strip("_").upper()
-        guard = f"{clean_title}_H"
-
     lines: List[str] = []
-
-    # Include Guard
-    lines.append(f"#ifndef {guard}")
-    lines.append(f"#define {guard}\n")
-
-    # File Header Comment
-    lines.append("/**")
-    lines.append(f" * @file")
-    lines.append(f" * @brief {title}")
+    lines.append("//! " + "=" * 76)
+    lines.append(f"//! {title}")
     if version:
-        lines.append(f" * @version {version}")
+        lines.append(f"//! Version: {version}")
     if getattr(builder, "description", ""):
         for d in builder.description.strip().splitlines():
-            lines.append(f" * {d}")
-    lines.append(" *")
-    lines.append(" * Automatically generated by binary_master.")
-    lines.append(" */\n")
+            lines.append(f"//! {d}")
+    lines.append("//! Automatically generated by binary_master.")
+    lines.append("//! " + "=" * 76 + "\n")
 
-    # Standard C Includes
-    lines.append("#include <stdint.h>")
-    lines.append("#include <stdbool.h>\n")
-
-    # C++ extern "C" guard
-    lines.append("#ifdef __cplusplus")
-    lines.append('extern "C" {')
-    lines.append("#endif\n")
-
-    # Packing Pragma
-    if pack:
-        lines.append("/* Force 1-byte struct alignment for exact binary wire format */")
-        lines.append("#if defined(_MSC_VER)")
-        lines.append("#pragma pack(push, 1)")
-        lines.append("#elif defined(__GNUC__) || defined(__clang__)")
-        lines.append("#pragma pack(push, 1)")
-        lines.append("#endif\n")
+    lines.append("#![allow(dead_code, non_camel_case_types, non_snake_case)]\n")
 
     emitted_structs: Set[str] = set()
 
     for elem in elements:
         if isinstance(elem, DocumentElement):
-            lines.append("/*")
-            lines.append(" * " + "=" * 76)
-            lines.append(f" * {elem.title}")
-            lines.append(" * " + "=" * 76)
+            lines.append("// " + "=" * 76)
+            lines.append(f"// {elem.title}")
+            lines.append("// " + "=" * 76)
             for c_line in elem.content.splitlines():
-                lines.append(f" * {c_line}" if c_line else " *")
-            lines.append(" */\n")
+                lines.append(f"// {c_line}" if c_line else "//")
+            lines.append("")
 
         elif isinstance(elem, SectionElement):
-            lines.append("/* " + "-" * 76)
-            lines.append(f" * Section: {elem.title}")
+            lines.append("// " + "-" * 76)
+            lines.append(f"// Section: {elem.title}")
             if elem.desc:
-                lines.append(f" * {elem.desc}")
-            lines.append(" * " + "-" * 76 + " */\n")
+                lines.append(f"// {elem.desc}")
+            lines.append("// " + "-" * 76 + "\n")
 
         elif isinstance(elem, StructElement):
             s_name = elem.struct_cls.__name__
             if s_name not in emitted_structs:
-                s_code = generate_c_struct(
+                s_code = generate_rust_struct(
                     elem.struct_cls,
                     name=elem.name,
                     desc=elem.desc,
@@ -391,7 +337,7 @@ def generate_c_header(
                 emitted_structs.add(s_name)
 
         elif isinstance(elem, ChoiceElement):
-            c_code = generate_c_choice(
+            c_code = generate_rust_choice(
                 choice_name=elem.name,
                 tag_field=elem.tag_field,
                 variants=elem.variants,
@@ -403,38 +349,19 @@ def generate_c_header(
             lines.append("")
 
         elif isinstance(elem, FieldElement):
-            c_type, arr_cnt, _ = c_type_of(elem.type_name)
-            desc_str = f" /**< {elem.desc} */" if elem.desc else ""
-            lines.append(f"/* Ad-hoc field: {elem.name} ({elem.type_name}, {elem.size}B){desc_str} */\n")
-
-    # Restore Packing Pragma
-    if pack:
-        lines.append("#if defined(_MSC_VER) || defined(__GNUC__) || defined(__clang__)")
-        lines.append("#pragma pack(pop)")
-        lines.append("#endif\n")
-
-    # Close C++ extern "C" guard
-    lines.append("#ifdef __cplusplus")
-    lines.append("}")
-    lines.append("#endif\n")
-
-    # Close Include Guard
-    lines.append(f"#endif /* {guard} */\n")
+            rs_type, _ = rust_type_of(elem.type_name)
+            desc_str = f" // {elem.desc}" if elem.desc else ""
+            lines.append(f"// Ad-hoc field: {elem.name} ({elem.type_name}, {elem.size}B){desc_str}\n")
 
     return "\n".join(lines)
 
 
-to_c_header = generate_c_header
-
-
-def write_c_header(
+def write_rust(
     builder: Any,
     path_or_file: Optional[Union[str, Path, IO[str]]] = None,
-    guard: Optional[str] = None,
-    pack: bool = True,
 ) -> str:
-    """Generate C header code from a ManualBuilder and optionally save to file."""
-    content = generate_c_header(builder, guard=guard, pack=pack)
+    """Generate Rust code from a ManualBuilder and optionally save to file."""
+    content = generate_rust_code(builder)
     if path_or_file is not None:
         if isinstance(path_or_file, (str, Path)):
             p = Path(path_or_file)
@@ -445,8 +372,3 @@ def write_c_header(
         else:
             raise TypeError(f"Invalid path_or_file: {type(path_or_file).__name__}")
     return content
-
-
-def to_c_struct(struct_cls: type, name: Optional[str] = None, desc: str = "") -> str:
-    """Convenience helper to generate a C struct definition from a single @binary_struct class."""
-    return generate_c_struct(struct_cls, name=name, desc=desc)

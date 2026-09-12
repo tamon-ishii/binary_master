@@ -681,6 +681,85 @@ class ManualBuilder:
 
         return write_c_header(self, path_or_file=path_or_file, guard=guard, pack=pack)
 
+    def to_rust(self) -> str:
+        """Generate Rust type definitions and packed structs from this schema."""
+        from binary_master.code_gen.rust import generate_rust_code
+
+        return generate_rust_code(self)
+
+    def write_rust(
+        self,
+        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+    ) -> str:
+        """Generate Rust code and optionally save it to a file or stream."""
+        from binary_master.code_gen.rust import write_rust
+
+        return write_rust(self, path_or_file=path_or_file)
+
+    def to_cpp(self) -> str:
+        """Generate modern C++17/20 header with packed structs and std::variant."""
+        from binary_master.code_gen.cpp import generate_cpp_code
+
+        return generate_cpp_code(self)
+
+    def write_cpp(
+        self,
+        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+    ) -> str:
+        """Generate modern C++ header and optionally save it to a file or stream."""
+        from binary_master.code_gen.cpp import write_cpp
+
+        return write_cpp(self, path_or_file=path_or_file)
+
+    def to_csharp(self, namespace: str = "BinaryProtocol") -> str:
+        """Generate C# type definitions with sequential structs and explicit unions."""
+        from binary_master.code_gen.csharp import generate_csharp_code
+
+        return generate_csharp_code(self, namespace=namespace)
+
+    def write_csharp(
+        self,
+        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+        namespace: str = "BinaryProtocol",
+    ) -> str:
+        """Generate C# code and optionally save it to a file or stream."""
+        from binary_master.code_gen.csharp import write_csharp
+
+        return write_csharp(self, path_or_file=path_or_file, namespace=namespace)
+
+    def to_go(self, package_name: str = "protocol") -> str:
+        """Generate Go structs, const tags, and interfaces from this schema."""
+        from binary_master.code_gen.go import generate_go_code
+
+        return generate_go_code(self, package_name=package_name)
+
+    def write_go(
+        self,
+        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+        package_name: str = "protocol",
+    ) -> str:
+        """Generate Go code and optionally save it to a file or stream."""
+        from binary_master.code_gen.go import write_go
+
+        return write_go(self, path_or_file=path_or_file, package_name=package_name)
+
+    def to_code(self, lang: str, **kwargs) -> str:
+        """Generate source code in the specified language ('c', 'rust', 'cpp', 'csharp', 'go')."""
+        from binary_master.code_gen import generate_code
+
+        return generate_code(self, lang=lang, **kwargs)
+
+    def write_code(
+        self,
+        path_or_file: Union[str, Path, IO[str]],
+        lang: Optional[str] = None,
+        **kwargs,
+    ) -> str:
+        """Generate source code and save to file, automatically inferring language if omitted."""
+        from binary_master.code_gen import write_code
+
+        return write_code(self, path_or_file=path_or_file, lang=lang, **kwargs)
+
 
     def read(
         self,

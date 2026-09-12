@@ -112,10 +112,26 @@ If bit 0 of `flags` is set (`flags & 0x01 != 0`), a 4-byte `ChecksumFooter` is a
     builder.write(spec_path, diagram_direction="TD")
     print(f"Generated specification manual saved to: {spec_path.name}")
 
-    # 5. Export C language header file using builder.write_c_header()
+    # 5. Export multi-language definition files
     header_path = Path(__file__).parent / "telemetry_protocol.h"
     builder.write_c_header(header_path)
     print(f"Generated C header file saved to:         {header_path.name}")
+
+    rust_path = Path(__file__).parent / "telemetry_protocol.rs"
+    builder.write_rust(rust_path)
+    print(f"Generated Rust definitions saved to:       {rust_path.name}")
+
+    cpp_path = Path(__file__).parent / "telemetry_protocol.hpp"
+    builder.write_cpp(cpp_path)
+    print(f"Generated C++ header saved to:             {cpp_path.name}")
+
+    csharp_path = Path(__file__).parent / "telemetry_protocol.cs"
+    builder.write_csharp(csharp_path, namespace="TelemetryProtocol")
+    print(f"Generated C# structures saved to:          {csharp_path.name}")
+
+    go_path = Path(__file__).parent / "telemetry_protocol.go"
+    builder.write_go(go_path, package_name="telemetry")
+    print(f"Generated Go package definitions saved to: {go_path.name}")
 
 
     # =========================================================================

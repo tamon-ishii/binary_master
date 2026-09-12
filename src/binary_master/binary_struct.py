@@ -519,6 +519,34 @@ def to_c_struct_method(cls, name: Optional[str] = None, desc: str = "") -> str:
     return to_c_struct(cls, name=name, desc=desc)
 
 
+def to_rust_struct_method(cls, name: Optional[str] = None, desc: str = "") -> str:
+    """Generate a Rust struct definition for this @binary_struct class."""
+    from binary_master.code_gen.rust import generate_rust_struct
+
+    return generate_rust_struct(cls, name=name, desc=desc)
+
+
+def to_cpp_struct_method(cls, name: Optional[str] = None, desc: str = "") -> str:
+    """Generate a modern C++ struct definition for this @binary_struct class."""
+    from binary_master.code_gen.cpp import generate_cpp_struct
+
+    return generate_cpp_struct(cls, name=name, desc=desc)
+
+
+def to_csharp_struct_method(cls, name: Optional[str] = None, desc: str = "") -> str:
+    """Generate a C# struct definition for this @binary_struct class."""
+    from binary_master.code_gen.csharp import generate_csharp_struct
+
+    return generate_csharp_struct(cls, name=name, desc=desc)
+
+
+def to_go_struct_method(cls, name: Optional[str] = None, desc: str = "") -> str:
+    """Generate a Go struct definition for this @binary_struct class."""
+    from binary_master.code_gen.go import generate_go_struct
+
+    return generate_go_struct(cls, name=name, desc=desc)
+
+
 def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_align=False):
 
     def wrapper(target_cls):
@@ -535,6 +563,15 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
         target_cls.to_bytes = to_bytes
         target_cls.from_bytes = classmethod(from_bytes)
         target_cls.to_c_struct = classmethod(to_c_struct_method)
+        target_cls.to_c = classmethod(to_c_struct_method)
+        target_cls.to_rust_struct = classmethod(to_rust_struct_method)
+        target_cls.to_rust = classmethod(to_rust_struct_method)
+        target_cls.to_cpp_struct = classmethod(to_cpp_struct_method)
+        target_cls.to_cpp = classmethod(to_cpp_struct_method)
+        target_cls.to_csharp_struct = classmethod(to_csharp_struct_method)
+        target_cls.to_csharp = classmethod(to_csharp_struct_method)
+        target_cls.to_go_struct = classmethod(to_go_struct_method)
+        target_cls.to_go = classmethod(to_go_struct_method)
         target_cls.binary_size = _BinarySizeDescriptor()
         target_cls.__len__ = lambda self: sizeof(self)
         return target_cls

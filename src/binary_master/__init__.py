@@ -40,6 +40,18 @@ from .manual import (
 )
 from .manual_builder import ManualBuilder, BuilderReadResult
 from .c_header import to_c_header, write_c_header, to_c_struct
+from .code_gen import (
+    generate_code,
+    write_code,
+    generate_rust_code,
+    write_rust,
+    generate_cpp_code,
+    write_cpp,
+    generate_csharp_code,
+    write_csharp,
+    generate_go_code,
+    write_go,
+)
 
 
 
@@ -90,6 +102,16 @@ __all__ = [
     "to_c_header",
     "write_c_header",
     "to_c_struct",
+    "generate_code",
+    "write_code",
+    "generate_rust_code",
+    "write_rust",
+    "generate_cpp_code",
+    "write_cpp",
+    "generate_csharp_code",
+    "write_csharp",
+    "generate_go_code",
+    "write_go",
 ]
 
 

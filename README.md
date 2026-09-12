@@ -592,8 +592,28 @@ builder.add_struct(Footer, name="footer", condition="flags & 0x01 != 0")
 # 2. 仕様書を Markdown ファイルに出力
 builder.write("protocol_spec.md")
 
-# 3. C言語ヘッダーファイル (.h) の出力（#pragma pack(1)、typedef struct、enum、union を自動生成）
+# 3. 多言語ヘッダー・型定義ファイルの出力
+# C言語ヘッダー (#pragma pack(1), typedef struct, enum, union)
 builder.write_c_header("protocol.h")
+
+# Rust (#[repr(C, packed)], #[derive(...)], タグ付き enum)
+builder.write_rust("protocol.rs")
+
+# Modern C++17/20 (#pragma pack(1), std::array, enum class, std::variant)
+builder.write_cpp("protocol.hpp")
+
+# C# / Unity ([StructLayout(Pack=1)], [MarshalAs], [FieldOffset(0)] 共用体)
+builder.write_csharp("protocol.cs", namespace="MyProtocol")
+
+# Go (package protocol, type struct, [N]T, typed const)
+builder.write_go("protocol.go", package_name="protocol")
+
+# 拡張子から自動判別して出力することも可能
+builder.write_code("export/packet.rs")   # -> Rust
+builder.write_code("export/packet.cs")   # -> C#
+builder.write_code("export/packet.hpp")  # -> C++
+builder.write_code("export/packet.go")   # -> Go
+builder.write_code("export/packet.h")    # -> C
 
 # 4. 定義したスキーマに基づく自動デシリアライズ
 # （タグ値に応じたバリアント選択や条件判定を自動実行）
@@ -603,6 +623,19 @@ print(result.payload)       # TextPayload または SensorPayload インスタ�
 if "footer" in result:
     print(result.footer.crc32)
 ```
+
+### 6. 多言語ヘッダー・構造体定義のエクスポート (C, Rust, C#, Modern C++, Go)
+
+`ManualBuilder` および `@binary_struct` は、Python 側で定義したバイナリレイアウト（1バイトパッキング整合）を保ったまま、主要なネイティブ・システムプログラミング言語向けのコードを自動生成できます。
+
+| 言語 | `ManualBuilder` メソッド | `@binary_struct` メソッド | 生成特徴 |
+|---|---|---|---|
+| **C** | `to_c_header()` / `write_c_header()` | `Cls.to_c()` / `Cls.to_c_struct()` | `typedef struct`, `#pragma pack(push, 1)`, `union`, `enum` |
+| **Rust** | `to_rust()` / `write_rust()` | `Cls.to_rust()` / `Cls.to_rust_struct()` | `#[repr(C, packed)]`, `[T; N]`, タグ付共用体 `enum` |
+| **Modern C++** | `to_cpp()` / `write_cpp()` | `Cls.to_cpp()` / `Cls.to_cpp_struct()` | `#pragma once`, `std::array<T, N>`, `std::variant`, `enum class` |
+| **C# (.NET / Unity)** | `to_csharp()` / `write_csharp()` | `Cls.to_csharp()` / `Cls.to_csharp_struct()` | `[StructLayout(Pack = 1)]`, `[MarshalAs]`, `[FieldOffset(0)]` |
+| **Go** | `to_go()` / `write_go()` | `Cls.to_go()` / `Cls.to_go_struct()` | `type Struct struct`, `[N]T`, `const` タグ, `interface` |
+| **統一 API** | `to_code(lang)` / `write_code(path)` | - | 拡張子 (`.rs`, `.cs`, `.hpp`, `.go`, `.h`) からの言語自動判別 |
 
 
 ---
@@ -630,7 +663,7 @@ if "footer" in result:
 - **バイナリサイズ取得**: `Cls.binary_size` / `sizeof(Cls)`（クラスから静的サイズを取得）、`instance.binary_size` / `sizeof(instance)` / `len(instance)`（インスタンスのシリアライズサイズを取得）
 - **シリアライズ**: `instance.to_bytes(endian=None)` または `write_struct(instance)`
 - **デシリアライズ**: `Cls.from_bytes(data, endian=None)` または `read_struct(Cls, reader)`
-- **C言語構造体生成**: `Cls.to_c_struct(name=None, desc="")`（C言語の `typedef struct` コードを生成）
+- **他言語コード生成**: `Cls.to_c()` / `Cls.to_c_struct()`, `Cls.to_rust()`, `Cls.to_cpp()`, `Cls.to_csharp()`, `Cls.to_go()`
 
 ### `ManualBuilder` 主要メソッド
 - **章・説明文の追加**: `add_document(title, content)`（Markdown 形式の説明文・章を追加）
@@ -640,8 +673,12 @@ if "footer" in result:
 - **アドホックフィールド**: `add_field(name, type_name, size, desc="", endian=None, condition=None)`
 - **仕様書テキスト生成**: `build(...)` / `to_markdown(...)`（Markdown 文字列を返却）
 - **仕様書ファイル書き出し**: `write(path_or_file, ...)`（ファイルまたはストリームへ出力して Markdown 文字列を返却、`write_manual` エイリアスあり）
-- **C言語ヘッダーテキスト生成**: `to_c_header(guard=None, pack=True)`（C言語ヘッダーコードを生成）
-- **C言語ヘッダーファイル書き出し**: `write_c_header(path_or_file, guard=None, pack=True)`（C言語ヘッダーファイルを出力）
+- **C言語ヘッダー出力**: `to_c_header(guard=None, pack=True)`, `write_c_header(path_or_file, ...)`
+- **Rustコード出力**: `to_rust()`, `write_rust(path_or_file)`
+- **C++ヘッダー出力**: `to_cpp()`, `write_cpp(path_or_file)`
+- **C#コード出力**: `to_csharp(namespace="BinaryProtocol")`, `write_csharp(path_or_file, ...)`
+- **Goコード出力**: `to_go(package_name="protocol")`, `write_go(path_or_file, ...)`
+- **統一コード出力**: `to_code(lang)`, `write_code(path_or_file, lang=None)`（拡張子自動判別）
 - **スキーマ駆動自動読み込み**: `read(reader_or_bytes, endian=None)`（バイナリデータをスキーマに基づいて自動パースし `BuilderReadResult` を返却）
 
 
