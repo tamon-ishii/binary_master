@@ -56,6 +56,40 @@ uv add binary-master
 pip install .
 ```
 
+### パッケージ（Wheel / `.whl`）のビルド
+
+本ライブラリは `pyproject.toml` に準拠した最新のパッケージ仕様に対応しており、**uv** または標準の **build** ツール（PEP 517）を使用して Wheel（`.whl`）およびソース配布物（`.tar.gz`）を作成・配布できます。
+
+#### 1. uv によるビルド（推奨・高速）
+
+```bash
+# dist/ ディレクトリに .whl および .tar.gz が自動生成されます
+uv build
+```
+
+#### 2. 標準 build ツール（PEP 517）によるビルド
+
+```bash
+# build ツールのインストール（未導入の場合）
+pip install build
+
+# パッケージのビルド実行
+python -m build
+```
+
+#### 3. ビルド成果物の確認とインストール
+
+ビルドが完了すると、プロジェクト直下の `dist/` ディレクトリに以下の成果物が生成されます：
+- `dist/binary_master-<version>-py3-none-any.whl` （Wheel パッケージ）
+- `dist/binary_master-<version>.tar.gz` （ソースアーカイブ）
+
+生成された `.whl` ファイルは、別の環境やオフライン環境、自社リポジトリ等へ配布し、`pip` で直接インストールできます：
+
+```bash
+pip install dist/binary_master-0.1.0-py3-none-any.whl
+```
+
+
 ---
 
 ## クイックスタート
