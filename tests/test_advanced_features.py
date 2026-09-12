@@ -350,3 +350,90 @@ def test_offset_table_base_offset_declarative():
     assert off0 == 0
     assert off1 == 4
 
+
+@binary_struct(endian="little")
+class TargetPayload:
+    val: UInt16
+
+
+@binary_struct(endian="little")
+class SizedOffsetContainer:
+    off_16: Offset[TargetPayload, UInt16]
+    off_int_2: Offset[TargetPayload, 2]
+    off_8: Offset[TargetPayload, UInt8]
+    off_64: Offset[TargetPayload, UInt64]
+
+
+def test_sized_offset_serialization_and_deserialization():
+    """Test declaring 1, 2, 4, 8-byte Offset fields."""
+    p1 = TargetPayload(val=0x1111)
+    p2 = TargetPayload(val=0x2222)
+    p3 = TargetPayload(val=0x3333)
+    p4 = TargetPayload(val=0x4444)
+
+    c = SizedOffsetContainer(
+        off_16=p1,
+        off_int_2=p2,
+        off_8=p3,
+        off_64=p4,
+    )
+    raw = c.to_bytes()
+
+    # Field sizes:
+    # off_16: 2 bytes (offset 0..2)
+    # off_int_2: 2 bytes (offset 2..4)
+    # off_8: 1 byte (offset 4..5)
+    # off_64: 8 bytes (offset 5..13)
+    # Total header size: 13 bytes
+    # p1 at 13 (2 bytes), p2 at 15 (2 bytes), p3 at 17 (2 bytes), p4 at 19 (2 bytes)
+    # Total raw size: 21 bytes
+    assert len(raw) == 2 + 2 + 1 + 8 + 2 * 4
+
+    # Verify binary offsets in header
+    o16 = struct.unpack("<H", raw[0:2])[0]
+    o_int2 = struct.unpack("<H", raw[2:4])[0]
+    o8 = struct.unpack("<B", raw[4:5])[0]
+    o64 = struct.unpack("<Q", raw[5:13])[0]
+
+    assert o16 == 13
+    assert o_int2 == 15
+    assert o8 == 17
+    assert o64 == 19
+
+    # Deserialization round-trip
+    parsed = SizedOffsetContainer.from_bytes(raw)
+    assert isinstance(parsed.off_16, TargetPayload)
+    assert parsed.off_16.val == 0x1111
+    assert isinstance(parsed.off_int_2, TargetPayload)
+    assert parsed.off_int_2.val == 0x2222
+    assert isinstance(parsed.off_8, TargetPayload)
+    assert parsed.off_8.val == 0x3333
+    assert isinstance(parsed.off_64, TargetPayload)
+    assert parsed.off_64.val == 0x4444
+
+
+@binary_struct(endian="little")
+class RelativeSizedOffsetContainer:
+    header_pad: UInt16
+    off_16_rel: Offset[TargetPayload, UInt16, 2]  # base_offset = 2
+
+
+def test_sized_offset_with_base_offset():
+    """Test sized Offset with non-zero base_offset."""
+    p = TargetPayload(val=0x5555)
+    c = RelativeSizedOffsetContainer(header_pad=0xAAAA, off_16_rel=p)
+    raw = c.to_bytes()
+
+    # header_pad: 2 bytes (0..2)
+    # off_16_rel: 2 bytes (2..4)
+    # p starts at 4.
+    # Stored offset: 4 - 2 = 2.
+    stored = struct.unpack("<H", raw[2:4])[0]
+    assert stored == 2
+
+    # Deserialization resolves at 2 + 2 = 4
+    parsed = RelativeSizedOffsetContainer.from_bytes(raw)
+    assert isinstance(parsed.off_16_rel, TargetPayload)
+    assert parsed.off_16_rel.val == 0x5555
+
+

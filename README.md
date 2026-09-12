@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-71%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-73%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・読み込み（シリアライズ／デシリアライズ）＆仕様書自動生成ライブラリです。
 
@@ -23,7 +23,7 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - 符号付き / 符号なし整数（8, 16, 32, 64-bit）
   - 浮動小数点数（Float32, Float64）
   - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング・アンパッキング
-  - **オフセット自動計算 & 解決 (`Offset[T]`)**: ヘッダーのオフセット値の自動バックパッチおよび読み込み時の参照先自動インスタンス化
+  - **オフセット自動計算 & 解決 (`Offset[T, Size, BaseOffset]`)**: ヘッダーのオフセット値の自動バックパッチ（1, 2, 4, 8バイト指定可）および読み込み時の参照先自動インスタンス化
   - **オフセットテーブル (`OffsetTable[Count, Type]`)**: 複数エントリのオフセット配列の予約・自動バックパッチ
   - **多態チャンク & タグ付き共用体 (`Variant[TagField, Mapping]`)**: 種別IDに応じて切り替わる多態構造体の自動ディスパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
@@ -490,7 +490,7 @@ header = reader.read_struct(Header)
 | `Float32` | 4 バイト | IEEE 754 単精度浮動小数点数 |
 | `Float64` | 8 バイト | IEEE 754 倍精度浮動小数点数 |
 | `Bits[N]` | N ビット | ビットフィールドのフィールド幅 |
-| `Offset[T]` | 4 バイト | 構造体 `T` へのバイトオフセット（自動解決） |
+| `Offset[T, Size, BaseOffset]` | 指定サイズ（デフォルト: 4B） | 構造体 `T` へのバイトオフセット（自動解決。`UInt16` や `2` などサイズや起点を指定可） |
 | `OffsetTable[Count, Type, BaseOffset]` | `sizeof(Type) * Count` | オフセットテーブル配列（自動解決、BaseOffset で起点を指定可） |
 | `FixedArray[T, N]` | `sizeof(T) * N` | 固定長要素配列 |
 | `Array[T]` | 可変 | 可変長要素配列 |

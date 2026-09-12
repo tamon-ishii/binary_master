@@ -84,12 +84,35 @@ class Float64(BinaryType):
 T = TypeVar("T")
 
 
+def _normalize_offset_type(offset_t: Any) -> tuple[str, int, str]:
+    """Returns (fmt_char, size_in_bytes, type_label) for an offset type or byte size."""
+    size_map = {1: ("B", 1, "UInt8"), 2: ("H", 2, "UInt16"), 4: ("I", 4, "UInt32"), 8: ("Q", 8, "UInt64")}
+    if isinstance(offset_t, int):
+        if offset_t not in size_map:
+            raise ValueError(f"Offset byte size must be 1, 2, 4, or 8, got {offset_t}")
+        return size_map[offset_t]
+    if hasattr(offset_t, "_size") and hasattr(offset_t, "_fmt"):
+        return offset_t._fmt, offset_t._size, getattr(offset_t, "__name__", str(offset_t))
+    return ("I", 4, "UInt32")
+
+
 class Offset(Generic[T]):
-    """シリアライズ時に自動計算されるオフセット"""
+    """シリアライズ時に自動計算されるオフセット: Offset[Target, OffsetType=UInt32, BaseOffset=0]"""
 
     def __init__(self, target: Any = None, offset: Optional[int] = None):
         self.target = target
         self.offset = offset
+
+    def __class_getitem__(cls, args):
+        if isinstance(args, tuple):
+            target_t = args[0]
+            offset_t = args[1] if len(args) > 1 else UInt32
+            base_offset = args[2] if len(args) > 2 else 0
+        else:
+            target_t = args
+            offset_t = UInt32
+            base_offset = 0
+        return cls, target_t, offset_t, base_offset
 
     def __repr__(self) -> str:
         return f"Offset(target={self.target!r}, offset={self.offset!r})"
@@ -455,10 +478,13 @@ def _get_field_alignment(ftype: Any, val: Any = None) -> int:
     if ftype in (int, float) or isinstance(val, (int, float)):
         return 4
     if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset) or get_origin(ftype) is Offset:
-        return 4
+        offset_t = ftype[2] if isinstance(ftype, tuple) and len(ftype) >= 3 else (get_args(ftype)[1] if len(get_args(ftype)) > 1 else UInt32)
+        _, size, _ = _normalize_offset_type(offset_t)
+        return size
     if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is OffsetTable) or get_origin(ftype) is OffsetTable:
-        offset_t = ftype[2] if isinstance(ftype, tuple) and len(ftype) >= 3 else UInt32
-        return offset_t._size if hasattr(offset_t, "_size") else 4
+        offset_t = ftype[2] if isinstance(ftype, tuple) and len(ftype) >= 3 else (get_args(ftype)[1] if len(get_args(ftype)) > 1 else UInt32)
+        _, size, _ = _normalize_offset_type(offset_t)
+        return size
     is_variant = (
         (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Variant)
         or (get_origin(ftype) is Variant)
@@ -545,7 +571,7 @@ def write_struct(
                     pad_len = req_align - rem
                     writer.pad(pad_len, name="padding", desc="Alignment padding")
 
-        # Check Offset[T]
+        # Check Offset[T, OffsetType, BaseOffset]
         is_offset = (
             (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset)
             or (get_origin(ftype) is Offset)
@@ -553,28 +579,48 @@ def write_struct(
         if is_offset:
             target = val.target if isinstance(val, Offset) else val
             target_name = ""
-            if isinstance(ftype, tuple) and len(ftype) >= 2:
-                t_arg = ftype[1]
-                target_name = t_arg.__name__ if hasattr(t_arg, "__name__") else str(t_arg)
+            offset_t = UInt32
+            base_offset = 0
+            if isinstance(ftype, tuple):
+                if len(ftype) >= 2:
+                    t_arg = ftype[1]
+                    target_name = t_arg.__name__ if hasattr(t_arg, "__name__") else str(t_arg)
+                if len(ftype) >= 3:
+                    offset_t = ftype[2]
+                if len(ftype) >= 4:
+                    base_offset = ftype[3]
             elif get_args(ftype):
-                t_arg = get_args(ftype)[0]
+                args = get_args(ftype)
+                t_arg = args[0]
                 target_name = t_arg.__name__ if hasattr(t_arg, "__name__") else str(t_arg)
-            type_label = f"Offset[{target_name}]" if target_name else "Offset"
+                if len(args) > 1:
+                    offset_t = args[1]
+                if len(args) > 2:
+                    base_offset = args[2]
+
+            fmt_char, offset_size, offset_label = _normalize_offset_type(offset_t)
+            if offset_label != "UInt32":
+                type_label = f"Offset[{target_name}, {offset_label}]" if target_name else f"Offset[{offset_label}]"
+            else:
+                type_label = f"Offset[{target_name}]" if target_name else "Offset"
 
             offset_placeholder_idx = len(writer._entries) if hasattr(writer, "_entries") else -1
             placeholder_pos = writer.tell()
             if target is None:
-                writer._pack_write("I", 0, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
+                writer._pack_write(fmt_char, 0, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
             elif isinstance(target, int):
-                writer._pack_write("I", target, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
+                stored_val = target - base_offset
+                if stored_val < 0:
+                    raise ValueError(f"Offset value {stored_val} is negative (target={target}, base={base_offset})")
+                writer._pack_write(fmt_char, stored_val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
                 if offset_placeholder_idx >= 0 and offset_placeholder_idx < len(writer._entries):
                     writer._entries[offset_placeholder_idx].type_name = type_label
                     writer._entries[offset_placeholder_idx].target_offset = target
             elif hasattr(target, "__binary__"):
-                writer._pack_write("I", 0, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
+                writer._pack_write(fmt_char, 0, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
                 if offset_placeholder_idx >= 0 and offset_placeholder_idx < len(writer._entries):
                     writer._entries[offset_placeholder_idx].type_name = type_label
-                deferred_offsets.append((offset_placeholder_idx, placeholder_pos, target, active_endian))
+                deferred_offsets.append((offset_placeholder_idx, placeholder_pos, target, active_endian, fmt_char, base_offset))
             else:
                 raise TypeError(f"Offset field {name} expected binary_struct or int, got {type(target).__name__}")
             continue
@@ -746,16 +792,19 @@ def write_struct(
             write_struct(target_obj, writer=writer, endian=off_endian)
             table_handle.set_offset(idx, target_pos)
         else:
-            offset_placeholder_idx, placeholder_pos, target_obj, off_endian = item
+            offset_placeholder_idx, placeholder_pos, target_obj, off_endian, fmt_char, base_offset = item
             target_pos = writer.tell()
             write_struct(target_obj, writer=writer, endian=off_endian)
             return_pos = writer.tell()
+            stored_val = target_pos - base_offset
+            if stored_val < 0:
+                raise ValueError(f"Offset value {stored_val} is negative (target={target_pos}, base={base_offset})")
             writer.seek(placeholder_pos)
             order = normalize_endian(off_endian)
-            writer._stream.write(struct.pack(f"{order.value}I", target_pos))
+            writer._stream.write(struct.pack(f"{order.value}{fmt_char}", stored_val))
             writer.seek(return_pos)
             if hasattr(writer, "_entries") and 0 <= offset_placeholder_idx < len(writer._entries):
-                writer._entries[offset_placeholder_idx].value = target_pos
+                writer._entries[offset_placeholder_idx].value = stored_val
                 writer._entries[offset_placeholder_idx].target_offset = target_pos
 
     return writer
@@ -835,18 +884,33 @@ def read_struct(
             if req_align > 1:
                 reader.align(req_align)
 
-        # Check Offset[T]
+        # Check Offset[T, OffsetType, BaseOffset]
         is_offset = (
             (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset)
             or (get_origin(ftype) is Offset)
         )
         if is_offset:
-            target_offset = reader.read_uint32(endian=active_endian)
             target_type = None
-            if isinstance(ftype, tuple) and len(ftype) >= 2:
-                target_type = ftype[1]
+            offset_t = UInt32
+            base_offset = 0
+            if isinstance(ftype, tuple):
+                if len(ftype) >= 2:
+                    target_type = ftype[1]
+                if len(ftype) >= 3:
+                    offset_t = ftype[2]
+                if len(ftype) >= 4:
+                    base_offset = ftype[3]
             elif get_args(ftype):
-                target_type = get_args(ftype)[0]
+                args = get_args(ftype)
+                target_type = args[0]
+                if len(args) > 1:
+                    offset_t = args[1]
+                if len(args) > 2:
+                    base_offset = args[2]
+
+            fmt_char, offset_size, _ = _normalize_offset_type(offset_t)
+            stored_offset = reader._unpack_read(fmt_char, offset_size, endian=active_endian)
+            target_offset = stored_offset + base_offset
 
             if isinstance(target_type, str):
                 mod = sys.modules.get(cls.__module__)
@@ -863,7 +927,7 @@ def read_struct(
                 kwargs[name] = target_offset
             continue
 
-        # Check OffsetTable[Count, OffsetType]
+        # Check OffsetTable[Count, OffsetType, BaseOffset]
         is_offset_table = (
             (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] is OffsetTable)
             or (get_origin(ftype) is OffsetTable)
@@ -872,22 +936,18 @@ def read_struct(
             if isinstance(ftype, tuple):
                 count = ftype[1]
                 offset_t = ftype[2] if len(ftype) >= 3 else UInt32
+                base_offset = ftype[3] if len(ftype) >= 4 else 0
             else:
                 args = get_args(ftype)
                 count = args[0]
                 offset_t = args[1] if len(args) > 1 else UInt32
+                base_offset = args[2] if len(args) > 2 else 0
 
-            offs = []
-            for _ in range(count):
-                if offset_t is UInt8:
-                    off = reader.read_uint8()
-                elif offset_t is UInt16:
-                    off = reader.read_uint16(endian=active_endian)
-                elif offset_t is UInt64:
-                    off = reader.read_uint64(endian=active_endian)
-                else:
-                    off = reader.read_uint32(endian=active_endian)
-                offs.append(off)
+            fmt_char, offset_size, _ = _normalize_offset_type(offset_t)
+            offs = [
+                reader._unpack_read(fmt_char, offset_size, endian=active_endian)
+                for _ in range(count)
+            ]
             kwargs[name] = offs
             continue
 
