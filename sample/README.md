@@ -2,6 +2,8 @@
 
 Systematic and educational sample scripts demonstrating `binary_master` capabilities from basic declarative structures to schema-first specification generation and automated parsing.
 
+> 📖 **Looking for a guided walkthrough?** Check out the comprehensive **[Step-by-Step Tutorial](../TUTORIAL.md)**.
+
 ## Directory Overview
 
 | Script | Topic | Key Features Demonstrated |

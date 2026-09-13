@@ -1,0 +1,587 @@
+# Binary Master 実践チュートリアル (Step-by-Step Tutorial)
+
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+**Binary Master (`binary-master`)** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・解析＆仕様書自動生成ライブラリです。
+
+Python標準の `struct` モジュールによるフォーマット文字列（`"<I2sH"` など）や手動オフセット計算の煩雑さを解消し、**型安全・宣言的・直感的**にバイナリデータをシリアライズ／デシリアライズできます。さらに、定義した構造から **Mermaid 図付きの仕様書（Markdown）** や **多言語コード（C / C++ / Rust / C# / Go）** を自動出力できます。
+
+本チュートリアルでは、基本から応用までを **5つのステップ** で実際にコードを動かしながら学びます。
+
+---
+
+## 📚 目次
+
+- [前提条件・環境セットアップ](#前提条件環境セットアップ)
+- [Step 1: はじめてのバイナリ構造体（基礎編）](#step-1-はじめてのバイナリ構造体基礎編)
+  - 1.1 構造体の宣言 (`@binary_struct`)
+  - 1.2 シリアライズとデシリアライズ
+  - 1.3 サイズ確認とエンディアンの指定
+- [Step 2: ビットフィールドとアライメント（応用編）](#step-2-ビットフィールドとアライメント応用編)
+  - 2.1 1ビット単位のフラグ定義 (`Bits[N]`)
+  - 2.2 パケット境界アライメント (`align=4`, `auto_align=True`)
+- [Step 3: 相対オフセットとポインタテーブル（高度なデータ構造）](#step-3-相対オフセットとポインタテーブル高度なデータ構造)
+  - 3.1 自動オフセット計算 (`Offset[T, Base.SELF]`)
+  - 3.2 オフセット演算とポインタテーブル (`OffsetTable`)
+- [Step 4: 手続き的ライター & リーダーとデバッグ機能（低レベル制御）](#step-4-手続き的ライター--リーダーとデバッグ機能低レベル制御)
+  - 4.1 `BinaryWriter` によるストリーム書き込み
+  - 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
+  - 4.3 `BinaryReader` によるストリーム読み込み
+  - 4.4 充実したデバッグダンプ（注釈付き Hexdump / テーブル出力 / 差分比較）
+- [Step 5: スキーマ駆動設計・仕様書自動生成・多言語出力（統合編）](#step-5-スキーマ駆動設計仕様書自動生成多言語出力統合編)
+  - 5.1 `Builder` によるプロトコルスキーマ定義
+  - 5.2 多態パケットの分岐 (`add_choice`)
+  - 5.3 仕様書（Markdown & Mermaid 図）のワンライナー出力
+  - 5.4 多言語ヘッダー出力 (C, Rust, Modern C++, C#, Go)
+  - 5.5 スキーマ駆動の自動デシリアライズ (`builder.read`)
+- [まとめ & サンプルコードとの対応](#まとめ--サンプルコードとの対応)
+
+---
+
+## 前提条件・環境セットアップ
+
+- **Python**: 3.14 以上
+
+### インストール方法
+
+```bash
+# uv を使用する場合
+uv add binary-master
+
+# pip を使用する場合（ローカルリポジトリから）
+pip install .
+```
+
+リポジトリ内のサンプルコードは `sample/` ディレクトリに格納されており、いつでも動作を確認できます：
+
+```bash
+python sample/main.py
+```
+
+---
+
+## Step 1: はじめてのバイナリ構造体（基礎編）
+
+> 対応サンプルコード: [`sample/01_basic_struct.py`](sample/01_basic_struct.py)
+
+バイナリデータの読み書きで最も基本となるのが、`@binary_struct` デコレータを用いた宣言的構造体の定義です。
+
+### 1.1 構造体の宣言 (`@binary_struct`)
+
+Pythonの標準型アノテーションと同じ感覚でフィールドを定義します。
+
+```python
+from binary_master import (
+    UInt8,
+    UInt16,
+    UInt32,
+    Float32,
+    FixedArray,
+    binary_struct,
+    sizeof,
+    read_struct,
+)
+
+@binary_struct(endian="little")
+class PlayerProfile:
+    """プレイヤーのプロファイルセーブデータ"""
+    magic: UInt32              # シグネチャ: 0x504C4159 ('PLAY')
+    player_id: UInt16          # プレイヤーID
+    level: UInt8               # レベル (0-255)
+    lives: UInt8               # 残機
+    score: UInt32              # スコア
+    health_ratio: Float32      # 体力比率 (0.0 - 1.0)
+    tag: FixedArray[UInt8, 4]  # 4バイトのクランタグ
+```
+
+#### ポイント
+- **プリミティブ型**: `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Int8`, `Int16`, `Int32`, `Int64`, `Float32`, `Float64` などを直接指定できます。
+- **固定長配列**: `FixedArray[Type, Length]` で固定長のバイト配列や構造体配列を定義できます。
+- **Docstring とインラインコメント**: クラス docstring や `# コメント` は、後述する仕様書生成時に自動抽出され、マニュアルの「説明」に反映されます。
+
+### 1.2 シリアライズとデシリアライズ
+
+定義した構造体は通常のクラスのようにインスタンス化でき、`.to_bytes()` で直ちに `bytes` 列へシリアライズできます。
+
+```python
+# 1. インスタンス生成
+player = PlayerProfile(
+    magic=0x59414C50,   # 'PLAY' (リトルエンディアン)
+    player_id=1042,
+    level=50,
+    lives=3,
+    score=999999,
+    health_ratio=0.85,
+    tag=b"PROG",
+)
+
+# 2. バイナリ列へシリアライズ
+binary_data = player.to_bytes()
+print(f"バイト長: {len(binary_data)} bytes")
+print(f"Hex: {binary_data.hex(' ')}")
+
+# 3. バイナリ列から構造体を復元 (デシリアライズ)
+restored = PlayerProfile.from_bytes(binary_data)
+# または: restored = read_struct(PlayerProfile, binary_data)
+
+print(f"復元されたプレイヤーID: {restored.player_id}")
+print(f"復元されたスコア: {restored.score}")
+print(f"復元されたクランタグ: {bytes(restored.tag).decode('ascii')}")
+```
+
+### 1.3 サイズ確認とエンディアンの指定
+
+クラスの静的バイトサイズは `sizeof()` または `.binary_size` で取得可能です。
+
+```python
+print(sizeof(PlayerProfile))         # => 20
+print(PlayerProfile.binary_size)     # => 20
+```
+
+エンディアンは `@binary_struct(endian="little")` または `@binary_struct(endian="big")` で指定します。シリアライズ時に一時的にオーバーライドすることも可能です：
+
+```python
+# ビッグエンディアンで書き出し
+big_data = player.to_bytes(endian="big")
+```
+
+---
+
+## Step 2: ビットフィールドとアライメント（応用編）
+
+> 対応サンプルコード: [`sample/02_bitfields_and_alignment.py`](sample/02_bitfields_and_alignment.py)
+
+通信パケットやハードウェア制御では、1バイト未満のフラグビットを詰め込む「ビットフィールド」や、CPUアクセス効率のための「メモリアライメント」が不可欠です。
+
+### 2.1 1ビット単位のフラグ定義 (`Bits[N]`)
+
+`@binary_struct(bits=16)` のようにコンテナ全体の合計ビット数を指定し、各フィールドに `Bits[N]` を割り当てます。
+
+```python
+from binary_master import Bits, binary_struct
+
+@binary_struct(bits=16)
+class DeviceStatus:
+    """16ビットにパックされたデバイスステータスフラグ"""
+    powered_on:  Bits[1]  # Bit 0: 電源 (1=ON, 0=OFF)
+    busy:        Bits[1]  # Bit 1: 処理中フラグ
+    mode:        Bits[3]  # Bits 2..4: 動作モード (0〜7)
+    error_code:  Bits[3]  # Bits 5..7: エラーコード (0〜7)
+    battery_pct: Bits[7]  # Bits 8..14: バッテリー残量 (0〜100%)
+    reserved:    Bits[1]  # Bit 15: 予約領域
+```
+
+インスタンス化時に各ビット値を個別に指定でき、自動的に1つの整数値（この例では 16-bit / 2バイト）にビットパッキングされます。
+
+```python
+status = DeviceStatus(
+    powered_on=1,
+    busy=0,
+    mode=5,
+    error_code=2,
+    battery_pct=95,
+    reserved=0,
+)
+data = status.to_bytes()
+print(f"サイズ: {len(data)} bytes, Hex: 0x{int.from_bytes(data, 'little'):04X}")
+
+# 復元
+loaded = DeviceStatus.from_bytes(data)
+print(f"Battery: {loaded.battery_pct}%, Mode: {loaded.mode}")
+```
+
+### 2.2 パケット境界アライメント (`align=4`, `auto_align=True`)
+
+C言語の構造体パディング規則に準拠したい場合、2つのアライメント指定が利用できます。
+
+#### 明示的アライメント境界 (`align=4`)
+構造体の末尾やフィールド間に指定境界（例: 4バイト境界）のパディングを自動挿入します。
+
+```python
+from binary_master import UInt8, UInt32, binary_struct
+
+@binary_struct(align=4)
+class AlignedPacket:
+    type_id: UInt8        # 1 byte
+    # -> 3バイトのパディングが自動挿入され、counter は offset 4 から配置
+    counter: UInt32       # 4 bytes
+    flags: DeviceStatus   # 2 bytes
+    # -> 全体サイズを4の倍数にするため、末尾に2バイトのパディングが自動挿入（計12B）
+
+print(sizeof(AlignedPacket))  # => 12
+```
+
+#### 自然アライメント (`auto_align=True`)
+各型が自身のサイズ境界（例: `UInt16` は2の倍数、`UInt32` は4の倍数）に自動配置されるようパディングが挿入されます。
+
+```python
+@binary_struct(auto_align=True)
+class NaturalAlignedStruct:
+    a: UInt8   # offset 0 (1B)
+    # 1B パディング
+    b: UInt16  # offset 2 (2B)
+    c: UInt32  # offset 4 (4B)
+
+print(sizeof(NaturalAlignedStruct))  # => 8
+```
+
+---
+
+## Step 3: 相対オフセットとポインタテーブル（高度なデータ構造）
+
+> 対応サンプルコード: [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py)
+
+バイナリファイルフォーマット（フォント、3Dモデル、ゲームアーカイブなど）では、ヘッダー内に「データ本体が存在するオフセット位置」を記録することが多々あります。
+
+Binary Master は **オフセットの自動バックパッチ（遅延解決）** と **読み込み時の自動インスタンス化** を標準サポートしています。
+
+### 3.1 自動オフセット計算 (`Offset[T, Base.SELF]`)
+
+```python
+from binary_master import (
+    Base,
+    FixedArray,
+    Offset,
+    OffsetTable,
+    UInt8,
+    UInt16,
+    UInt32,
+    binary_struct,
+    BinaryWriter,
+)
+
+# 参照先ペイロード
+@binary_struct
+class TextureData:
+    width: UInt16
+    height: UInt16
+    format: UInt8
+    raw_pixels: FixedArray[UInt8, 8]
+
+# コンテナヘッダー
+@binary_struct
+class AssetContainer:
+    magic: UInt32
+    version: UInt16
+    # 自身の先頭 (Base.SELF) からの相対オフセットを 4バイト整数で格納
+    primary_offset: Offset[TextureData, Base.SELF, UInt32]
+    # オフセット基準位置にバイアスを付与 (Base.SELF + 0x20)
+    aux_offset: Offset[TextureData, Base.SELF + 0x20, UInt32]
+    # 2要素のテクスチャオフセット配列テーブル
+    num_textures: UInt16
+    texture_table: OffsetTable[2, UInt32, Base.SELF]
+```
+
+### 3.2 データの書き出しと自動バックパッチ
+
+`BinaryWriter` を使用して書き出す際、オフセット値の手動計算は一切不要です：
+
+```python
+writer = BinaryWriter()
+
+# 1. ターゲットデータを先に作成
+tex_main = TextureData(width=256, height=256, format=1, raw_pixels=b"MAIN_TEX")
+tex_aux  = TextureData(width=128, height=128, format=1, raw_pixels=b"AUX__TEX")
+sub_tex1 = TextureData(width=64,  height=64,  format=2, raw_pixels=b"SUB_TEX1")
+sub_tex2 = TextureData(width=32,  height=32,  format=2, raw_pixels=b"SUB_TEX2")
+
+# 2. ヘッダーを定義（参照先オブジェクトをそのまま渡す）
+container = AssetContainer(
+    magic=0x54535341,  # 'ASST'
+    version=1,
+    primary_offset=tex_main,
+    aux_offset=tex_aux,
+    num_textures=2,
+    texture_table=[sub_tex1, sub_tex2],
+)
+
+# 3. 構造体と実体をストリームに書き出す
+writer.write_struct(container)
+writer.write_struct(tex_main)
+writer.write_struct(tex_aux)
+writer.write_struct(sub_tex1)
+writer.write_struct(sub_tex2)
+
+# 4. バイト列を取得（この時点で全オフセット値が自動計算・書き換えされます）
+binary_package = writer.to_bytes()
+```
+
+### 3.3 自動デリファレンスによる読み込み
+
+`AssetContainer.from_bytes(binary_package)` で読み込むと、オフセットが指す先の実体データが自動的に `TextureData` インスタンスとして復元されます。
+
+```python
+loaded = AssetContainer.from_bytes(binary_package)
+print(loaded.primary_offset.target.width)  # => 256
+print(bytes(loaded.primary_offset.target.raw_pixels))  # => b'MAIN_TEX'
+```
+
+---
+
+## Step 4: 手続き的ライター & リーダーとデバッグ機能（低レベル制御）
+
+> 対応サンプルコード: [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py)
+
+構造体を定義するまでもない小さなスクラッチ処理や、ストリームを逐次読み書きしたい場合は `BinaryWriter` と `BinaryReader` を直接使用します。
+
+### 4.1 `BinaryWriter` によるストリーム書き込みとセクションキャプション
+
+`with writer.caption(...)` コンテキストマネージャを使うことで、生成される仕様書やデバッグテーブルにセクション階層とコメントを付与できます。
+
+```python
+from binary_master import BinaryWriter
+
+writer = BinaryWriter(default_endian="little")
+
+with writer.caption("File Header", "ファイル種別とバージョン情報"):
+    writer.write_uint32(0x46494C45, name="magic", desc="Magic 'FILE'")
+    writer.write_uint16(2, name="ver_maj", desc="Major version")
+    writer.write_uint16(0, name="ver_min", desc="Minor version")
+```
+
+### 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
+
+実世界のプロトコルで登場する3大文字列フォーマットをネイティブサポートしています：
+
+```python
+with writer.caption("Metadata", "テキストメタデータ"):
+    # ① C言語スタイル: Null終端文字列 ('\0')
+    writer.write_string("SampleApp v2.0", strategy="null_terminated", name="app_name")
+
+    # ② Pascalスタイル: 長さプレフィックス（先頭2バイトに文字列長を記録）
+    writer.write_string("Confidential Document", strategy="prefixed", prefix_bytes=2, name="doc_title")
+
+    # ③ 固定長パディング文字列（8バイト固定、空白で埋める）
+    writer.write_string("AUTH", length=8, strategy="fixed", pad_byte=b" ", name="author_tag")
+```
+
+### 4.3 `BinaryReader` によるストリーム読み込み
+
+`BinaryReader` はカーソル位置を追跡しながら、型安全にデータを順次デコードします。
+
+```python
+from binary_master import BinaryReader
+
+data = writer.to_bytes()
+reader = BinaryReader(data, default_endian="little")
+
+magic = reader.read_uint32()
+ver_maj = reader.read_uint16()
+ver_min = reader.read_uint16()
+
+app_name = reader.read_cstring(encoding="utf-8")
+doc_title = reader.read_prefixed_string(prefix_bytes=2, encoding="utf-8")
+author_tag = reader.read_fixed_string(length=8, encoding="utf-8").strip()
+
+print(f"App: {app_name}, Title: {doc_title}, Tag: {author_tag}")
+```
+
+### 4.4 充実したデバッグダンプ
+
+Binary Master には、開発効率を飛躍的に高める強力なデバッグツールが備わっています。
+
+#### ① 注釈付き Hexdump (`writer.hexdump()`)
+バイト列とASCII表示だけでなく、**どのバイトがどのフィールド名・型に対応しているか** の注釈が横に表示されます。
+
+```python
+print(writer.hexdump(color=True))
+```
+
+```text
+Offset    00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  |     ASCII      |  Field Annotations
+-------------------------------------------------------------------------------------------------
+00000000  45 4c 49 46 02 00 00 00  53 61 6d 70 6c 65 41 70  |ELIF....SampleAp|  magic=0x46494C45 (UInt32); ver_maj=2 (UInt16); ver_min=0 (UInt16); app_name=SampleApp .. (CString)
+00000010  70 20 76 32 2e 30 00 15  00 43 6f 6e 66 69 64 65  |p v2.0...Confide|  app_name=SampleApp .. (CString); doc_title=Confidenti.. (PrefixedString[2])
+```
+
+#### ② 表形式トレース (`writer.dump("table")`)
+全フィールドの Offset, Size, Type, Hex Bytes, Value, Caption をモノスペース表で出力します。
+
+```python
+print(writer.dump("table"))
+```
+
+#### ③ リーダーのカーソル位置・残りバイト検査 (`reader.hexdump()`)
+現在どこまでパースしたか、残りが何バイトあるかを一目で確認できます。
+
+```python
+reader.read_uint32()
+print(reader.hexdump())  # --> CURSOR @ 0x0004 と表示される
+```
+
+---
+
+## Step 5: スキーマ駆動設計・仕様書自動生成・多言語出力（統合編）
+
+> 対応サンプルコード: [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py)
+
+`Builder`（`BinaryBuilder`）は、Binary Master の最上位機能です。  
+スキーマを事前定義することで、**「仕様書生成」「多言語ヘッダー出力」「自動パーサー」** をすべて1本の定義から完結させることができます。
+
+### 5.1 `Builder` によるプロトコルスキーマ定義
+
+ネットワークパケットなどの通信仕様を設計します。
+
+```python
+from binary_master import (
+    Builder,
+    UInt8,
+    UInt16,
+    UInt32,
+    Float32,
+    FixedArray,
+    binary_struct,
+)
+
+# 1. パケットの構成要素を定義
+@binary_struct(endian="little")
+class PacketHeader:
+    """共通パケットヘッダー"""
+    magic: UInt32         # 'MSGP' (0x4D534750)
+    version: UInt16       # プロトコルバージョン
+    msg_type: UInt16      # メッセージ種別: 1=Text, 2=Sensor
+    payload_size: UInt32  # ペイロード長
+    flags: UInt16         # Bit 0: チェックサムフッター有無
+
+@binary_struct
+class TextMessage:
+    """テキストメッセージペイロード"""
+    encoding: UInt16
+    text_len: UInt16
+    content: FixedArray[UInt8, 16]
+
+@binary_struct
+class SensorReport:
+    """テレメトリセンサーデータペイロード"""
+    sensor_id: UInt32
+    temperature: Float32
+    pressure: Float32
+    humidity: Float32
+
+@binary_struct
+class ChecksumFooter:
+    """末尾の CRC32 チェックサム"""
+    crc32: UInt32
+```
+
+### 5.2 多態パケットの分岐 (`add_choice`) と条件分岐 (`condition`)
+
+メッセージ種別（`msg_type`）によって直後のペイロード構造が変化する仕様を定義します。
+
+```python
+# Builder インスタンスの作成
+builder = Builder(
+    title="Network Telemetry Protocol Specification",
+    version="1.0.0",
+    default_endian="little",
+    description="テキスト通信とセンサーテレメトリを統合したバイナリプロトコル仕様書。",
+)
+
+# 概要ドキュメント章を追加
+builder.add_document("概要とスコープ", "本ドキュメントは NTP-v1 プロトコルの詳細仕様を定めます。")
+
+# 構造体のシーケンスを登録
+builder.add_struct(PacketHeader, name="header", desc="固定長パケットヘッダー")
+
+# msg_type の値に応じた多態ペイロードの分岐
+builder.add_choice(
+    name="payload",
+    tag_field="msg_type",
+    variants={
+        1: (TextMessage, "テキストメッセージペイロード"),
+        2: (SensorReport, "環境センサー計測値ペイロード"),
+    },
+    desc="PacketHeader.msg_type に応じてディスパッチされるペイロード",
+)
+
+# フラグに応じた条件付きフッター
+builder.add_struct(
+    ChecksumFooter,
+    name="footer",
+    desc="末尾 CRC32 チェックサム",
+    condition="flags & 0x01 != 0",
+)
+```
+
+### 5.3 仕様書（Markdown & Mermaid 図）のワンライナー出力
+
+`builder.write()` を呼び出すだけで、仕様書 Markdown ファイル（Mermaid フローチャートおよびパケットレイアウト図付き）が瞬時に生成されます。
+
+```python
+builder.write("telemetry_protocol_spec.md", diagram_direction="TD")
+```
+
+生成される Markdown には以下が含まれます：
+- 目次・ドキュメント章
+- プロトコルの **Mermaid Flowchart**（条件分岐や多態バリアントのひし形ノード付き）
+- 各構造体の **Mermaid packet-beta** 配置図
+- 詳細なオフセット・サイズ・型・説明テーブル
+
+### 5.4 多言語ヘッダー出力 (C, Rust, Modern C++, C#, Go)
+
+同じスキーマ定義から、各プログラミング言語の構造体定義コードを生成できます。
+
+```python
+# C言語ヘッダー (.h)
+builder.write_c_header("telemetry_protocol.h")
+
+# Rust 構造体定義 (.rs)
+builder.write_rust("telemetry_protocol.rs")
+
+# Modern C++ ヘッダー (.hpp)
+builder.write_cpp("telemetry_protocol.hpp")
+
+# C# クラス/構造体 (.cs)
+builder.write_csharp("telemetry_protocol.cs", namespace="TelemetryProtocol")
+
+# Go パッケージ (.go)
+builder.write_go("telemetry_protocol.go", package_name="telemetry")
+```
+
+各出力には、ビットフィールドのアライメント属性（例: C言語の `#pragma pack(push, 1)`、Rustの `#[repr(C, packed)]` など）が適切に付与されます。
+
+### 5.5 スキーマ駆動の自動デシリアライズ (`builder.read`)
+
+受信した生のバイナリバイト列を `builder.read(data)` に渡すだけで、ヘッダーの `msg_type` や `flags` を自動判別し、適切なクラスのインスタンスとしてパースしてくれます。
+
+```python
+from binary_master import BinaryWriter
+
+# パケットバイナリを構築
+w = BinaryWriter()
+w.write_struct(PacketHeader(magic=0x5047534D, version=1, msg_type=2, payload_size=16, flags=1))
+w.write_struct(SensorReport(sensor_id=101, temperature=23.5, pressure=1013.25, humidity=48.0))
+w.write_struct(ChecksumFooter(crc32=0xDEADBEEF))
+packet_bytes = w.to_bytes()
+
+# スキーマ情報から自動パース！
+result = builder.read(packet_bytes)
+
+print(result.header.magic)            # => 0x5047534D
+print(type(result.payload).__name__)   # => 'SensorReport'
+print(result.payload.temperature)      # => 23.5
+print(result.footer.crc32)            # => 0xDEADBEEF
+```
+
+手動での `if msg_type == 1: ... elif msg_type == 2: ...` といった分岐処理を書く必要は一切ありません。
+
+---
+
+## まとめ & サンプルコードとの対応
+
+| ステップ | トピック | 主な機能・API | 対応サンプルコード |
+|---|---|---|---|
+| **Step 1** | 基本的な構造体 | `@binary_struct`, プリミティブ型, `FixedArray`, `to_bytes()`, `from_bytes()` | [`sample/01_basic_struct.py`](sample/01_basic_struct.py) |
+| **Step 2** | ビットフィールド & アライメント | `Bits[N]`, `bits=16`, `align=4`, `auto_align=True` | [`sample/02_bitfields_and_alignment.py`](sample/02_bitfields_and_alignment.py) |
+| **Step 3** | 相対オフセット & テーブル | `Offset`, `Base.SELF`, `OffsetTable`, 自動バックパッチ | [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) |
+| **Step 4** | 手続き的ライター & リーダー | `BinaryWriter`, `BinaryReader`, 文字列戦略, `hexdump()`, `dump("table")` | [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) |
+| **Step 5** | スキーマ駆動設計 & 多言語出力 | `Builder`, `add_choice()`, `write()`, `write_c_header()`, `builder.read()` | [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) |
+
+すべてのサンプルは以下のコマンドでまとめて実行・検証できます：
+
+```bash
+python sample/main.py
+```
+
+Binary Master を活用して、保守性が高く堅牢なバイナリプロトコル・ファイルフォーマット開発を体験してください！
