@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 import struct
-from typing import IO, Optional, Union
+from typing import Any, IO, Optional, Union
 
 from binary_master.enums import Endian, EndianType, normalize_endian
 
@@ -648,7 +648,7 @@ class BinaryWriter:
         endian: EndianType = None,
         name: str = "offsets",
         desc: str = "Offset Table",
-        base_offset: int = 0,
+        base_offset: Union[int, Any] = 0,
     ) -> OffsetTableHandle:
         """Reserve an offset table for `count` entries of `offset_size` bytes each.
 
@@ -671,8 +671,9 @@ class BinaryWriter:
             raise ValueError(f"count must be non-negative, got {count}")
         if offset_size not in (1, 2, 4, 8):
             raise ValueError(f"offset_size must be 1, 2, 4, or 8, got {offset_size}")
-        if hasattr(base_offset, "resolve"):
-            base_offset = base_offset.resolve(self.tell(), self.tell())
+        resolve_fn = getattr(base_offset, "resolve", None)
+        if callable(resolve_fn):
+            base_offset = resolve_fn(self.tell(), self.tell())
         if base_offset < 0:
             raise ValueError(f"base_offset must be non-negative, got {base_offset}")
 
@@ -746,6 +747,7 @@ class OffsetTableHandle:
         self._name = name
         self._base_offset = base_offset
         self._offsets: list[Optional[int]] = [None] * count
+        self._targets: list[Any] = []
 
     @property
     def count(self) -> int:

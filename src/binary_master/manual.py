@@ -37,7 +37,7 @@ def create_dummy_instance(struct_cls: type) -> Any:
     from typing import get_origin, get_args, Annotated
     from binary_master.binary_struct import BinaryType, FixedArray, Array, Offset, UInt8, OffsetTable
 
-    meta = struct_cls.__binary__
+    meta: dict[str, Any] = getattr(struct_cls, "__binary__", {})
     fields = meta.get("fields", {})
     if meta.get("bits") is not None:
         dummy_kwargs = {fn: 0 for fn in fields}
@@ -711,7 +711,7 @@ def generate_manual(
                 )
                 sections.append("|---|---|---|---|")
 
-            for sub in bf.subfields:
+            for sub in (bf.subfields or []):
                 bit_range = f"`[{sub.get('bit_start', 0)}:{sub.get('bit_end', 0)}]`"
                 sub_name = f"`{sub.get('name', '-')}`"
                 width_str = f"{sub.get('width', 1)} bit(s)"

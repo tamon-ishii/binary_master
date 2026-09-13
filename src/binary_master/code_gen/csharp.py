@@ -142,7 +142,7 @@ def generate_csharp_struct(
     if not hasattr(struct_cls, "__binary__"):
         raise TypeError(f"Class {getattr(struct_cls, '__name__', str(struct_cls))} is not a binary_struct")
 
-    meta = struct_cls.__binary__
+    meta: dict[str, Any] = getattr(struct_cls, "__binary__", {})
     cls_name = struct_cls.__name__ if struct_cls else (name or "Struct")
     field_alias = name if (name and name != cls_name) else None
     doc_text = desc or getattr(struct_cls, "__doc__", "") or meta.get("doc", "")

@@ -13,13 +13,16 @@ from binary_master.enums import Endian, EndianType, normalize_endian
 # ==========================================================
 
 class BinaryTypeMeta(type):
-    @property
-    def fmt(cls):
-        return cls._fmt
+    _fmt: str = ""
+    _size: int = 0
 
     @property
-    def size(cls):
-        return cls._size
+    def fmt(cls) -> str:
+        return getattr(cls, "_fmt", "")
+
+    @property
+    def size(cls) -> int:
+        return getattr(cls, "_size", 0)
 
 
 class BinaryType(metaclass=BinaryTypeMeta):
@@ -1207,11 +1210,11 @@ def write_struct(
         elif ftype is float or isinstance(val, float):
             writer._pack_write("f", val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
         elif ftype is bool or isinstance(val, bool):
-            writer.write_bool(val, name=name, desc=f_desc)
+            writer.write_bool(bool(val) if val is not None else False, name=name, desc=f_desc)
         elif ftype is bytes or isinstance(val, (bytes, bytearray)):
-            writer.write_bytes(val, name=name, desc=f_desc)
+            writer.write_bytes(bytes(val) if val is not None else b"", name=name, desc=f_desc)
         elif ftype is str or isinstance(val, str):
-            writer.write_cstring(val, name=name, desc=f_desc)
+            writer.write_cstring(str(val) if val is not None else "", name=name, desc=f_desc)
         else:
             raise TypeError(f"Unsupported field type for {name}: {ftype}")
 
@@ -1234,7 +1237,7 @@ def write_struct(
             target_pos = writer.tell()
             write_struct(target_obj, writer=writer, endian=off_endian)
             table_handle.set_offset(idx, target_pos)
-        else:
+        elif isinstance(item, tuple) and len(item) == 6:
             offset_placeholder_idx, placeholder_pos, target_obj, off_endian, fmt_char, actual_base = item
             target_pos = writer.tell()
             write_struct(target_obj, writer=writer, endian=off_endian)

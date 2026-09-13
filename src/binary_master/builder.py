@@ -17,6 +17,7 @@ from typing import (
     Tuple,
     Type,
     Union,
+    cast,
 )
 
 from binary_master.manual import (
@@ -679,8 +680,10 @@ class BinaryBuilder:
 
         # Document elements registered at the top before any structs
         elem_idx = 0
-        while elem_idx < len(self.elements) and isinstance(self.elements[elem_idx], DocumentElement):
+        while elem_idx < len(self.elements):
             doc = self.elements[elem_idx]
+            if not isinstance(doc, DocumentElement):
+                break
             sections.append(f"## {doc.title}\n")
             sections.append(f"{doc.content}\n")
             elem_idx += 1
@@ -1037,11 +1040,12 @@ class BinaryBuilder:
 
             # Evaluate condition
             cond_func = getattr(elem, "condition_func", None)
+            cond_str = getattr(elem, "condition", None)
             if cond_func is not None:
                 if not cond_func(result):
                     continue
-            elif getattr(elem, "condition", None) is not None:
-                if not self._eval_condition(elem.condition, result):
+            elif cond_str is not None:
+                if not self._eval_condition(cond_str, result):
                     continue
 
             if isinstance(elem, StructElement):
@@ -1112,11 +1116,12 @@ class BinaryBuilder:
 
             # Evaluate condition
             cond_func = getattr(elem, "condition_func", None)
+            cond_str = getattr(elem, "condition", None)
             if cond_func is not None:
                 if not cond_func(result):
                     continue
-            elif getattr(elem, "condition", None) is not None:
-                if not self._eval_condition(elem.condition, result):
+            elif cond_str is not None:
+                if not self._eval_condition(cond_str, result):
                     continue
 
             writer.caption(current_caption, desc=current_caption_desc)
@@ -1279,7 +1284,8 @@ class BinaryBuilder:
         if isinstance(count, int):
             return count
         if callable(count):
-            return int(count(result))
+            count_fn = cast(Callable[[Any], Any], count)
+            return int(count_fn(result))
         if isinstance(count, str):
             if count in result:
                 return int(result[count])
@@ -1296,7 +1302,8 @@ class BinaryBuilder:
     ) -> Any:
         """Resolve the tag value from context or previous struct attributes."""
         if callable(tag_field):
-            return tag_field(result)
+            tag_fn = cast(Callable[[Any], Any], tag_field)
+            return tag_fn(result)
 
         if tag_field in result:
             return result[tag_field]
