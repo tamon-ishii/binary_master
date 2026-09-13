@@ -25,7 +25,7 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 3.1 自動オフセット計算 (`Offset[T, Base.SELF]`)
   - 3.2 オフセット演算とポインタテーブル (`OffsetTable`)
 - [Step 4: 手続き的ライター & リーダーとデバッグ機能（低レベル制御）](#step-4-手続き的ライター--リーダーとデバッグ機能低レベル制御)
-  - 4.1 `BinaryWriter` によるストリーム書き込み
+  - 4.1 `BinaryWriter` によるストリーム書き込みとセクションキャプション (`caption`)
   - 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
   - 4.3 `BinaryReader` によるストリーム読み込み
   - 4.4 充実したデバッグダンプ（注釈付き Hexdump / テーブル出力 / 差分比較）
@@ -323,21 +323,27 @@ print(bytes(loaded.primary_offset.target.raw_pixels))  # => b'MAIN_TEX'
 
 > 対応サンプルコード: [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py)
 
+> [!IMPORTANT]
+> **「プロトコル仕様書（Markdown / Mermaid図）の設計・出力」が目的の場合は、本ステップではなく次の [Step 5 (`Builder`)](#step-5-スキーマ駆動設計仕様書自動生成多言語出力統合編) を使用してください。**  
+> ここで解説する `BinaryWriter` / `BinaryReader` は、Python スクリプトから直接ストリームを逐次読み書きするための手続き的（低レベル）ツールです。  
+> `writer.caption()` などの機能は、**仕様書を作るためではなく、主にデバッグダンプ（`writer.dump("table")` や `writer.hexdump()`）でバイナリ内の各領域を視覚的にわかりやすくグループ分け・整理するために使用します**。
+
 構造体を定義するまでもない小さなスクラッチ処理や、ストリームを逐次読み書きしたい場合は `BinaryWriter` と `BinaryReader` を直接使用します。
 
-### 4.1 `BinaryWriter` によるストリーム書き込みとセクションキャプション
+### 4.1 `BinaryWriter` によるストリーム書き込みとセクションキャプション (`caption`)
 
-`with writer.caption(...)` コンテキストマネージャを使うことで、生成される仕様書やデバッグテーブルにセクション階層とコメントを付与できます。
+`writer.caption("セクション名", "説明")` は、**デバッグ表示やログ出力において、どのバイト群がどの論理ブロック（ファイルヘッダー、メタデータ、ペイロード等）に属しているかをグループ分けして可視化するためのラベル付け機能** です（出力されるバイナリバイト列そのものには一切影響を与えません）。
 
 ```python
 from binary_master import BinaryWriter
 
 writer = BinaryWriter(default_endian="little")
 
-with writer.caption("File Header", "ファイル種別とバージョン情報"):
-    writer.write_uint32(0x46494C45, name="magic", desc="Magic 'FILE'")
-    writer.write_uint16(2, name="ver_maj", desc="Major version")
-    writer.write_uint16(0, name="ver_min", desc="Minor version")
+# デバッグ表示用のセクション名（キャプション）を設定
+writer.caption("File Header", "ファイル種別とバージョン情報")
+writer.write_uint32(0x46494C45, name="magic", desc="Magic 'FILE'")
+writer.write_uint16(2, name="ver_maj", desc="Major version")
+writer.write_uint16(0, name="ver_min", desc="Minor version")
 ```
 
 ### 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
@@ -345,15 +351,17 @@ with writer.caption("File Header", "ファイル種別とバージョン情報")
 実世界のプロトコルで登場する3大文字列フォーマットをネイティブサポートしています：
 
 ```python
-with writer.caption("Metadata", "テキストメタデータ"):
-    # ① C言語スタイル: Null終端文字列 ('\0')
-    writer.write_string("SampleApp v2.0", strategy="null_terminated", name="app_name")
+# キャプションを "Metadata" に切り替え
+writer.caption("Metadata", "テキストメタデータ")
 
-    # ② Pascalスタイル: 長さプレフィックス（先頭2バイトに文字列長を記録）
-    writer.write_string("Confidential Document", strategy="prefixed", prefix_bytes=2, name="doc_title")
+# ① C言語スタイル: Null終端文字列 ('\0')
+writer.write_string("SampleApp v2.0", strategy="null_terminated", name="app_name")
 
-    # ③ 固定長パディング文字列（8バイト固定、空白で埋める）
-    writer.write_string("AUTH", length=8, strategy="fixed", pad_byte=b" ", name="author_tag")
+# ② Pascalスタイル: 長さプレフィックス（先頭2バイトに文字列長を記録）
+writer.write_string("Confidential Document", strategy="prefixed", prefix_bytes=2, name="doc_title")
+
+# ③ 固定長パディング文字列（8バイト固定、空白で埋める）
+writer.write_string("AUTH", length=8, strategy="fixed", pad_byte=b" ", name="author_tag")
 ```
 
 ### 4.3 `BinaryReader` によるストリーム読み込み
@@ -396,10 +404,25 @@ Offset    00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  |     ASCII      |  
 ```
 
 #### ② 表形式トレース (`writer.dump("table")`)
-全フィールドの Offset, Size, Type, Hex Bytes, Value, Caption をモノスペース表で出力します。
+全フィールドの Offset, Size, Type, Hex Bytes, Value に加え、**先ほど設定した `Caption`（セクション名）** が右端の列に表示されます。  
+デバッグ時に「どのセクションの、どのフィールドを書き込んだか」を一目で突き合わせることができます。
 
 ```python
 print(writer.dump("table"))
+```
+
+```text
++--------+------+---------------+-------------------+--------+----------------------------+-------------------------------------+--------------+
+| Offset | Size | Field Name    | Type              | Endian | Hex Bytes                  | Value / Preview                     | Caption      |
++========+======+===============+===================+========+============================+=====================================+==============+
+| 0x0000 |   4B | magic         | UInt32            | Little | 45 4c 49 46                | 0x46494C45                          | File Header  |
+| 0x0004 |   2B | ver_maj       | UInt16            | Little | 02 00                      | 2                                   | File Header  |
+| 0x0006 |   2B | ver_min       | UInt16            | Little | 00 00                      | 0                                   | File Header  |
+| 0x0008 |  15B | app_name      | CString           | -      | 53 61 6d 70 6c 65 .. (15B) | SampleApp ..                        | Metadata     |
+| 0x0017 |  23B | doc_title     | PrefixedString[2] | Little | 15 00 43 6f 6e 66 .. (23B) | Confidenti..                        | Metadata     |
+| 0x002E |   8B | author_tag    | FixedString[8]    | -      | 41 55 54 48 20 20 20 20    | AUTH                                | Metadata     |
++--------+------+---------------+-------------------+--------+----------------------------+-------------------------------------+--------------+
+Total: 46 bytes (0x002E) across 6 fields
 ```
 
 #### ③ リーダーのカーソル位置・残りバイト検査 (`reader.hexdump()`)
