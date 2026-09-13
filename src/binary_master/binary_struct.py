@@ -523,7 +523,7 @@ def offsetof(target: Any, field_name: str) -> int:
             return base + offsetof(child, rest)
 
     total_bits = meta.get("bits")
-    if total_bits is not None:
+    if isinstance(total_bits, int):
         fields = meta.get("fields", {})
         if field_name not in fields:
             raise AttributeError(f"Field '{field_name}' not found in bitfield {cls.__name__}")
@@ -611,13 +611,14 @@ def sizeof(target: Any) -> int:
     # Handle class
     meta = getattr(target, "__binary__", None)
     if meta is None:
-        raise TypeError(f"Class {getattr(target, '__name__', str(target))} is not a binary_struct")
+        target_name = getattr(target, "__name__", None) or type(target).__name__
+        raise TypeError(f"Class {target_name} is not a binary_struct")
 
     total_bits = meta.get("bits")
-    if total_bits is not None:
+    if isinstance(total_bits, int):
         raw_bytes = (total_bits + 7) // 8
         align = meta.get("align")
-        if align and align > 1:
+        if isinstance(align, int) and align > 1:
             raw_bytes = ((raw_bytes + align - 1) // align) * align
         return raw_bytes
 
@@ -955,7 +956,7 @@ def write_struct(
     auto_align = meta.get("auto_align", False)
 
     total_bits = meta.get("bits")
-    if total_bits is not None:
+    if isinstance(total_bits, int):
         _write_bitfield(
             instance,
             writer,
@@ -1115,7 +1116,7 @@ def write_struct(
             or (get_origin(ftype) is Variant)
         )
         if is_variant:
-            tag_field = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
+            _tag_field = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
             mapping = ftype[2] if isinstance(ftype, tuple) else get_args(ftype)[1]
             if hasattr(writer, "_current_caption_variants") and writer._current_caption_variants is None:
                 writer._current_caption_variants = [(k, v, getattr(v, "__doc__", "") or "") for k, v in mapping.items()]
@@ -1288,7 +1289,7 @@ def read_struct(
     active_endian = normalize_endian(endian or struct_endian)
 
     total_bits = meta.get("bits")
-    if total_bits is not None:
+    if isinstance(total_bits, int):
         if total_bits <= 8:
             packed_value = reader.read_uint8()
         elif total_bits <= 16:

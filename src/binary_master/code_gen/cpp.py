@@ -18,9 +18,6 @@ from typing import (
 )
 
 from binary_master.binary_struct import (
-    Array,
-    BinaryType,
-    Bits,
     FixedArray,
     Float32,
     Float64,
@@ -35,7 +32,7 @@ from binary_master.binary_struct import (
     UInt32,
     UInt64,
 )
-from binary_master.c_header import to_pascal_case, to_snake_case
+from binary_master.c_header import to_pascal_case
 
 
 def cpp_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
@@ -132,6 +129,14 @@ def cpp_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
     return "uint8_t", None
 
 
+def _get_type_name(type_obj: Any) -> str:
+    """Safely obtain a type's name without raising type-to-string inspection warnings."""
+    name = getattr(type_obj, "__name__", None)
+    if isinstance(name, str):
+        return name
+    return type_obj.__class__.__name__
+
+
 def generate_cpp_struct(
     struct_cls: type,
     name: Optional[str] = None,
@@ -140,16 +145,14 @@ def generate_cpp_struct(
 ) -> str:
     """Generate modern C++ struct definition for a @binary_struct class."""
     if not hasattr(struct_cls, "__binary__"):
-        raise TypeError(f"Class {getattr(struct_cls, '__name__', str(struct_cls))} is not a binary_struct")
+        raise TypeError(f"Class {_get_type_name(struct_cls)} is not a binary_struct")
 
     meta: dict[str, Any] = getattr(struct_cls, "__binary__", {})
     cls_name = struct_cls.__name__ if struct_cls else (name or "Struct")
     field_alias = name if (name and name != cls_name) else None
     doc_text = desc or getattr(struct_cls, "__doc__", "") or meta.get("doc", "")
 
-    lines: List[str] = []
-
-    lines.append("/**")
+    lines: List[str] = ["/**"]
     if field_alias:
         lines.append(f" * @brief Logical Name: `{field_alias}`")
     if doc_text:
@@ -162,7 +165,7 @@ def generate_cpp_struct(
     lines.append(" */")
 
     total_bits = meta.get("bits")
-    if total_bits is not None:
+    if isinstance(total_bits, int):
         if total_bits <= 8:
             base_type = "uint8_t"
         elif total_bits <= 16:
@@ -176,13 +179,13 @@ def generate_cpp_struct(
         fields = meta.get("fields", {})
         descriptions = meta.get("descriptions", {})
         shift = 0
-        for fname, ftype in fields.items():
-            width = ftype[1] if isinstance(ftype, tuple) and len(ftype) >= 2 else 1
-            fdesc = descriptions.get(fname, "")
+        for field_name, field_type in fields.items():
+            width = field_type[1] if isinstance(field_type, tuple) and len(field_type) >= 2 else 1
+            field_desc = descriptions.get(field_name, "")
             bit_end = shift + width - 1
             bit_range = f"[{shift}:{bit_end}]" if width > 1 else f"[{shift}]"
-            comment = f" /**< Bit {bit_range}{': ' + fdesc if fdesc else ''} */"
-            lines.append(f"    {base_type} {fname} : {width};{comment}")
+            comment = f" /**< Bit {bit_range}{': ' + field_desc if field_desc else ''} */"
+            lines.append(f"    {base_type} {field_name} : {width};{comment}")
             shift += width
         lines.append("};")
     else:
@@ -190,11 +193,11 @@ def generate_cpp_struct(
         fields = meta.get("fields", {})
         descriptions = meta.get("descriptions", {})
 
-        for fname, ftype in fields.items():
-            cpp_type, note = cpp_type_of(ftype)
-            fdesc = descriptions.get(fname, "") or note or ""
-            comment = f" /**< {fdesc} */" if fdesc else ""
-            lines.append(f"    {cpp_type} {fname};{comment}")
+        for field_name, field_type in fields.items():
+            cpp_type, note = cpp_type_of(field_type)
+            field_desc = descriptions.get(field_name, "") or note or ""
+            comment = f" /**< {field_desc} */" if field_desc else ""
+            lines.append(f"    {cpp_type} {field_name};{comment}")
 
         lines.append("};")
 
@@ -218,12 +221,11 @@ def generate_cpp_choice(
     norm_vars = _normalize_variants(variants)
     tag_field_name = tag_field if isinstance(tag_field, str) else "tag"
 
-    lines: List[str] = []
-
-    # 1. Tag Enum class definition
     enum_name = f"{to_pascal_case(choice_name)}Tag"
-    lines.append("/**")
-    lines.append(f" * @brief Strongly-typed tag values for choice `{choice_name}` (dispatched by `{tag_field_name}`).")
+    lines: List[str] = [
+        "/**",
+        f" * @brief Strongly-typed tag values for choice `{choice_name}` (dispatched by `{tag_field_name}`).",
+    ]
     if desc:
         lines.append(f" * {desc}")
     if condition:
@@ -232,7 +234,7 @@ def generate_cpp_choice(
     lines.append(f"enum class {enum_name} : uint16_t {{")
 
     for tag, v_cls, v_desc in norm_vars:
-        v_cls_name = getattr(v_cls, "__name__", str(v_cls))
+        v_cls_name = _get_type_name(v_cls)
         tag_val_str = f"0x{tag:02X}" if isinstance(tag, int) else f"{tag}"
         variant_tag_name = to_pascal_case(v_cls_name)
         comment = f" /**< Tag {tag_val_str}: {v_desc or v_cls_name} */"
@@ -241,7 +243,7 @@ def generate_cpp_choice(
 
     # 2. Emit each variant struct if not already emitted
     for tag, v_cls, v_desc in norm_vars:
-        v_cls_name = getattr(v_cls, "__name__", str(v_cls))
+        v_cls_name = _get_type_name(v_cls)
         if v_cls_name not in emitted_structs:
             lines.append(generate_cpp_struct(v_cls, desc=v_desc))
             lines.append("")
@@ -249,7 +251,7 @@ def generate_cpp_choice(
 
     # 3. Emit std::variant alias
     variant_alias = f"{to_pascal_case(choice_name)}Variant"
-    variant_types = ", ".join(getattr(v_cls, "__name__", str(v_cls)) for _, v_cls, _ in norm_vars)
+    variant_types = ", ".join(_get_type_name(v_cls) for _, v_cls, _ in norm_vars)
     lines.append("/**")
     lines.append(f" * @brief Type-safe variant container for choice `{choice_name}`.")
     lines.append(" */")
@@ -272,12 +274,8 @@ def generate_cpp_code(builder: Any) -> str:
     version = getattr(builder, "version", None)
     elements = getattr(builder, "elements", [])
 
-    lines: List[str] = []
-    lines.append("#pragma once\n")
+    lines: List[str] = ["#pragma once\n", "/**", " * @file", f" * @brief {title}"]
 
-    lines.append("/**")
-    lines.append(f" * @file")
-    lines.append(f" * @brief {title}")
     if version:
         lines.append(f" * @version {version}")
     if getattr(builder, "description", ""):
@@ -287,8 +285,8 @@ def generate_cpp_code(builder: Any) -> str:
     lines.append(" * Automatically generated by binary_master.")
     lines.append(" */\n")
 
-    lines.append("#include <cstdint>")
-    lines.append("#include <cstddef>")
+    lines.append("#include <cstdint>")  # noinspection SpellCheckingInspection
+    lines.append("#include <cstddef>")  # noinspection SpellCheckingInspection
     lines.append("#include <array>")
     lines.append("#include <variant>\n")
 

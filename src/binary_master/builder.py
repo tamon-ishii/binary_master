@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
@@ -13,9 +13,7 @@ from typing import (
     IO,
     List,
     Optional,
-    Sequence,
     Tuple,
-    Type,
     Union,
     cast,
 )
@@ -1370,4 +1368,5 @@ __all__ = [
     "ChoiceElement",
     "SectionElement",
     "FieldElement",
+    "_normalize_variants",
 ]

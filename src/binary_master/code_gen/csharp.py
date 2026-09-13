@@ -18,9 +18,6 @@ from typing import (
 )
 
 from binary_master.binary_struct import (
-    Array,
-    BinaryType,
-    Bits,
     FixedArray,
     Float32,
     Float64,
@@ -132,6 +129,14 @@ def csharp_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
     return "byte", None, None
 
 
+def _get_type_name(type_obj: Any) -> str:
+    """Safely obtain a type's name without raising type-to-string inspection warnings."""
+    name = getattr(type_obj, "__name__", None)
+    if isinstance(name, str):
+        return name
+    return type_obj.__class__.__name__
+
+
 def generate_csharp_struct(
     struct_cls: type,
     name: Optional[str] = None,
@@ -140,16 +145,14 @@ def generate_csharp_struct(
 ) -> str:
     """Generate C# struct definition for a @binary_struct class."""
     if not hasattr(struct_cls, "__binary__"):
-        raise TypeError(f"Class {getattr(struct_cls, '__name__', str(struct_cls))} is not a binary_struct")
+        raise TypeError(f"Class {_get_type_name(struct_cls)} is not a binary_struct")
 
     meta: dict[str, Any] = getattr(struct_cls, "__binary__", {})
     cls_name = struct_cls.__name__ if struct_cls else (name or "Struct")
     field_alias = name if (name and name != cls_name) else None
     doc_text = desc or getattr(struct_cls, "__doc__", "") or meta.get("doc", "")
 
-    lines: List[str] = []
-
-    lines.append("/// <summary>")
+    lines: List[str] = ["/// <summary>"]
     if field_alias:
         lines.append(f"/// Logical Name: {field_alias}")
     if doc_text:
@@ -162,7 +165,7 @@ def generate_csharp_struct(
     lines.append("/// </summary>")
 
     total_bits = meta.get("bits")
-    if total_bits is not None:
+    if isinstance(total_bits, int):
         if total_bits <= 8:
             base_type = "byte"
         elif total_bits <= 16:
@@ -179,12 +182,12 @@ def generate_csharp_struct(
         fields = meta.get("fields", {})
         descriptions = meta.get("descriptions", {})
         shift = 0
-        for fname, ftype in fields.items():
-            width = ftype[1] if isinstance(ftype, tuple) and len(ftype) >= 2 else 1
-            fdesc = descriptions.get(fname, "")
+        for field_name, field_type in fields.items():
+            width = field_type[1] if isinstance(field_type, tuple) and len(field_type) >= 2 else 1
+            field_desc = descriptions.get(field_name, "")
             mask = (1 << width) - 1
-            prop_name = to_pascal_case(fname)
-            doc = f"    /// <summary>Bits [{shift}:{shift + width - 1}]{': ' + fdesc if fdesc else ''}</summary>"
+            prop_name = to_pascal_case(field_name)
+            doc = f"    /// <summary>Bits [{shift}:{shift + width - 1}]{': ' + field_desc if field_desc else ''}</summary>"
             lines.append(doc)
             lines.append(f"    public {base_type} {prop_name} => ({base_type})((Raw >> {shift}) & 0x{mask:X});")
             shift += width
@@ -196,13 +199,13 @@ def generate_csharp_struct(
         fields = meta.get("fields", {})
         descriptions = meta.get("descriptions", {})
 
-        for fname, ftype in fields.items():
-            cs_type, arr_cnt, note = csharp_type_of(ftype)
-            fdesc = descriptions.get(fname, "") or note or ""
-            prop_name = to_pascal_case(fname)
+        for field_name, field_type in fields.items():
+            cs_type, arr_cnt, note = csharp_type_of(field_type)
+            field_desc = descriptions.get(field_name, "") or note or ""
+            prop_name = to_pascal_case(field_name)
 
-            if fdesc:
-                lines.append(f"    /// <summary>{fdesc}</summary>")
+            if field_desc:
+                lines.append(f"    /// <summary>{field_desc}</summary>")
 
             if arr_cnt is not None:
                 lines.append(f"    [MarshalAs(UnmanagedType.ByValArray, SizeConst = {arr_cnt})]")
@@ -232,12 +235,12 @@ def generate_csharp_choice(
     norm_vars = _normalize_variants(variants)
     tag_field_name = tag_field if isinstance(tag_field, str) else "tag"
 
-    lines: List[str] = []
-
     # 1. Tag Enum definition
     enum_name = f"{to_pascal_case(choice_name)}Tag"
-    lines.append("/// <summary>")
-    lines.append(f"/// Tag values for choice `{choice_name}` (dispatched by `{tag_field_name}`).")
+    lines: List[str] = [
+        "/// <summary>",
+        f"/// Tag values for choice `{choice_name}` (dispatched by `{tag_field_name}`).",
+    ]
     if desc:
         lines.append(f"/// {desc}")
     if condition:
@@ -246,7 +249,7 @@ def generate_csharp_choice(
     lines.append(f"public enum {enum_name} : ushort {{")
 
     for tag, v_cls, v_desc in norm_vars:
-        v_cls_name = getattr(v_cls, "__name__", str(v_cls))
+        v_cls_name = _get_type_name(v_cls)
         tag_val_str = f"0x{tag:02X}" if isinstance(tag, int) else f"{tag}"
         variant_tag_name = to_pascal_case(v_cls_name)
         if v_desc:
@@ -256,7 +259,7 @@ def generate_csharp_choice(
 
     # 2. Emit each variant struct if not already emitted
     for tag, v_cls, v_desc in norm_vars:
-        v_cls_name = getattr(v_cls, "__name__", str(v_cls))
+        v_cls_name = _get_type_name(v_cls)
         if v_cls_name not in emitted_structs:
             lines.append(generate_csharp_struct(v_cls, desc=v_desc))
             lines.append("")
@@ -270,7 +273,7 @@ def generate_csharp_choice(
     lines.append("[StructLayout(LayoutKind.Explicit, Pack = 1)]")
     lines.append(f"public struct {union_name} {{")
     for tag, v_cls, v_desc in norm_vars:
-        v_cls_name = getattr(v_cls, "__name__", str(v_cls))
+        v_cls_name = _get_type_name(v_cls)
         prop_name = to_pascal_case(v_cls_name)
         lines.append(f"    [FieldOffset(0)] public {v_cls_name} {prop_name};")
     lines.append("}")
@@ -292,9 +295,10 @@ def generate_csharp_code(builder: Any, namespace: str = "BinaryProtocol") -> str
     version = getattr(builder, "version", None)
     elements = getattr(builder, "elements", [])
 
-    lines: List[str] = []
-    lines.append("// " + "=" * 76)
-    lines.append(f"// {title}")
+    lines: List[str] = [
+        "// " + "=" * 76,
+        f"// {title}",
+    ]
     if version:
         lines.append(f"// Version: {version}")
     if getattr(builder, "description", ""):

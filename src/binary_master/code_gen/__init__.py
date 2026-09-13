@@ -50,16 +50,16 @@ EXTENSION_MAP = {
 
 def normalize_lang(lang: str) -> str:
     """Normalize language identifier."""
-    l = lang.strip().lower()
-    if l in ("c",):
+    norm = lang.strip().lower()
+    if norm in ("c",):
         return "c"
-    if l in ("rust", "rs"):
+    if norm in ("rust", "rs"):
         return "rust"
-    if l in ("cpp", "c++", "hpp", "cc", "cxx"):
+    if norm in ("cpp", "c++", "hpp", "cc", "cxx"):
         return "cpp"
-    if l in ("csharp", "cs", "c#"):
+    if norm in ("csharp", "cs", "c#"):
         return "csharp"
-    if l in ("go", "golang"):
+    if norm in ("go", "golang"):
         return "go"
     raise ValueError(
         f"Unsupported language: {lang!r}. Supported languages: 'c', 'rust', 'cpp', 'csharp', 'go'"

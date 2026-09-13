@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import re
 from pathlib import Path
 from typing import (
     Any,
@@ -19,9 +18,6 @@ from typing import (
 )
 
 from binary_master.binary_struct import (
-    Array,
-    BinaryType,
-    Bits,
     FixedArray,
     Float32,
     Float64,
@@ -36,7 +32,7 @@ from binary_master.binary_struct import (
     UInt32,
     UInt64,
 )
-from binary_master.c_header import to_pascal_case, to_screaming_snake_case, to_snake_case
+from binary_master.c_header import to_pascal_case, to_snake_case
 
 
 def rust_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
@@ -133,6 +129,14 @@ def rust_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
     return "u8", None
 
 
+def _get_type_name(type_obj: Any) -> str:
+    """Safely obtain a type's name without raising type-to-string inspection warnings."""
+    name = getattr(type_obj, "__name__", None)
+    if isinstance(name, str):
+        return name
+    return type_obj.__class__.__name__
+
+
 def generate_rust_struct(
     struct_cls: type,
     name: Optional[str] = None,
@@ -141,7 +145,7 @@ def generate_rust_struct(
 ) -> str:
     """Generate Rust struct definition for a @binary_struct class."""
     if not hasattr(struct_cls, "__binary__"):
-        raise TypeError(f"Class {getattr(struct_cls, '__name__', str(struct_cls))} is not a binary_struct")
+        raise TypeError(f"Class {_get_type_name(struct_cls)} is not a binary_struct")
 
     meta: dict[str, Any] = getattr(struct_cls, "__binary__", {})
     cls_name = struct_cls.__name__ if struct_cls else (name or "Struct")
@@ -162,7 +166,7 @@ def generate_rust_struct(
         lines.append(f"///\n/// **Condition**: `{condition}`")
 
     total_bits = meta.get("bits")
-    if total_bits is not None:
+    if isinstance(total_bits, int):
         # Bitfield packed container
         if total_bits <= 8:
             base_type = "u8"
@@ -184,12 +188,12 @@ def generate_rust_struct(
         fields = meta.get("fields", {})
         descriptions = meta.get("descriptions", {})
         shift = 0
-        for fname, ftype in fields.items():
-            width = ftype[1] if isinstance(ftype, tuple) and len(ftype) >= 2 else 1
-            fdesc = descriptions.get(fname, "")
+        for field_name, field_type in fields.items():
+            width = field_type[1] if isinstance(field_type, tuple) and len(field_type) >= 2 else 1
+            field_desc = descriptions.get(field_name, "")
             mask = (1 << width) - 1
-            method_name = to_snake_case(fname)
-            doc_comment = f"    /// Bits [{shift}:{shift + width - 1}]{': ' + fdesc if fdesc else ''}"
+            method_name = to_snake_case(field_name)
+            doc_comment = f"    /// Bits [{shift}:{shift + width - 1}]{': ' + field_desc if field_desc else ''}"
             lines.append(doc_comment)
             lines.append(f"    pub fn {method_name}(&self) -> {base_type} {{")
             lines.append(f"        (self.raw >> {shift}) & 0x{mask:X}")
@@ -204,12 +208,12 @@ def generate_rust_struct(
         fields = meta.get("fields", {})
         descriptions = meta.get("descriptions", {})
 
-        for fname, ftype in fields.items():
-            rs_type, note = rust_type_of(ftype)
-            fdesc = descriptions.get(fname, "") or note or ""
-            f_snake = to_snake_case(fname)
-            if fdesc:
-                lines.append(f"    /// {fdesc}")
+        for field_name, field_type in fields.items():
+            rs_type, note = rust_type_of(field_type)
+            field_desc = descriptions.get(field_name, "") or note or ""
+            f_snake = to_snake_case(field_name)
+            if field_desc:
+                lines.append(f"    /// {field_desc}")
             lines.append(f"    pub {f_snake}: {rs_type},")
 
         lines.append("}")
@@ -234,11 +238,11 @@ def generate_rust_choice(
     norm_vars = _normalize_variants(variants)
     tag_field_name = tag_field if isinstance(tag_field, str) else "tag"
 
-    lines: List[str] = []
-
     # 1. Tag Enum definition
     enum_name = f"{to_pascal_case(choice_name)}Tag"
-    lines.append(f"/// Tag values for choice `{choice_name}` (dispatched by `{tag_field_name}`).")
+    lines: List[str] = [
+        f"/// Tag values for choice `{choice_name}` (dispatched by `{tag_field_name}`).",
+    ]
     if desc:
         lines.append(f"/// {desc}")
     if condition:
@@ -248,7 +252,7 @@ def generate_rust_choice(
     lines.append(f"pub enum {enum_name} {{")
 
     for tag, v_cls, v_desc in norm_vars:
-        v_cls_name = getattr(v_cls, "__name__", str(v_cls))
+        v_cls_name = _get_type_name(v_cls)
         tag_val_str = f"0x{tag:02X}" if isinstance(tag, int) else f"{tag}"
         variant_tag_name = to_pascal_case(v_cls_name)
         if v_desc:
@@ -258,7 +262,7 @@ def generate_rust_choice(
 
     # 2. Emit each variant struct if not already emitted
     for tag, v_cls, v_desc in norm_vars:
-        v_cls_name = getattr(v_cls, "__name__", str(v_cls))
+        v_cls_name = _get_type_name(v_cls)
         if v_cls_name not in emitted_structs:
             lines.append(generate_rust_struct(v_cls, desc=v_desc))
             lines.append("")
@@ -270,7 +274,7 @@ def generate_rust_choice(
     lines.append("#[derive(Debug, Clone, Copy, PartialEq)]")
     lines.append(f"pub enum {union_name} {{")
     for tag, v_cls, v_desc in norm_vars:
-        v_cls_name = getattr(v_cls, "__name__", str(v_cls))
+        v_cls_name = _get_type_name(v_cls)
         variant_member = to_pascal_case(v_cls_name)
         lines.append(f"    {variant_member}({v_cls_name}),")
     lines.append("}")
@@ -292,9 +296,10 @@ def generate_rust_code(builder: Any) -> str:
     version = getattr(builder, "version", None)
     elements = getattr(builder, "elements", [])
 
-    lines: List[str] = []
-    lines.append("//! " + "=" * 76)
-    lines.append(f"//! {title}")
+    lines: List[str] = [
+        "//! " + "=" * 76,
+        f"//! {title}",
+    ]
     if version:
         lines.append(f"//! Version: {version}")
     if getattr(builder, "description", ""):
