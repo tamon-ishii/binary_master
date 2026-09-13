@@ -12,7 +12,7 @@ Systematic and educational sample scripts demonstrating `binary_master` capabili
 | [`02_bitfields_and_alignment.py`](./02_bitfields_and_alignment.py) | Bitfields & Memory Alignment | `Bits[N]` with packed container `bits=16`, struct alignment `align=4`, and automatic natural alignment `auto_align=True` |
 | [`03_offsets_and_tables.py`](./03_offsets_and_tables.py) | Relative Pointers & Tables | `Offset[T, Base.SELF]`, offset arithmetic (`Base.SELF + 0x20`), `OffsetTable`, and deferred pointer patching |
 | [`04_procedural_writer.py`](./04_procedural_writer.py) | Procedural Writer & Reader | Low-level stream writing, null-terminated/length-prefixed strings, alignment padding, captions, and debug dumps (`hexdump`, `dump`) |
-| [`05_builder_and_reader.py`](./05_builder_and_reader.py) | Builder, Multi-Lang & Automated Reader | Schema-first protocol design, multi-language code export (C, Rust, C++, C#, Go), `builder.add_document()`, polymorphic `builder.add_choice()`, conditional structs, `builder.write("spec.md")`, and automated `builder.read(data)` |
+| [`05_builder_and_reader.py`](./05_builder_and_reader.py) | Builder, Multi-Lang & Automated Reader | Schema-first protocol design, sections & captions, Mermaid subgraphs, multi-language code export (C, Rust, C++, C#, Go), `builder.write("spec.md")`, automated `builder.read(data)`, and debug inspection (`hexdump`, `dump`) |
 | [`main.py`](./main.py) | Sample Runner | Orchestrates and verifies all samples in sequence |
 
 ## Running the Samples

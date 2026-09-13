@@ -25,21 +25,31 @@ If bit 0 of `flags` is set (`flags & 0x01 != 0`), a 4-byte `ChecksumFooter` is a
 
 ```mermaid
 flowchart TD
-    E1_header["header (PacketHeader, 14B)"]
-    Choice_E2_payload{"Choice: payload (msg_type?)"}
-    E1_header --> Choice_E2_payload
-    V_E2_payload_0["TextMessage, 20B"]
-    Choice_E2_payload -->|"Tag 0x01"| V_E2_payload_0
-    V_E2_payload_1["SensorReport, 16B"]
-    Choice_E2_payload -->|"Tag 0x02"| V_E2_payload_1
-    Cond_E3_footer{"flags & 0x01 != 0?"}
-    V_E2_payload_0 --> Cond_E3_footer
-    V_E2_payload_1 --> Cond_E3_footer
-    E3_footer["footer (ChecksumFooter, 4B)"]
-    Cond_E3_footer -->|yes| E3_footer
+    subgraph SG_1_Header_Section ["Header Section - Fixed container identification header"]
+        E2_header["header (PacketHeader, 14B)"]
+    end
+    subgraph SG_4_Payload_Section ["Payload Section - Polymorphic payload block"]
+        Choice_E5_payload{"Choice: payload (msg_type?)"}
+        E2_header --> Choice_E5_payload
+        V_E5_payload_0["TextMessage, 20B"]
+        Choice_E5_payload -->|"Tag 0x01"| V_E5_payload_0
+        V_E5_payload_1["SensorReport, 16B"]
+        Choice_E5_payload -->|"Tag 0x02"| V_E5_payload_1
+    end
+    subgraph SG_7_Footer_Section ["Footer Section - Optional trailing integrity verification"]
+        Cond_E8_footer{"flags & 0x01 != 0?"}
+        V_E5_payload_0 --> Cond_E8_footer
+        V_E5_payload_1 --> Cond_E8_footer
+        E8_footer["footer (ChecksumFooter, 4B)"]
+        Cond_E8_footer -->|yes| E8_footer
+    end
 ```
 
 ## Data Structures & Layout
+
+### Section: Header Section
+
+Fixed container identification header
 
 ### Struct `header` (PacketHeader)
 
@@ -54,6 +64,10 @@ Fixed 14-byte packet header
 | `+0x06` | 2 | `msg_type` | `UInt16` | Little | 1 = Text, 2 = Sensor Data |
 | `+0x08` | 4 | `payload_size` | `UInt32` | Little | Length of following payload |
 | `+0x0C` | 2 | `flags` | `UInt16` | Little | Bit 0: Has Checksum Footer |
+
+### Section: Payload Section
+
+Polymorphic payload block
 
 ### Choice Branch: `payload`
 
@@ -87,6 +101,10 @@ Multi-channel environmental sensor readings
 | `+0x04` | 4 | `temperature` | `Float32` | Little | Temperature in Celsius |
 | `+0x08` | 4 | `pressure` | `Float32` | Little | Pressure in hPa |
 | `+0x0C` | 4 | `humidity` | `Float32` | Little | Relative humidity (0.0 - 100.0) |
+
+### Section: Footer Section
+
+Optional trailing integrity verification
 
 ### Struct `footer` (ChecksumFooter)
 

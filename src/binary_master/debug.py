@@ -368,9 +368,11 @@ def debug_dump(
     if fmt == "hexdump":
         return hexdump(target, **kwargs)
     elif fmt == "table":
-        return dump_table(target, **kwargs)
+        table_kwargs = {k: v for k, v in kwargs.items() if k in ("color",)}
+        return dump_table(target, **table_kwargs)
     elif fmt == "json":
-        return dump_json(target, **kwargs)
+        json_kwargs = {k: v for k, v in kwargs.items() if k in ("indent",)}
+        return dump_json(target, **json_kwargs)
     elif fmt == "dict":
         return dump_dict(target)
     else:

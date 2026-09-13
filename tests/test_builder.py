@@ -310,3 +310,100 @@ def test_builder_aliases():
     bb = BinaryBuilder(title="Alias Test 2")
     bb.add_struct(Header, name="header")
     assert len(bb.elements) == 1
+
+
+def test_builder_section_and_caption_context_managers():
+    """Verify builder.section(), builder.caption(), and Mermaid subgraphs."""
+    builder = Builder(title="Section Test")
+
+    with builder.section("Header Section", "Headers and flags"):
+        builder.add_struct(Header, name="MainHeader")
+
+    with builder.caption("Payload Section", "Dynamic data"):
+        builder.add_choice(
+            "payload",
+            tag_field="msg_type",
+            variants={1: TextPayload, 2: AudioPayload},
+        )
+
+    builder.add_caption("Footer Section", "Verification").add_struct(
+        OptionalFooter, condition="has_footer == True"
+    )
+
+    md = builder.build()
+
+    # Flowchart should contain subgraphs for sections
+    assert "subgraph SG_0_Header_Section" in md
+    assert '["Header Section - Headers and flags"]' in md
+    assert "subgraph SG_3_Payload_Section" in md
+    assert '["Payload Section - Dynamic data"]' in md
+    assert "subgraph SG_6_Footer_Section" in md
+
+    # Markdown layout specifications should have section headings
+    assert "### Section: Header Section" in md
+    assert "Headers and flags" in md
+    assert "### Section: Payload Section" in md
+    assert "Dynamic data" in md
+    assert "### Section: Footer Section" in md
+
+
+def test_builder_hexdump_and_dump_inspection():
+    """Verify builder.hexdump() and builder.dump() schema-driven inspection."""
+    builder = Builder(title="Debug Inspection Protocol")
+
+    with builder.section("Header Block"):
+        builder.add_struct(Header, name="header")
+
+    with builder.caption("Payload Block"):
+        builder.add_choice(
+            "payload",
+            tag_field="msg_type",
+            variants={
+                1: TextPayload,
+                2: AudioPayload,
+            },
+        )
+
+    builder.add_struct(OptionalFooter, condition="version > 1")
+
+    # Build test binary: TextPayload (msg_type=1) with version=2 (has footer)
+    w = BinaryWriter()
+    w.write_struct(Header(magic=0x12345678, version=2, msg_type=1, payload_size=12))
+    w.write_struct(TextPayload(encoding=1, length=4, content=b"TEST\x00\x00\x00\x00"))
+    w.write_struct(OptionalFooter(checksum=0xDEADBEEF))
+    raw_data = w.to_bytes()
+
+    # 1. Direct builder.hexdump()
+    dump_hex = builder.hexdump(raw_data, color=False)
+    assert "Header Block" in dump_hex or "magic=0x12345678" in dump_hex
+    assert "TextPayload" in dump_hex or "encoding=1" in dump_hex
+    assert "OptionalFooter" in dump_hex or "checksum=" in dump_hex
+
+    # 2. Direct builder.dump('table')
+    table_str = builder.dump(raw_data, format="table")
+    assert "Header Block" in table_str
+    assert "Payload Block" in table_str
+    assert "magic" in table_str
+    assert "encoding" in table_str
+    assert "checksum" in table_str
+
+    # 3. Direct builder.dump('json')
+    json_str = builder.dump(raw_data, format="json")
+    import json
+    entries = json.loads(json_str)
+    assert len(entries) >= 7
+
+    # 4. read(trace=True) enables res.hexdump() and res.dump()
+    res = builder.read(raw_data, trace=True)
+    assert res.header.magic == 0x12345678
+    assert res.payload.length == 4
+    assert res.hexdump() == dump_hex
+    assert res.dump("table") == table_str
+
+    # 5. read(trace=False) raises RuntimeError on res.hexdump()
+    res_no_trace = builder.read(raw_data, trace=False)
+    with pytest.raises(RuntimeError, match="trace=True"):
+        res_no_trace.hexdump()
+    with pytest.raises(RuntimeError, match="trace=True"):
+        res_no_trace.dump()
+

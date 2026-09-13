@@ -20,6 +20,11 @@ package telemetry
 //
 // If bit 0 of `flags` is set (`flags & 0x01 != 0`), a 4-byte `ChecksumFooter` is appended.
 
+// ----------------------------------------------------------------------------
+// Section: Header Section
+// Fixed container identification header
+// ----------------------------------------------------------------------------
+
 // Logical Name: header
 // Fixed 14-byte packet header
 type PacketHeader struct {
@@ -29,6 +34,16 @@ type PacketHeader struct {
 	PayloadSize uint32 // Length of following payload
 	Flags uint16 // Bit 0: Has Checksum Footer
 }
+
+// ----------------------------------------------------------------------------
+// Section: Header Section
+// Fixed container identification header
+// ----------------------------------------------------------------------------
+
+// ----------------------------------------------------------------------------
+// Section: Payload Section
+// Polymorphic payload block
+// ----------------------------------------------------------------------------
 
 // PayloadTag represents tag values for choice payload (dispatched by msg_type).
 // Dynamic payload dispatched by PacketHeader.msg_type
@@ -62,9 +77,24 @@ type Payload interface {
 func (TextMessage) IsPayload() {}
 func (SensorReport) IsPayload() {}
 
+// ----------------------------------------------------------------------------
+// Section: Payload Section
+// Polymorphic payload block
+// ----------------------------------------------------------------------------
+
+// ----------------------------------------------------------------------------
+// Section: Footer Section
+// Optional trailing integrity verification
+// ----------------------------------------------------------------------------
+
 // Logical Name: footer
 // Trailing CRC32 checksum verification
 // Condition: flags & 0x01 != 0
 type ChecksumFooter struct {
 	Crc32 uint32 // IEEE 802.3 CRC32 checksum
 }
+
+// ----------------------------------------------------------------------------
+// Section: Footer Section
+// Optional trailing integrity verification
+// ----------------------------------------------------------------------------

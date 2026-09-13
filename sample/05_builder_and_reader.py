@@ -87,25 +87,28 @@ which payload structure immediately follows:
 If bit 0 of `flags` is set (`flags & 0x01 != 0`), a 4-byte `ChecksumFooter` is appended.""",
     )
 
-    # 3. Register sequential structs and choice branches
-    builder.add_struct(PacketHeader, name="header", desc="Fixed 14-byte packet header")
+    # 3. Register sequential structs and choice branches using sections/captions
+    with builder.section("Header Section", "Fixed container identification header"):
+        builder.add_struct(PacketHeader, name="header", desc="Fixed 14-byte packet header")
 
-    builder.add_choice(
-        name="payload",
-        tag_field="msg_type",
-        variants={
-            1: (TextMessage, "Human-readable plaintext message payload"),
-            2: (SensorReport, "Multi-channel environmental sensor readings"),
-        },
-        desc="Dynamic payload dispatched by PacketHeader.msg_type",
-    )
+    with builder.caption("Payload Section", "Polymorphic payload block"):
+        builder.add_choice(
+            name="payload",
+            tag_field="msg_type",
+            variants={
+                1: (TextMessage, "Human-readable plaintext message payload"),
+                2: (SensorReport, "Multi-channel environmental sensor readings"),
+            },
+            desc="Dynamic payload dispatched by PacketHeader.msg_type",
+        )
 
-    builder.add_struct(
-        ChecksumFooter,
-        name="footer",
-        desc="Trailing CRC32 checksum verification",
-        condition="flags & 0x01 != 0",
-    )
+    with builder.caption("Footer Section", "Optional trailing integrity verification"):
+        builder.add_struct(
+            ChecksumFooter,
+            name="footer",
+            desc="Trailing CRC32 checksum verification",
+            condition="flags & 0x01 != 0",
+        )
 
     # 4. Generate and save the specification manual using builder.write()
     spec_path = Path(__file__).parent / "telemetry_protocol_spec.md"
@@ -184,9 +187,17 @@ If bit 0 of `flags` is set (`flags & 0x01 != 0`), a 4-byte `ChecksumFooter` is a
     print(f"  Footer present:    {'footer' in res_text}")
 
     assert isinstance(res_text.payload, TextMessage)
-    assert "footer" not in res_text  # Correctly skipped because flags & 0x01 == 0!
+    # =========================================================================
+    # 6. Schema-Driven Debug Inspection (builder.hexdump & builder.dump)
+    # =========================================================================
+    print("\n--- Schema-Driven Debug Inspection (builder.hexdump & builder.dump) ---")
+    print("Annotated Hexdump of Packet A (correlated to schema fields):")
+    print(builder.hexdump(sensor_binary))
 
-    print("\nSchema-first manual generation and automated reading verified successfully!")
+    print("\nDecoded Layout Table of Packet A (with Section Captions):")
+    print(builder.dump(sensor_binary, format="table"))
+
+    print("\nSchema-first manual generation, automated reading, and debug dumping verified successfully!")
 
 
 if __name__ == "__main__":

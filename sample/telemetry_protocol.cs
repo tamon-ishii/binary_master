@@ -22,6 +22,11 @@ namespace TelemetryProtocol {
     //
     // If bit 0 of `flags` is set (`flags & 0x01 != 0`), a 4-byte `ChecksumFooter` is appended.
 
+    // ------------------------------------------------------------------------
+    // Section: Header Section
+    // Fixed container identification header
+    // ------------------------------------------------------------------------
+
     /// <summary>
     /// Logical Name: header
     /// Fixed 14-byte packet header
@@ -39,6 +44,16 @@ namespace TelemetryProtocol {
         /// <summary>Bit 0: Has Checksum Footer</summary>
         public ushort Flags;
     }
+
+    // ------------------------------------------------------------------------
+    // Section: Header Section
+    // Fixed container identification header
+    // ------------------------------------------------------------------------
+
+    // ------------------------------------------------------------------------
+    // Section: Payload Section
+    // Polymorphic payload block
+    // ------------------------------------------------------------------------
 
     /// <summary>
     /// Tag values for choice `payload` (dispatched by `msg_type`).
@@ -89,6 +104,16 @@ namespace TelemetryProtocol {
         [FieldOffset(0)] public SensorReport SensorReport;
     }
 
+    // ------------------------------------------------------------------------
+    // Section: Payload Section
+    // Polymorphic payload block
+    // ------------------------------------------------------------------------
+
+    // ------------------------------------------------------------------------
+    // Section: Footer Section
+    // Optional trailing integrity verification
+    // ------------------------------------------------------------------------
+
     /// <summary>
     /// Logical Name: footer
     /// Trailing CRC32 checksum verification
@@ -99,5 +124,10 @@ namespace TelemetryProtocol {
         /// <summary>IEEE 802.3 CRC32 checksum</summary>
         public uint Crc32;
     }
+
+    // ------------------------------------------------------------------------
+    // Section: Footer Section
+    // Optional trailing integrity verification
+    // ------------------------------------------------------------------------
 
 }

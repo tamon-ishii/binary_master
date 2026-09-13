@@ -733,7 +733,7 @@ if "footer" in result:
 - **章・説明文の追加**: `add_document(title, content)`（Markdown 形式の説明文・章を追加）
 - **構造体の登録**: `add_struct(cls, name=None, desc="", condition=None, condition_func=None, count=None)`（`@binary_struct` クラスを登録。条件分岐やリピート件数に対応）
 - **多態バリアント分岐の登録**: `add_choice(name, tag_field, variants, desc="", condition=None, condition_func=None)`（タグフィールドに基づくバリアント選択点を登録）
-- **セクション区切り**: `add_section(title, desc="")`
+- **セクション・キャプション区切り**: `section(title, desc="")` / `caption(title, desc="")`（`with` 構文による論理グループ化に対応。Mermaid に `subgraph` を自動生成）、`add_section(title, desc="")` / `add_caption(title, desc="")`
 - **アドホックフィールド**: `add_field(name, type_name, size, desc="", endian=None, condition=None)`
 - **仕様書テキスト生成**: `build(...)` / `to_markdown(...)`（Markdown 文字列を返却）
 - **仕様書ファイル書き出し**: `write(path_or_file, ...)`（ファイルまたはストリームへ出力して Markdown 文字列を返却）
@@ -743,7 +743,8 @@ if "footer" in result:
 - **C#コード出力**: `to_csharp(namespace="BinaryProtocol")`, `write_csharp(path_or_file, ...)`
 - **Goコード出力**: `to_go(package_name="protocol")`, `write_go(path_or_file, ...)`
 - **統一コード出力**: `to_code(lang)`, `write_code(path_or_file, lang=None)`（拡張子自動判別）
-- **スキーマ駆動自動読み込み**: `read(reader_or_bytes, endian=None)`（バイナリデータをスキーマに基づいて自動パースし `BuilderReadResult` を返却）
+- **スキーマ駆動自動読み込み**: `read(reader_or_bytes, endian=None, trace=False)`（バイナリデータをスキーマに基づいて自動パースし `BuilderReadResult` を返却）
+- **スキーマ駆動デバッグ検査**: `hexdump(data, ...)`（スキーマのフィールド・セクション名と突き合わせた注釈付き Hexdump）、`dump(data, format="table", ...)`（セクション名付きのモノスペース表や JSON を出力）
 
 
 ### `BinaryWriter` / `Writer` 主要メソッド

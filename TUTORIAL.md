@@ -35,6 +35,7 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 5.3 仕様書（Markdown & Mermaid 図）のワンライナー出力
   - 5.4 多言語ヘッダー出力 (C, Rust, Modern C++, C#, Go)
   - 5.5 スキーマ駆動の自動デシリアライズ (`builder.read`)
+  - 5.6 スキーマ駆動のデバッグ検査 (`builder.hexdump` / `builder.dump`)
 - [まとめ & サンプルコードとの対応](#まとめ--サンプルコードとの対応)
 
 ---
@@ -504,27 +505,29 @@ builder = Builder(
 # 概要ドキュメント章を追加
 builder.add_document("概要とスコープ", "本ドキュメントは NTP-v1 プロトコルの詳細仕様を定めます。")
 
-# 構造体のシーケンスを登録
-builder.add_struct(PacketHeader, name="header", desc="固定長パケットヘッダー")
+# セクション（キャプション）で論理グループ化しながら構造体を登録
+# （Mermaid フローチャートで自動的に subgraph 枠線としてグループ化されます）
+with builder.section("Header Section", "固定長パケットヘッダー"):
+    builder.add_struct(PacketHeader, name="header", desc="固定長パケットヘッダー")
 
-# msg_type の値に応じた多態ペイロードの分岐
-builder.add_choice(
-    name="payload",
-    tag_field="msg_type",
-    variants={
-        1: (TextMessage, "テキストメッセージペイロード"),
-        2: (SensorReport, "環境センサー計測値ペイロード"),
-    },
-    desc="PacketHeader.msg_type に応じてディスパッチされるペイロード",
-)
+with builder.caption("Payload Section", "メッセージ種別に応じたペイロード"):
+    builder.add_choice(
+        name="payload",
+        tag_field="msg_type",
+        variants={
+            1: (TextMessage, "テキストメッセージペイロード"),
+            2: (SensorReport, "環境センサー計測値ペイロード"),
+        },
+        desc="PacketHeader.msg_type に応じてディスパッチされるペイロード",
+    )
 
-# フラグに応じた条件付きフッター
-builder.add_struct(
-    ChecksumFooter,
-    name="footer",
-    desc="末尾 CRC32 チェックサム",
-    condition="flags & 0x01 != 0",
-)
+with builder.caption("Footer Section", "整合性チェック"):
+    builder.add_struct(
+        ChecksumFooter,
+        name="footer",
+        desc="末尾 CRC32 チェックサム",
+        condition="flags & 0x01 != 0",
+    )
 ```
 
 ### 5.3 仕様書（Markdown & Mermaid 図）のワンライナー出力
@@ -589,6 +592,39 @@ print(result.footer.crc32)            # => 0xDEADBEEF
 
 手動での `if msg_type == 1: ... elif msg_type == 2: ...` といった分岐処理を書く必要は一切ありません。
 
+### 5.6 スキーマ駆動のデバッグ検査 (`builder.hexdump` / `builder.dump`)
+
+受信したバイナリパケットがスキーマのどのフィールドにどう割り振られているかをデバッグ確認したい場合、`builder.hexdump(data)` や `builder.dump(data, "table")` を使用します。
+
+スキーマ情報（構造体、Choice、条件分岐、セクション）に基づいて、**生のバイト列をフィールド名・値・セクション名付きで自動可視化** できます。
+
+```python
+# ① 注釈付き Hexdump（バイト列とフィールドの対応を表示）
+print(builder.hexdump(packet_bytes))
+
+# ② セクション（Caption）付きのレイアウト表
+print(builder.dump(packet_bytes, format="table"))
+```
+
+```text
++--------+------+--------------+---------+--------+-------------+-----------------+-----------------+
+| Offset | Size | Field Name   | Type    | Endian | Hex Bytes   | Value / Preview | Caption         |
++========+======+==============+=========+========+=============+=================+=================+
+| 0x0000 |   4B | magic        | UInt32  | Little | 4d 53 47 50 | 0x5047534D      | Header Section  |
+| 0x0004 |   2B | version      | UInt16  | Little | 01 00       | 1               | Header Section  |
+| 0x0006 |   2B | msg_type     | UInt16  | Little | 02 00       | 2               | Header Section  |
+| 0x0008 |   4B | payload_size | UInt32  | Little | 10 00 00 00 | 0x10            | Header Section  |
+| 0x000C |   2B | flags        | UInt16  | Little | 01 00       | 1               | Header Section  |
+| 0x000E |   4B | sensor_id    | UInt32  | Little | 65 00 00 00 | 0x65            | Payload Section |
+| 0x0012 |   4B | temperature  | Float32 | Little | 00 00 bc 41 | 23.5            | Payload Section |
+| 0x0016 |   4B | pressure     | Float32 | Little | 00 50 7d 44 | 1013            | Payload Section |
+| 0x001A |   4B | humidity     | Float32 | Little | 00 00 40 42 | 48              | Payload Section |
+| 0x001E |   4B | crc32        | UInt32  | Little | ef be ad de | 0xDEADBEEF      | Footer Section  |
++--------+------+--------------+---------+--------+-------------+-----------------+-----------------+
+```
+
+また、`res = builder.read(packet_bytes, trace=True)` で読み込むと、パース結果オブジェクトから直接 `res.hexdump()` や `res.dump("table")` を呼び出すことも可能です。
+
 ---
 
 ## まとめ & サンプルコードとの対応
@@ -599,7 +635,7 @@ print(result.footer.crc32)            # => 0xDEADBEEF
 | **Step 2** | ビットフィールド & アライメント | `Bits[N]`, `bits=16`, `align=4`, `auto_align=True` | [`sample/02_bitfields_and_alignment.py`](sample/02_bitfields_and_alignment.py) |
 | **Step 3** | 相対オフセット & テーブル | `Offset`, `Base.SELF`, `OffsetTable`, 自動バックパッチ | [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) |
 | **Step 4** | 手続き的ライター & リーダー | `BinaryWriter`, `BinaryReader`, 文字列戦略, `hexdump()`, `dump("table")` | [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) |
-| **Step 5** | スキーマ駆動設計 & 多言語出力 | `Builder`, `add_choice()`, `write()`, `write_c_header()`, `builder.read()` | [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) |
+| **Step 5** | スキーマ駆動設計 & 多言語出力 | `Builder`, `section()`, `caption()`, `write()`, `builder.read()`, `builder.hexdump()`, `builder.dump()` | [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) |
 
 すべてのサンプルは以下のコマンドでまとめて実行・検証できます：
 

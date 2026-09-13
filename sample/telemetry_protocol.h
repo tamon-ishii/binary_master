@@ -39,6 +39,11 @@ extern "C" {
  * If bit 0 of `flags` is set (`flags & 0x01 != 0`), a 4-byte `ChecksumFooter` is appended.
  */
 
+/* ----------------------------------------------------------------------------
+ * Section: Header Section
+ * Fixed container identification header
+ * ---------------------------------------------------------------------------- */
+
 /**
  * @brief Logical Name: `header`
  * Fixed 14-byte packet header
@@ -50,6 +55,16 @@ typedef struct PacketHeader {
     uint32_t payload_size; /**< Length of following payload */
     uint16_t flags; /**< Bit 0: Has Checksum Footer */
 } PacketHeader;
+
+/* ----------------------------------------------------------------------------
+ * Section: Header Section
+ * Fixed container identification header
+ * ---------------------------------------------------------------------------- */
+
+/* ----------------------------------------------------------------------------
+ * Section: Payload Section
+ * Polymorphic payload block
+ * ---------------------------------------------------------------------------- */
 
 /**
  * @brief Tag values for choice `payload` (dispatched by `msg_type`).
@@ -87,6 +102,16 @@ typedef union PayloadUnion {
     SensorReport sensor_report;
 } PayloadUnion;
 
+/* ----------------------------------------------------------------------------
+ * Section: Payload Section
+ * Polymorphic payload block
+ * ---------------------------------------------------------------------------- */
+
+/* ----------------------------------------------------------------------------
+ * Section: Footer Section
+ * Optional trailing integrity verification
+ * ---------------------------------------------------------------------------- */
+
 /**
  * @brief Logical Name: `footer`
  * Trailing CRC32 checksum verification
@@ -95,6 +120,11 @@ typedef union PayloadUnion {
 typedef struct ChecksumFooter {
     uint32_t crc32; /**< IEEE 802.3 CRC32 checksum */
 } ChecksumFooter;
+
+/* ----------------------------------------------------------------------------
+ * Section: Footer Section
+ * Optional trailing integrity verification
+ * ---------------------------------------------------------------------------- */
 
 #if defined(_MSC_VER) || defined(__GNUC__) || defined(__clang__)
 #pragma pack(pop)

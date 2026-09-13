@@ -66,6 +66,32 @@ class SectionElement:
 
     title: str
     desc: str = ""
+    is_end: bool = False
+
+
+class _SectionContext:
+    """Context manager and chaining proxy for section and caption grouping."""
+
+    def __init__(self, builder: Any, title: str, desc: str = "") -> None:
+        self._builder = builder
+        self._title = title
+        self._desc = desc
+        self._in_context = False
+        self._elem = SectionElement(title=title, desc=desc)
+        self._builder.elements.append(self._elem)
+
+    def __enter__(self) -> Any:
+        self._in_context = True
+        return self._builder
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        if self._in_context:
+            self._builder.elements.append(
+                SectionElement(title=self._title, desc=self._desc, is_end=True)
+            )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._builder, name)
 
 
 @dataclass
@@ -86,10 +112,11 @@ class BuilderReadResult(dict):
 
     Supports both dictionary-style key access (`res['header']`) and
     attribute-style dot access (`res.header`), including shadowed method names.
+    Also supports hexdump() and dump() when read with trace=True.
     """
 
     def __getattribute__(self, name: str) -> Any:
-        if not name.startswith("__") and name != "to_dict":
+        if not name.startswith("__") and name not in ("to_dict", "hexdump", "dump", "_writer"):
             try:
                 return dict.__getitem__(self, name)
             except KeyError:
@@ -97,6 +124,9 @@ class BuilderReadResult(dict):
         return super().__getattribute__(name)
 
     def __setattr__(self, name: str, value: Any) -> None:
+        if name == "_writer":
+            self.__dict__["_writer"] = value
+            return
         self[name] = value
 
     def __delattr__(self, name: str) -> None:
@@ -117,6 +147,53 @@ class BuilderReadResult(dict):
             else:
                 out[k] = v
         return out
+
+    def hexdump(
+        self,
+        *,
+        width: int = 16,
+        color: bool = False,
+        annotate: bool = True,
+        show_ascii: bool = True,
+        show_header: bool = True,
+        cursor: Optional[int] = None,
+        max_bytes: Optional[int] = None,
+    ) -> str:
+        """Generate annotated hexdump for this read result (requires trace=True)."""
+        writer = self.__dict__.get("_writer")
+        if writer is not None:
+            from binary_master.debug import hexdump as _hexdump
+
+            return _hexdump(
+                writer,
+                width=width,
+                color=color,
+                annotate=annotate,
+                show_ascii=show_ascii,
+                show_header=show_header,
+                cursor=cursor,
+                max_bytes=max_bytes,
+            )
+        raise RuntimeError(
+            "hexdump() is only available on BuilderReadResult when read(..., trace=True) is used, "
+            "or by calling builder.hexdump(data) directly."
+        )
+
+    def dump(
+        self,
+        format: str = "table",
+        *,
+        color: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        """Dump decoded fields in table, json, or dict format (requires trace=True)."""
+        writer = self.__dict__.get("_writer")
+        if writer is not None:
+            return writer.dump(format=format, color=color, **kwargs)
+        raise RuntimeError(
+            "dump() is only available on BuilderReadResult when read(..., trace=True) is used, "
+            "or by calling builder.dump(data, format=...) directly."
+        )
 
 
 
@@ -274,6 +351,42 @@ class BinaryBuilder:
         self.elements.append(SectionElement(title=title, desc=desc))
         return self
 
+    def add_caption(self, title: str, desc: str = "") -> BinaryBuilder:
+        """Alias for add_section, consistent with BinaryWriter.caption.
+
+        Args:
+            title: Section/caption title.
+            desc: Section/caption description.
+
+        Returns:
+            self for method chaining.
+        """
+        return self.add_section(title=title, desc=desc)
+
+    def section(self, title: str, desc: str = "") -> _SectionContext:
+        """Create a section grouping subsequent elements, supporting 'with builder.section(...):' syntax.
+
+        Args:
+            title: Section title.
+            desc: Optional section description.
+
+        Returns:
+            _SectionContext context manager and proxy.
+        """
+        return _SectionContext(self, title=title, desc=desc)
+
+    def caption(self, title: str, desc: str = "") -> _SectionContext:
+        """Alias for section(), supporting 'with builder.caption(...):' syntax.
+
+        Args:
+            title: Section/caption title.
+            desc: Optional section/caption description.
+
+        Returns:
+            _SectionContext context manager and proxy.
+        """
+        return self.section(title=title, desc=desc)
+
     def add_field(
         self,
         name: str,
@@ -316,14 +429,40 @@ class BinaryBuilder:
         """Generate a Mermaid flowchart visualizing the execution flow and choice branches."""
         lines = [f"```mermaid\nflowchart {direction}"]
 
-        # Track previous nodes that should connect to the current step
+        has_sections = any(
+            isinstance(e, SectionElement) and not getattr(e, "is_end", False)
+            for e in self.elements
+        )
+
         prev_nodes: List[str] = []
+        active_subgraph: Optional[str] = None
+
+        def indent(level: int = 1) -> str:
+            extra = 1 if (has_sections and active_subgraph is not None) else 0
+            return "    " * (level + extra)
 
         for idx, elem in enumerate(self.elements):
-            if isinstance(elem, DocumentElement) or isinstance(elem, SectionElement):
+            if isinstance(elem, DocumentElement):
+                continue
+
+            if isinstance(elem, SectionElement):
+                if not has_sections:
+                    continue
+                if getattr(elem, "is_end", False):
+                    if active_subgraph is not None:
+                        lines.append("    end")
+                        active_subgraph = None
+                else:
+                    if active_subgraph is not None:
+                        lines.append("    end")
+                    sg_id = f"SG_{idx}_{_clean_mermaid_id(elem.title)}"
+                    sg_label = elem.title + (f" - {elem.desc}" if elem.desc else "")
+                    lines.append(f'    subgraph {sg_id} ["{sg_label}"]')
+                    active_subgraph = sg_id
                 continue
 
             elem_id = f"E{idx}_{_clean_mermaid_id(getattr(elem, 'name', '') or str(idx))}"
+            pfx = indent(1)
 
             if isinstance(elem, StructElement):
                 cls_name = elem.struct_cls.__name__
@@ -335,32 +474,32 @@ class BinaryBuilder:
                 node_id = elem_id
                 if elem.condition:
                     cond_id = f"Cond_{elem_id}"
-                    lines.append(f'    {cond_id}{{"{elem.condition}?"}}')
+                    lines.append(f'{pfx}{cond_id}{{"{elem.condition}?"}}')
                     for p in prev_nodes:
-                        lines.append(f"    {p} --> {cond_id}")
-                    lines.append(f'    {node_id}["{disp_name} ({cls_name}{size_str}){count_str}"]')
-                    lines.append(f"    {cond_id} -->|yes| {node_id}")
+                        lines.append(f"{pfx}{p} --> {cond_id}")
+                    lines.append(f'{pfx}{node_id}["{disp_name} ({cls_name}{size_str}){count_str}"]')
+                    lines.append(f"{pfx}{cond_id} -->|yes| {node_id}")
                     prev_nodes = [node_id, f"{cond_id} -- no -->"]
                 else:
-                    lines.append(f'    {node_id}["{disp_name} ({cls_name}{size_str}){count_str}"]')
+                    lines.append(f'{pfx}{node_id}["{disp_name} ({cls_name}{size_str}){count_str}"]')
                     for p in prev_nodes:
                         if p.endswith("-->"):
-                            lines.append(f"    {p} {node_id}")
+                            lines.append(f"{pfx}{p} {node_id}")
                         else:
-                            lines.append(f"    {p} --> {node_id}")
+                            lines.append(f"{pfx}{p} --> {node_id}")
                     prev_nodes = [node_id]
 
             elif isinstance(elem, ChoiceElement):
                 choice_id = f"Choice_{elem_id}"
                 tag_name = elem.tag_field if isinstance(elem.tag_field, str) else "tag"
                 choice_label = f"Choice: {elem.name} ({tag_name}?)"
-                lines.append(f'    {choice_id}{{"{choice_label}"}}')
+                lines.append(f'{pfx}{choice_id}{{"{choice_label}"}}')
 
                 for p in prev_nodes:
                     if p.endswith("-->"):
-                        lines.append(f"    {p} {choice_id}")
+                        lines.append(f"{pfx}{p} {choice_id}")
                     else:
-                        lines.append(f"    {p} --> {choice_id}")
+                        lines.append(f"{pfx}{p} --> {choice_id}")
 
                 norm_vars = _normalize_variants(elem.variants)
                 out_nodes = []
@@ -370,8 +509,8 @@ class BinaryBuilder:
                     tag_label = f"Tag 0x{tag:02X}" if isinstance(tag, int) else f"Tag {tag}"
                     v_entries = inspect_struct_layout(v_cls)
                     v_size = f", {sum(e.size for e in v_entries)}B" if v_entries else ""
-                    lines.append(f'    {v_id}["{v_cls_name}{v_size}"]')
-                    lines.append(f'    {choice_id} -->|"{tag_label}"| {v_id}')
+                    lines.append(f'{pfx}{v_id}["{v_cls_name}{v_size}"]')
+                    lines.append(f'{pfx}{choice_id} -->|"{tag_label}"| {v_id}')
                     out_nodes.append(v_id)
 
                 prev_nodes = out_nodes if out_nodes else [choice_id]
@@ -379,13 +518,16 @@ class BinaryBuilder:
             elif isinstance(elem, FieldElement):
                 node_id = elem_id
                 field_label = f"{elem.name} ({elem.type_name}, {elem.size}B)"
-                lines.append(f'    {node_id}["{field_label}"]')
+                lines.append(f'{pfx}{node_id}["{field_label}"]')
                 for p in prev_nodes:
                     if p.endswith("-->"):
-                        lines.append(f"    {p} {node_id}")
+                        lines.append(f"{pfx}{p} {node_id}")
                     else:
-                        lines.append(f"    {p} --> {node_id}")
+                        lines.append(f"{pfx}{p} --> {node_id}")
                 prev_nodes = [node_id]
+
+        if active_subgraph is not None:
+            lines.append("    end")
 
         lines.append("```")
         return "\n".join(lines)
@@ -463,6 +605,8 @@ class BinaryBuilder:
                 sections.append(f"{elem.content}\n")
 
             elif isinstance(elem, SectionElement):
+                if getattr(elem, "is_end", False):
+                    continue
                 sections.append(f"### Section: {elem.title}\n")
                 if elem.desc:
                     sections.append(f"{elem.desc}\n")
@@ -758,20 +902,26 @@ class BinaryBuilder:
         self,
         reader_or_bytes: Union[bytes, bytearray, BinaryReader, IO[bytes]],
         endian: Optional[str] = None,
+        trace: bool = False,
     ) -> BuilderReadResult:
         """Automatically deserialize binary data according to the registered schema.
 
         Args:
             reader_or_bytes: Binary data as bytes/bytearray, BinaryReader instance, or stream.
             endian: Optional endianness override.
+            trace: If True, tracks layout entries for debug inspection (res.hexdump(), res.dump()).
 
         Returns:
             A BuilderReadResult object containing deserialized struct instances and fields.
         """
+        if trace:
+            res, _ = self._parse_and_trace(reader_or_bytes, endian=endian)
+            return res
+
         if isinstance(reader_or_bytes, BinaryReader):
             reader = reader_or_bytes
-        elif isinstance(reader_or_bytes, (bytes, bytearray)):
-            reader = BinaryReader(reader_or_bytes, default_endian=endian or self.default_endian)
+        elif isinstance(reader_or_bytes, (bytes, bytearray, memoryview)):
+            reader = BinaryReader(bytes(reader_or_bytes), default_endian=endian or self.default_endian)
         elif hasattr(reader_or_bytes, "read"):
             data = reader_or_bytes.read()
             reader = BinaryReader(data, default_endian=endian or self.default_endian)
@@ -792,7 +942,6 @@ class BinaryBuilder:
             elif getattr(elem, "condition", None) is not None:
                 if not self._eval_condition(elem.condition, result):
                     continue
-
 
             if isinstance(elem, StructElement):
                 key = elem.name or elem.struct_cls.__name__
@@ -822,6 +971,188 @@ class BinaryBuilder:
                 result[elem.name] = val
 
         return result
+
+    def _parse_and_trace(
+        self,
+        reader_or_bytes: Union[bytes, bytearray, BinaryReader, IO[bytes]],
+        endian: Optional[str] = None,
+    ) -> Tuple[BuilderReadResult, Any]:
+        """Deserialize binary data while recording layout entries via BinaryWriter."""
+        from binary_master.writer import BinaryWriter
+
+        if isinstance(reader_or_bytes, BinaryReader):
+            reader = reader_or_bytes
+        elif isinstance(reader_or_bytes, (bytes, bytearray, memoryview)):
+            reader = BinaryReader(bytes(reader_or_bytes), default_endian=endian or self.default_endian)
+        elif hasattr(reader_or_bytes, "read"):
+            data = reader_or_bytes.read()
+            reader = BinaryReader(data, default_endian=endian or self.default_endian)
+        else:
+            raise TypeError(f"Unsupported reader_or_bytes type: {type(reader_or_bytes).__name__}")
+
+        writer = BinaryWriter(default_endian=endian or self.default_endian)
+        result = BuilderReadResult()
+        current_caption: Optional[str] = None
+        current_caption_desc: str = ""
+
+        for elem in self.elements:
+            if isinstance(elem, DocumentElement):
+                continue
+
+            if isinstance(elem, SectionElement):
+                if getattr(elem, "is_end", False):
+                    current_caption = None
+                    current_caption_desc = ""
+                else:
+                    current_caption = elem.title
+                    current_caption_desc = elem.desc
+                writer.caption(current_caption, desc=current_caption_desc)
+                continue
+
+            # Evaluate condition
+            cond_func = getattr(elem, "condition_func", None)
+            if cond_func is not None:
+                if not cond_func(result):
+                    continue
+            elif getattr(elem, "condition", None) is not None:
+                if not self._eval_condition(elem.condition, result):
+                    continue
+
+            writer.caption(current_caption, desc=current_caption_desc)
+
+            if isinstance(elem, StructElement):
+                key = elem.name or elem.struct_cls.__name__
+                if elem.count is not None:
+                    n_count = self._resolve_count(elem.count, result)
+                    items = []
+                    for _ in range(n_count):
+                        obj = reader.read_struct(elem.struct_cls, endian=endian or self.default_endian)
+                        writer.write_struct(obj)
+                        items.append(obj)
+                    result[key] = items
+                else:
+                    obj = reader.read_struct(elem.struct_cls, endian=endian or self.default_endian)
+                    writer.write_struct(obj)
+                    result[key] = obj
+
+            elif isinstance(elem, ChoiceElement):
+                tag_val = self._resolve_tag_value(elem.tag_field, result)
+                variant_cls = self._match_variant(elem.variants, tag_val)
+                if variant_cls is None:
+                    raise ValueError(f"Tag value {tag_val!r} did not match any variant for choice '{elem.name}'")
+                variant_obj = reader.read_struct(variant_cls, endian=endian or self.default_endian)
+                writer.write_struct(variant_obj)
+                result[elem.name] = variant_obj
+
+            elif isinstance(elem, FieldElement):
+                val = self._read_primitive_field(reader, elem, endian=endian or self.default_endian)
+                result[elem.name] = val
+                self._write_primitive_field_to_writer(writer, elem, val, endian=endian or self.default_endian)
+
+        result._writer = writer
+        return result, writer
+
+    def _write_primitive_field_to_writer(
+        self,
+        writer: Any,
+        elem: FieldElement,
+        val: Any,
+        endian: str,
+    ) -> None:
+        """Write an ad-hoc primitive field into the trace writer."""
+        t = elem.type_name.lower()
+        if "uint8" in t:
+            writer.write_uint8(val, name=elem.name, desc=elem.desc)
+        elif "uint16" in t:
+            writer.write_uint16(val, endian=endian, name=elem.name, desc=elem.desc)
+        elif "uint32" in t:
+            writer.write_uint32(val, endian=endian, name=elem.name, desc=elem.desc)
+        elif "uint64" in t:
+            writer.write_uint64(val, endian=endian, name=elem.name, desc=elem.desc)
+        elif "int8" in t:
+            writer.write_int8(val, name=elem.name, desc=elem.desc)
+        elif "int16" in t:
+            writer.write_int16(val, endian=endian, name=elem.name, desc=elem.desc)
+        elif "int32" in t:
+            writer.write_int32(val, endian=endian, name=elem.name, desc=elem.desc)
+        elif "int64" in t:
+            writer.write_int64(val, endian=endian, name=elem.name, desc=elem.desc)
+        elif "float32" in t:
+            writer.write_float32(val, endian=endian, name=elem.name, desc=elem.desc)
+        elif "float64" in t:
+            writer.write_float64(val, endian=endian, name=elem.name, desc=elem.desc)
+        else:
+            raw = val if isinstance(val, (bytes, bytearray)) else bytes(val)
+            writer.write_bytes(raw, name=elem.name, desc=elem.desc)
+
+    def hexdump(
+        self,
+        data: Union[bytes, bytearray, BinaryReader, IO[bytes]],
+        *,
+        width: int = 16,
+        color: bool = False,
+        annotate: bool = True,
+        show_ascii: bool = True,
+        show_header: bool = True,
+        cursor: Optional[int] = None,
+        max_bytes: Optional[int] = None,
+        endian: Optional[str] = None,
+    ) -> str:
+        """Generate an annotated hexdump of binary data decoded according to this schema.
+
+        Correlates byte offsets to struct field names, types, values, and section captions.
+
+        Args:
+            data: Binary bytes or reader to decode and format.
+            width: Bytes displayed per row (default 16).
+            color: Whether to use ANSI terminal colors.
+            annotate: Whether to show correlated field annotations.
+            show_ascii: Whether to show ASCII preview column.
+            show_header: Whether to show offset header.
+            cursor: Optional explicit cursor offset.
+            max_bytes: Optional limit on displayed bytes.
+            endian: Optional endianness override.
+
+        Returns:
+            Formatted hexdump string.
+        """
+        _, writer = self._parse_and_trace(data, endian=endian)
+        from binary_master.debug import hexdump as _hexdump
+
+        return _hexdump(
+            writer,
+            width=width,
+            color=color,
+            annotate=annotate,
+            show_ascii=show_ascii,
+            show_header=show_header,
+            cursor=cursor,
+            max_bytes=max_bytes,
+        )
+
+    def dump(
+        self,
+        data: Union[bytes, bytearray, BinaryReader, IO[bytes]],
+        format: str = "table",
+        *,
+        color: bool = False,
+        endian: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Dump decoded fields of binary data in table, json, or dict format.
+
+        Args:
+            data: Binary bytes or reader to decode and format.
+            format: Output format: 'table', 'json', or 'dict'.
+            color: Whether to use ANSI terminal colors for table format.
+            endian: Optional endianness override.
+            **kwargs: Extra arguments passed to debug_dump.
+
+        Returns:
+            Formatted table string, or JSON string, or dictionary structure.
+        """
+        _, writer = self._parse_and_trace(data, endian=endian)
+        return writer.dump(format=format, color=color, **kwargs)
 
     def _eval_condition(self, condition: str, result: BuilderReadResult) -> bool:
         """Safely evaluate a condition string against current read context."""

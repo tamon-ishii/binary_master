@@ -20,6 +20,11 @@
 //
 // If bit 0 of `flags` is set (`flags & 0x01 != 0`), a 4-byte `ChecksumFooter` is appended.
 
+// ----------------------------------------------------------------------------
+// Section: Header Section
+// Fixed container identification header
+// ----------------------------------------------------------------------------
+
 /// Logical Name: `header`
 /// Fixed 14-byte packet header
 #[repr(C, packed)]
@@ -36,6 +41,16 @@ pub struct PacketHeader {
     /// Bit 0: Has Checksum Footer
     pub flags: u16,
 }
+
+// ----------------------------------------------------------------------------
+// Section: Header Section
+// Fixed container identification header
+// ----------------------------------------------------------------------------
+
+// ----------------------------------------------------------------------------
+// Section: Payload Section
+// Polymorphic payload block
+// ----------------------------------------------------------------------------
 
 /// Tag values for choice `payload` (dispatched by `msg_type`).
 /// Dynamic payload dispatched by PacketHeader.msg_type
@@ -81,6 +96,16 @@ pub enum PayloadUnion {
     SensorReport(SensorReport),
 }
 
+// ----------------------------------------------------------------------------
+// Section: Payload Section
+// Polymorphic payload block
+// ----------------------------------------------------------------------------
+
+// ----------------------------------------------------------------------------
+// Section: Footer Section
+// Optional trailing integrity verification
+// ----------------------------------------------------------------------------
+
 /// Logical Name: `footer`
 /// Trailing CRC32 checksum verification
 ///
@@ -91,3 +116,8 @@ pub struct ChecksumFooter {
     /// IEEE 802.3 CRC32 checksum
     pub crc32: u32,
 }
+
+// ----------------------------------------------------------------------------
+// Section: Footer Section
+// Optional trailing integrity verification
+// ----------------------------------------------------------------------------
