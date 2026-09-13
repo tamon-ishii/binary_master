@@ -407,3 +407,53 @@ def test_builder_hexdump_and_dump_inspection():
     with pytest.raises(RuntimeError, match="trace=True"):
         res_no_trace.dump()
 
+
+def test_builder_import_writer_and_captions():
+    """Verify importing captions and fields from a BinaryWriter into Builder."""
+    writer = BinaryWriter(default_endian="little")
+
+    writer.caption("File Header", "Main container header")
+    writer.write_uint32(0xCAFEBABE, name="magic", desc="Magic identifier")
+    writer.write_uint16(3, name="version", desc="Format version")
+
+    writer.caption("Data Payload", "Raw content block")
+    writer.write_bytes(b"PAYLOAD_DATA", name="content", desc="Binary content")
+
+    # 1. Builder.from_writer (imports captions and all fields)
+    builder = Builder.from_writer(writer, title="Imported Spec")
+    assert builder.title == "Imported Spec"
+    assert builder.default_endian == "little"
+
+    # Verify elements: 2 sections + 3 fields = 5 elements
+    assert len(builder.elements) == 5
+    from binary_master.builder import SectionElement, FieldElement
+    assert isinstance(builder.elements[0], SectionElement)
+    assert builder.elements[0].title == "File Header"
+    assert isinstance(builder.elements[1], FieldElement)
+    assert builder.elements[1].name == "magic"
+    assert isinstance(builder.elements[3], SectionElement)
+    assert builder.elements[3].title == "Data Payload"
+
+    # Verify Markdown spec output
+    md = builder.build()
+    assert "### Section: File Header" in md
+    assert "Main container header" in md
+    assert "`magic`" in md
+    assert "### Section: Data Payload" in md
+    assert "subgraph SG_0_File_Header" in md
+    assert "subgraph SG_3_Data_Payload" in md
+
+    # Verify automated reading with imported builder schema!
+    raw_bytes = writer.to_bytes()
+    res = builder.read(raw_bytes)
+    assert res.magic == 0xCAFEBABE
+    assert res.version == 3
+    assert res.content == b"PAYLOAD_DATA"
+
+    # 2. builder.import_captions (imports captions only)
+    b_cap = Builder(title="Captions Only")
+    b_cap.import_captions(writer)
+    assert len(b_cap.elements) == 2
+    assert b_cap.elements[0].title == "File Header"
+    assert b_cap.elements[1].title == "Data Payload"
+

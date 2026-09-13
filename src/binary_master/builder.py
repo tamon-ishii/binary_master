@@ -424,6 +424,107 @@ class BinaryBuilder:
         )
         return self
 
+    def import_writer(
+        self,
+        writer: Any,
+        *,
+        include_fields: bool = True,
+    ) -> BinaryBuilder:
+        """Import section captions and layout fields recorded by a BinaryWriter.
+
+        Enables seamless transition from procedural binary writing to declarative schema
+        specification, diagramming, multi-language code export, and automated reading.
+
+        Args:
+            writer: BinaryWriter or any object with recorded `entries`.
+            include_fields: If True, imports both section captions and fields.
+                            If False, imports only unique section captions.
+
+        Returns:
+            self for method chaining.
+        """
+        entries = getattr(writer, "entries", None)
+        if entries is None:
+            raise TypeError(f"Expected a BinaryWriter or object with 'entries', got {type(writer).__name__}")
+
+        current_caption: Optional[str] = None
+        seen_captions = set()
+
+        for entry in entries:
+            cap = getattr(entry, "caption", None)
+            cap_desc = getattr(entry, "caption_desc", "") or ""
+
+            if cap != current_caption:
+                current_caption = cap
+                if current_caption and (include_fields or current_caption not in seen_captions):
+                    seen_captions.add(current_caption)
+                    self.add_section(current_caption, desc=cap_desc)
+
+            if include_fields:
+                fname = getattr(entry, "name", "") or f"field_0x{getattr(entry, 'offset', 0):04X}"
+                ftype = getattr(entry, "type_name", "Bytes")
+                fsize = getattr(entry, "size", 0)
+                fdesc = getattr(entry, "description", "") or ""
+                fendian = getattr(entry, "endian", None)
+
+                self.add_field(
+                    name=fname,
+                    type_name=ftype,
+                    size=fsize,
+                    desc=fdesc,
+                    endian=fendian,
+                )
+
+        return self
+
+    def import_captions(self, writer: Any) -> BinaryBuilder:
+        """Import unique section captions from a BinaryWriter into the builder.
+
+        Args:
+            writer: BinaryWriter with recorded layout entries.
+
+        Returns:
+            self for method chaining.
+        """
+        return self.import_writer(writer, include_fields=False)
+
+    @classmethod
+    def from_writer(
+        cls,
+        writer: Any,
+        title: str = "Binary Specification Manual",
+        default_endian: Optional[str] = None,
+        version: Optional[str] = None,
+        description: str = "",
+    ) -> BinaryBuilder:
+        """Construct a new Builder schema from a populated BinaryWriter instance.
+
+        Args:
+            writer: Populated BinaryWriter instance.
+            title: Title for the specification document.
+            default_endian: Default endianness (auto-detected from writer if omitted).
+            version: Optional protocol version.
+            description: Optional protocol description.
+
+        Returns:
+            A new BinaryBuilder configured with sections and fields from writer.
+        """
+        w_endian = getattr(writer, "default_endian", None)
+        norm_endian = str(w_endian).lower() if w_endian else "little"
+        if "big" in norm_endian:
+            resolved_endian = "big"
+        else:
+            resolved_endian = "little"
+
+        builder = cls(
+            title=title,
+            default_endian=default_endian or resolved_endian,
+            version=version,
+            description=description,
+        )
+        builder.import_writer(writer, include_fields=True)
+        return builder
+
 
     def generate_flowchart(self, direction: str = "TD") -> str:
         """Generate a Mermaid flowchart visualizing the execution flow and choice branches."""
