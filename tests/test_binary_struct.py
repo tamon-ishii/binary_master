@@ -25,6 +25,8 @@ from binary_master import (
     write_struct,
     sizeof,
     binary_size,
+    offsetof,
+    bit_offsetof,
 )
 
 
@@ -290,4 +292,126 @@ def test_sizeof_variable_length():
     assert len(inst) == 5
     assert inst.binary_size == 5
     assert sizeof(inst) == 5
+
+
+def test_offsetof_basic_and_alignment():
+    """Test offsetof and Cls.offsetof with alignment padding."""
+    @binary_struct(auto_align=True)
+    class Sample:
+        a: UInt8   # offset 0, size 1, 1 byte padding
+        b: UInt16  # offset 2, size 2
+        c: UInt32  # offset 4, size 4
+        d: UInt8   # offset 8, size 1
+
+    # Using standalone offsetof function
+    assert offsetof(Sample, "a") == 0
+    assert offsetof(Sample, "b") == 2
+    assert offsetof(Sample, "c") == 4
+    assert offsetof(Sample, "d") == 8
+
+    # Using class method Sample.offsetof
+    assert Sample.offsetof("a") == 0
+    assert Sample.offsetof("b") == 2
+    assert Sample.offsetof("c") == 4
+    assert Sample.offsetof("d") == 8
+
+    # Using instance method
+    s = Sample(a=1, b=2, c=3, d=4)
+    assert s.offsetof("a") == 0
+    assert s.offsetof("b") == 2
+    assert s.offsetof("c") == 4
+    assert s.offsetof("d") == 8
+
+
+def test_offsetof_manual_padding():
+    """Test offsetof with explicit padding field matching user example."""
+    @binary_struct
+    class PaddedStruct:
+        a: UInt8
+        _pad: UInt8
+        b: UInt8
+
+    assert PaddedStruct.offsetof("a") == 0
+    assert PaddedStruct.offsetof("_pad") == 1
+    assert PaddedStruct.offsetof("b") == 2
+
+
+def test_offsetof_nested_and_dot_notation():
+    """Test offsetof with nested structs and dot notation access."""
+    @binary_struct
+    class Inner:
+        x: UInt16  # 2 bytes
+        y: UInt8   # 1 byte
+
+    @binary_struct
+    class Outer:
+        tag: UInt8    # offset 0, 1 byte
+        inner: Inner  # offset 1, 3 bytes
+        extra: UInt8  # offset 4, 1 byte
+
+    assert Outer.offsetof("tag") == 0
+    assert Outer.offsetof("inner") == 1
+    assert Outer.offsetof("inner.x") == 1
+    assert Outer.offsetof("inner.y") == 3
+    assert Outer.offsetof("extra") == 4
+
+    out = Outer(tag=0xFF, inner=Inner(x=10, y=20), extra=0)
+    assert out.offsetof("inner.y") == 3
+
+
+def test_offsetof_bitfield():
+    """Test offsetof and bit_offsetof on bitfield structs."""
+    @binary_struct(bits=8)
+    class TestBits:
+        flag_a: 1
+        flag_b: 3
+        flag_c: 4
+
+    # Bitfields all reside at byte offset 0
+    assert TestBits.offsetof("flag_a") == 0
+    assert TestBits.offsetof("flag_b") == 0
+    assert TestBits.offsetof("flag_c") == 0
+
+    # bit_offsetof returns (byte_offset, bit_start)
+    assert bit_offsetof(TestBits, "flag_a") == (0, 0)
+    assert bit_offsetof(TestBits, "flag_b") == (0, 1)
+    assert bit_offsetof(TestBits, "flag_c") == (0, 4)
+    assert TestBits.bit_offsetof("flag_b") == (0, 1)
+
+
+def test_offsetof_errors():
+    """Test error cases for offsetof."""
+    @binary_struct
+    class Simple:
+        val: UInt8
+
+    with pytest.raises(AttributeError, match="Field 'nonexistent' not found"):
+        Simple.offsetof("nonexistent")
+
+    class NotABinaryStruct:
+        pass
+
+    with pytest.raises(TypeError, match="not a @binary_struct"):
+        offsetof(NotABinaryStruct, "val")
+
+
+def test_offsetof_dynamic_fields():
+    """Test offsetof on structs with variable-length fields."""
+    @binary_struct
+    class PacketWithArray:
+        header_id: UInt16
+        payload: Array[UInt8]
+        checksum: UInt16
+
+    # For class, preceding dynamic field makes static offset of checksum impossible
+    assert PacketWithArray.offsetof("header_id") == 0
+    with pytest.raises(ValueError, match="Cannot determine static binary size"):
+        PacketWithArray.offsetof("checksum")
+
+    # For instance, offsetof evaluates actual payload length
+    pkt = PacketWithArray(header_id=1, payload=b"hello", checksum=0x1234)
+    assert pkt.offsetof("header_id") == 0
+    assert pkt.offsetof("checksum") == 7
+
+
 

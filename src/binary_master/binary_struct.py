@@ -398,6 +398,202 @@ class _BinarySizeDescriptor:
         return 0
 
 
+def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool = True) -> int:
+    """Calculate size of a single field, either statically or dynamically from an instance."""
+    if get_origin(ftype) is Annotated:
+        ftype = get_args(ftype)[0]
+
+    # Instance-specific evaluation if val is available
+    if not is_cls and val is not None:
+        if hasattr(val, "__binary__"):
+            return sizeof(val)
+        if isinstance(val, (bytes, bytearray, memoryview)):
+            return len(val)
+        is_variant = (
+            (isinstance(ftype, tuple) and len(ftype) >= 3 and ftype[0] is Variant)
+            or (get_origin(ftype) is Variant)
+        )
+        if is_variant:
+            target_obj = val.value if isinstance(val, Variant) else val
+            if hasattr(target_obj, "__binary__"):
+                return sizeof(target_obj)
+            if isinstance(target_obj, (bytes, bytearray, memoryview)):
+                return len(target_obj)
+            return 0
+        is_arr = (
+            (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] is Array)
+            or (get_origin(ftype) is Array)
+        )
+        if is_arr:
+            if isinstance(val, list):
+                elem_t = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
+                elem_size = sizeof(elem_t) if (hasattr(elem_t, "__binary__") or (isinstance(elem_t, type) and issubclass(elem_t, BinaryType))) else 1
+                return len(val) * elem_size
+            return 0
+
+    # Static or shared evaluation
+    if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset) or get_origin(ftype) is Offset:
+        if isinstance(ftype, tuple):
+            offset_t = ftype[2] if len(ftype) >= 3 else UInt32
+        else:
+            args = get_args(ftype)
+            if len(args) == 2 and (isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field")))):
+                offset_t = UInt32
+            elif len(args) >= 2:
+                offset_t = args[1]
+            else:
+                offset_t = UInt32
+        _, size, _ = _normalize_offset_type(offset_t)
+        return size
+    elif (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is OffsetTable) or get_origin(ftype) is OffsetTable:
+        if isinstance(ftype, tuple):
+            count = ftype[1]
+            offset_t = ftype[2] if len(ftype) >= 3 else UInt32
+        else:
+            args = get_args(ftype)
+            count = args[0]
+            if len(args) == 2 and (isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field")))):
+                offset_t = UInt32
+            elif len(args) >= 2:
+                offset_t = args[1]
+            else:
+                offset_t = UInt32
+        _, size, _ = _normalize_offset_type(offset_t)
+        return count * size
+    elif (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is FixedArray) or get_origin(ftype) is FixedArray:
+        elem_t = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
+        count = ftype[2] if isinstance(ftype, tuple) else get_args(ftype)[1]
+        elem_size = sizeof(elem_t) if (hasattr(elem_t, "__binary__") or (isinstance(elem_t, type) and issubclass(elem_t, BinaryType))) else 1
+        return count * elem_size
+    elif hasattr(ftype, "__binary__"):
+        return sizeof(ftype)
+    elif isinstance(ftype, type) and issubclass(ftype, BinaryType):
+        return ftype._size
+    elif ftype in (int, float):
+        return 4
+    elif ftype is bool:
+        return 1
+    else:
+        if is_cls:
+            raise ValueError(f"Cannot determine static binary size for field '{name}' with type {ftype}; use sizeof(instance) or offsetof(instance, '{name}') instead")
+        return 0
+
+
+def offsetof(target: Any, field_name: str) -> int:
+    """Calculate the byte offset of a field within a @binary_struct class or instance.
+
+    Args:
+        target: A @binary_struct decorated class or instance.
+        field_name: The name of the field. Supports dot notation for nested structs (e.g. "header.magic").
+
+    Returns:
+        The byte offset (int) of the field from the beginning of the struct.
+
+    Raises:
+        TypeError: If target is not a @binary_struct.
+        AttributeError: If field_name does not exist in target.
+        ValueError: If the offset cannot be determined statically.
+    """
+    is_cls = isinstance(target, type)
+    cls = target if is_cls else type(target)
+    meta = getattr(cls, "__binary__", None)
+    if meta is None:
+        raise TypeError(f"{getattr(cls, '__name__', str(cls))} is not a @binary_struct")
+
+    if "." in field_name:
+        first, rest = field_name.split(".", 1)
+        base = offsetof(target, first)
+        fields = meta.get("fields", {})
+        if first not in fields:
+            raise AttributeError(f"Field '{first}' not found in {cls.__name__}")
+        ftype = fields[first]
+        if get_origin(ftype) is Annotated:
+            ftype = get_args(ftype)[0]
+        if is_cls:
+            if not hasattr(ftype, "__binary__"):
+                raise AttributeError(f"Field '{first}' in {cls.__name__} is not a binary_struct, cannot access '{rest}'")
+            return base + offsetof(ftype, rest)
+        else:
+            child = getattr(target, first, None)
+            if child is None or not hasattr(child, "__binary__"):
+                raise AttributeError(f"Field '{first}' in {cls.__name__} is not a binary_struct, cannot access '{rest}'")
+            return base + offsetof(child, rest)
+
+    total_bits = meta.get("bits")
+    if total_bits is not None:
+        fields = meta.get("fields", {})
+        if field_name not in fields:
+            raise AttributeError(f"Field '{field_name}' not found in bitfield {cls.__name__}")
+        return 0
+
+    fields = meta.get("fields", {})
+    if field_name not in fields:
+        raise AttributeError(f"Field '{field_name}' not found in {cls.__name__}")
+
+    align_setting = meta.get("align")
+    auto_align = meta.get("auto_align", False)
+
+    current_offset = 0
+    for name, ftype in fields.items():
+        if get_origin(ftype) is Annotated:
+            ftype = get_args(ftype)[0]
+
+        val = getattr(target, name, None) if not is_cls else None
+
+        # Automatic alignment padding before field
+        if align_setting is not None or auto_align:
+            field_align = _get_field_alignment(ftype, val)
+            req_align = min(field_align, align_setting) if align_setting else field_align
+            if req_align > 1:
+                rem = current_offset % req_align
+                if rem != 0:
+                    current_offset += (req_align - rem)
+
+        if name == field_name:
+            return current_offset
+
+        current_offset += _calculate_field_size(name, ftype, val, is_cls=is_cls)
+
+    raise AttributeError(f"Field '{field_name}' not found in {cls.__name__}")
+
+
+def bit_offsetof(target: Any, field_name: str) -> tuple[int, int]:
+    """Calculate the (byte_offset, bit_offset) of a field within a @binary_struct class or instance.
+
+    For regular fields, bit_offset is 0.
+    For bitfields, returns (byte_offset, bit_start_within_bitfield).
+    """
+    byte_off = offsetof(target, field_name)
+    cls = target if isinstance(target, type) else type(target)
+    meta = getattr(cls, "__binary__", None)
+    if meta is not None and meta.get("bits") is not None:
+        fields = meta.get("fields", {})
+        shift = 0
+        for name, ftype in fields.items():
+            width = ftype[1] if isinstance(ftype, tuple) and len(ftype) >= 2 else (ftype if isinstance(ftype, int) else 1)
+            if name == field_name:
+                return (byte_off, shift)
+            shift += width
+
+    return (byte_off, 0)
+
+
+class _OffsetofDescriptor:
+    def __get__(self, instance, owner=None):
+        target = instance if instance is not None else owner
+        if target is None:
+            return None
+        return lambda field_name: offsetof(target, field_name)
+
+
+class _BitOffsetofDescriptor:
+    def __get__(self, instance, owner=None):
+        target = instance if instance is not None else owner
+        if target is None:
+            return None
+        return lambda field_name: bit_offsetof(target, field_name)
+
+
 def sizeof(target: Any) -> int:
     """Calculate the binary size in bytes of a @binary_struct class, instance, or BinaryType."""
     if isinstance(target, type) and issubclass(target, BinaryType):
@@ -441,49 +637,7 @@ def sizeof(target: Any) -> int:
                     current_offset += (req_align - rem)
 
         # Field size calculation
-        if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset) or get_origin(ftype) is Offset:
-            if isinstance(ftype, tuple):
-                offset_t = ftype[2] if len(ftype) >= 3 else UInt32
-            else:
-                args = get_args(ftype)
-                if len(args) == 2 and (isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field")))):
-                    offset_t = UInt32
-                elif len(args) >= 2:
-                    offset_t = args[1]
-                else:
-                    offset_t = UInt32
-            _, size, _ = _normalize_offset_type(offset_t)
-            current_offset += size
-        elif (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is OffsetTable) or get_origin(ftype) is OffsetTable:
-            if isinstance(ftype, tuple):
-                count = ftype[1]
-                offset_t = ftype[2] if len(ftype) >= 3 else UInt32
-            else:
-                args = get_args(ftype)
-                count = args[0]
-                if len(args) == 2 and (isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field")))):
-                    offset_t = UInt32
-                elif len(args) >= 2:
-                    offset_t = args[1]
-                else:
-                    offset_t = UInt32
-            _, size, _ = _normalize_offset_type(offset_t)
-            current_offset += count * size
-        elif (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is FixedArray) or get_origin(ftype) is FixedArray:
-            elem_t = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
-            count = ftype[2] if isinstance(ftype, tuple) else get_args(ftype)[1]
-            elem_size = sizeof(elem_t) if (hasattr(elem_t, "__binary__") or (isinstance(elem_t, type) and issubclass(elem_t, BinaryType))) else 1
-            current_offset += count * elem_size
-        elif hasattr(ftype, "__binary__"):
-            current_offset += sizeof(ftype)
-        elif isinstance(ftype, type) and issubclass(ftype, BinaryType):
-            current_offset += ftype._size
-        elif ftype in (int, float):
-            current_offset += 4
-        elif ftype is bool:
-            current_offset += 1
-        else:
-            raise ValueError(f"Cannot determine static binary size for field '{name}' with type {ftype}; use sizeof(instance) instead")
+        current_offset += _calculate_field_size(name, ftype, val=None, is_cls=True)
 
     # Struct size alignment padding
     if align_setting is not None or auto_align:
@@ -573,6 +727,8 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
         target_cls.to_go_struct = classmethod(to_go_struct_method)
         target_cls.to_go = classmethod(to_go_struct_method)
         target_cls.binary_size = _BinarySizeDescriptor()
+        target_cls.offsetof = _OffsetofDescriptor()
+        target_cls.bit_offsetof = _BitOffsetofDescriptor()
         target_cls.__len__ = lambda self: sizeof(self)
         return target_cls
 

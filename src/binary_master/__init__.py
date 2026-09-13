@@ -26,6 +26,8 @@ from .binary_struct import (
     read_struct,
     sizeof,
     binary_size,
+    offsetof,
+    bit_offsetof,
     Base,
     RelativeBase,
 )
@@ -97,6 +99,8 @@ __all__ = [
     "read_struct",
     "sizeof",
     "binary_size",
+    "offsetof",
+    "bit_offsetof",
     "LayoutEntry",
     "generate_manual",
     "generate_mermaid_diagram",

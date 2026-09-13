@@ -18,6 +18,7 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 1.1 構造体の宣言 (`@binary_struct`)
   - 1.2 シリアライズとデシリアライズ
   - 1.3 サイズ確認とエンディアンの指定
+  - 1.4 メンバのバイトオフセット取得 (`offsetof`)
 - [Step 2: ビットフィールドとアライメント（応用編）](#step-2-ビットフィールドとアライメント応用編)
   - 2.1 1ビット単位のフラグ定義 (`Bits[N]`)
   - 2.2 パケット境界アライメント (`align=4`, `auto_align=True`)
@@ -146,6 +147,29 @@ print(PlayerProfile.binary_size)     # => 20
 # ビッグエンディアンで書き出し
 big_data = player.to_bytes(endian="big")
 ```
+
+### 1.4 メンバのバイトオフセット取得 (`offsetof`)
+
+C言語の `offsetof(Struct, member)` と同様に、各フィールドの構造体先頭からのバイトオフセット（開始位置）を `offsetof()` 関数または `.offsetof("フィールド名")` メソッドで直接取得できます。
+
+```python
+from binary_master import offsetof
+
+# クラスから直接取得
+print(PlayerProfile.offsetof("magic"))        # => 0
+print(PlayerProfile.offsetof("player_id"))    # => 4
+print(PlayerProfile.offsetof("score"))        # => 8
+
+# 関数形式でも呼び出し可能
+print(offsetof(PlayerProfile, "score"))       # => 8
+
+# インスタンスからも呼び出し可能
+print(player.offsetof("score"))              # => 8
+```
+
+- **アライメント考慮**: `auto_align=True` やパディングフィールドによってオフセットがずれる場合も、パディング後の正確なバイトオフセットを返します。
+- **ネスト対応**: 入れ子構造体の内部フィールドも `"header.version"` のようにドット記法で階層を辿ってオフセットを取得できます。
+- **レイアウト一覧の取得**: 全メンバのオフセット・サイズ一覧を確認したい場合は `inspect_struct_layout(PlayerProfile)` も利用できます。
 
 ---
 
