@@ -62,7 +62,6 @@ from .debug import (
     dump_table,
     dump_json,
     dump_dict,
-    verify,
 )
 
 
@@ -134,7 +133,6 @@ __all__ = [
     "dump_table",
     "dump_json",
     "dump_dict",
-    "verify",
 ]
 
 

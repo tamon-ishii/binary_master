@@ -30,7 +30,7 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
   - 4.3 `BinaryReader` によるストリーム読み込み
   - 4.4 充実したデバッグダンプ（注釈付き Hexdump / テーブル出力）
-  - 4.5 バイナリ検証・ベリファイ (`writer.verify()`, `writer.diff()`)
+  - 4.5 バイナリ差分比較 (`writer.diff()`, `diff_dump()`)
   - 4.6 `BinaryWriter` による仕様書・多言語ヘッダーの直接出力 (`write_markdown`, `write_c_header`)
   - 4.7 多態バリアント (`write_variant`) とチャンク・オフセットテーブルの繰り返し集約 (`set_caption`)
 - [Step 5: スキーマ駆動設計・仕様書自動生成・多言語出力（統合編）](#step-5-スキーマ駆動設計仕様書自動生成多言語出力統合編)
@@ -384,20 +384,53 @@ for i in range(10):
 
 ### 4.1 仕様書メタデータとセクションキャプション (`set_caption`)
 
-`writer.set_caption(title, desc="", spec_count=None, variants=None)` は、**仕様書生成やデバッグ表示において、どのバイト群がどの論理ブロック（ファイルヘッダー、メタデータ、ペイロード等）に属しているかをグループ分けし、説明文や繰り返し情報を付与するための統合メタデータ設定機能** です（出力されるバイナリバイト列そのものには影響を与えません）。
+バイナリ出力コードを実装する際、コード上に `# --- ヘッダー部 ---` といったコメントを書いても、出力されるバイナリデータはもちろん、自動生成される仕様書（Markdown）や Mermaid ダイアグラムには何も反映されません。
 
-直接呼び出しに加えて、**`with writer.set_caption(...):` 構文によるスコープ管理** にも対応しており、ブロックを抜けると自動的に以前のキャプション状態へリセットされます。
+一方、プロトコル仕様書やフォーマット定義書には、以下の **仕様書専用のメタデータ** が必要不可欠です：
+- **セクション見出し名**: どのバイト範囲が何のブロック（ヘッダー、オフセット配列、ペイロード等）か
+- **詳細説明文 (`desc`)**: そのセクションの仕様・フォーマット・役割の解説
+- **仕様書上の繰り返し回数・変数名 (`spec_count`)**: 何件繰り返される領域なのか（例: `num_chunk 回`, `不定回数`）
+- **多態バリアント候補 (`variants`)**: 条件に応じて格納され得る構造体の一覧
+
+**`writer.set_caption(...)` は、これら仕様書生成に必要なすべての説明メタデータを 1 つの窓口に集約・一元管理** する機能です（バイナリの書き出しバイト列そのものには影響を与えません）。
+
+#### 2つの書き方（コンテキストマネージャ vs 直接呼び出し）
+
+##### ① `with` 構文によるスコープ管理（★推奨）
+`with writer.set_caption(...):` を使うと、ブロック内の書き込みにのみメタデータが適用され、**ブロックを抜けると直前の状態に自動復元** されます。後続の書き込みへ設定が漏れ出さないため最も安全で可読性に優れます。
 
 ```python
 from binary_master import BinaryWriter
 
 writer = BinaryWriter(default_endian="little")
 
-# 仕様書セクション名（キャプション）と説明文を設定
+# ヘッダ情報
 writer.set_caption("File Header", desc="ファイル種別とバージョン情報")
 writer.write_uint32(0x46494C45, name="magic", desc="Magic 'FILE'")
 writer.write_uint16(2, name="ver_maj", desc="Major version")
 writer.write_uint16(0, name="ver_min", desc="Minor version")
+writer.write_uint16(3, name="num_chunk", desc="格納チャンク数")
+
+# オフセット配列を with set_caption でスコープ化
+with writer.set_caption("offsets", desc="各チャンクへのオフセット配列", spec_count="num_chunk"):
+    # write_offset_table はアクティブな set_caption の設定を自動継承！
+    table = writer.write_offset_table(count=3, offset_size=4)
+
+# ブロックを抜けると caption は自動解除されるので、チャンク本体に影響しない
+for i in range(3):
+    table[i] = writer.tell()
+    writer.write_cstring(f"CHUNK_{i}", name=f"chunk_{i}")
+```
+
+##### ② 直接メソッド呼び出し
+手続き的にセクションを順次切り替えたい場合も自然に呼び出せます（メソッドチェーン対応）。
+```python
+writer.set_caption("Header", desc="メインコンテナヘッダ")
+writer.write_uint32(0x12345678, name="magic")
+
+# 新しいキャプションに切り替え
+writer.set_caption("Metadata", desc="テキストメタデータ")
+writer.write_cstring("Hello", name="message")
 ```
 
 ### 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
@@ -405,9 +438,6 @@ writer.write_uint16(0, name="ver_min", desc="Minor version")
 実世界のプロトコルで登場する3大文字列フォーマットをネイティブサポートしています：
 
 ```python
-# キャプションを "Metadata" に切り替え
-writer.caption("Metadata", "テキストメタデータ")
-
 # ① C言語スタイル: Null終端文字列 ('\0')
 writer.write_string("SampleApp v2.0", strategy="null_terminated", name="app_name")
 
@@ -487,52 +517,36 @@ reader.read_uint32()
 print(reader.hexdump())  # --> CURSOR @ 0x0004 と表示される
 ```
 
-### 4.5 バイナリ検証・ベリファイ (`writer.verify()`, `writer.diff()`)
+### 4.5 バイナリ差分比較 (`writer.diff()`, `diff_dump()`)
 
-Binary Master には、期待するゴールデンマスターデータやパケット仕様との整合性を確実に担保するための **強力なベリファイ（検証）機能** が備わっています。
-
-#### ① 完全一致アサーション (`writer.verify()` / `verify()`)
-単体テスト（`pytest`）や通信パケットの照合において、生成されたバイナリが期待値と完全に一致するかを 1 行で検証できます。  
-万一不一致がある場合は、**何バイト目で、どのフィールドがどう異なっているか** をフィールド注釈付きの diff レポートとして `AssertionError` を送出します。
+2つのバイナリバッファや `BinaryWriter` インスタンスの内容に相違がある場合、どのバイト位置でどのような差分が生じているかをフィールド注釈付きでビジュアルに比較・確認できます。
 
 ```python
-from binary_master import BinaryWriter, verify
+from binary_master import BinaryWriter, diff_dump
 
-writer = BinaryWriter()
-writer.write_uint32(0x12345678, name="magic")
-writer.write_uint16(42, name="packet_id")
+writer1 = BinaryWriter()
+writer1.write_uint32(0x12345678, name="magic")
+writer1.write_uint16(42, name="packet_id")
 
-expected = b"\x78\x56\x34\x12\x2a\x00"
+writer2 = BinaryWriter()
+writer2.write_uint32(0x12345678, name="magic")
+writer2.write_uint16(99, name="packet_id")
 
-# 方法A: writer.verify() で直接検証（不一致なら詳細な diff 付きで例外発生）
-writer.verify(expected)
-
-# 方法B: トップレベル関数 verify(actual, expected)
-verify(writer, expected)
-
-# 方法C: 例外を出さずに真偽値（True/False）のみ取得
-is_ok = writer.verify(expected, raise_error=False)
+# 差分レポート文字列（または ANSI カラー付きテキスト）を取得
+diff_report = writer1.diff(writer2, color=True)
+print(diff_report)
 ```
 
-不一致時の例外出力例（どこが違うのかが一目でわかる！）：
+差分出力例（どのフィールドで値が食い違っているかが一目でわかります）：
 ```text
-AssertionError: Binary verification failed:
---- Binary Diff: Expected vs Actual ---
-  Size Expected:  6 bytes (`0x0006`)
-  Size Actual:    6 bytes (`0x0006`)
+--- Binary Diff: Self vs Other ---
+  Size Self:   6 bytes (`0x0006`)
+  Size Other:  6 bytes (`0x0006`)
   Differing byte count: 1 bytes in 1 range(s)
 
-Offset      Expected Hex            Actual Hex              Field / Context
+Offset      Self Hex                Other Hex               Field / Context
 ---------------------------------------------------------------------------
-0x0004..0005   2a                      99                      packet_id (UInt16)
-```
-
-#### ② 差分比較レポートの取得 (`writer.diff()` / `diff_dump()`)
-例外を送出せずに、差分レポートの文字列や ANSI カラー付きテキストを取得したい場合は `diff()` を使用します。
-
-```python
-diff_report = writer_expected.diff(writer_actual, color=True)
-print(diff_report)
+0x0004..0005   2a                      63                      packet_id (UInt16)
 ```
 
 ### 4.6 `BinaryWriter` による仕様書・多言語ヘッダーの直接出力 (`write_markdown`, `write_c_header`)

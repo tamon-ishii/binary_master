@@ -51,14 +51,13 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - **Mermaid Flowchart**: 条件分岐ひし形ノード、バリアント選択ノード、サブグラフとオフセット参照矢印の描画（繰り返し領域は `🔁 xCount` で集約）
   - **Mermaid packet-beta**: ネットワークパケット形式のビット/バイト配置図およびビットフィールド詳細図の生成
   - **多態チャンク・バリアント仕様の自動展開**: 条件に応じて格納される候補構造体のレイアウト表と相対パケット図の自動生成
-- 🔍 **専用デバッグダンプ & バイナリ検証・差分比較 (`verify` / `hexdump` / `dump` / `diff`)**  
-  - **バイナリ検証・アサーション (`writer.verify` / `verify`)**: 期待するバイト列との完全一致検証。不一致時は該当バイト位置とフィールド注釈付き diff を自動出力（テスト自動化に最適）
+- 🔍 **専用デバッグダンプ & バイナリ差分比較 (`hexdump` / `dump` / `diff`)**  
   - **注釈付き Hexdump (`hexdump`)**: 16バイト標準ヘックスダンプ＋ASCII文字表示＋出力されたフィールド名・型・値の注釈表示
+  - **バイナリ差分比較 (`diff_dump` / `writer.diff`)**: 2つのバッファ間のバイト単位・フィールド単位の差異をビジュアル比較
   - **ターミナル色分け表示 (`color=True`)**: ANSI カラーによるフィールド境界ごとの色分け、カーソル位置のハイライト
   - **リーダー状態検査 (`reader.hexdump()`)**: 現在のカーソル位置（`--> CURSOR @ 0xXXXX`）、消費済み／残りバイト数の即時把握
   - **表形式トレース (`dump("table")`)**: Offset, Size, Field Name, Type, Hex Bytes, Value, Caption を整然と表示するモノスペース表
   - **構造化ダンプ (`dump("json")` / `dump("dict")`)**: ロギングやテスト検証のための辞書／JSON 配列エクスポート
-  - **バイナリ差分比較 (`diff_dump` / `writer.diff`)**: 2つのバッファ間のバイト単位・フィールド単位の差異を可視化
 
 
 ---
@@ -514,44 +513,145 @@ writer.write_variant(
 )
 ```
 
-#### 仕様書メタデータの統合設定と繰り返し集約 (`set_caption` / `spec_count`)
-セクションタイトル、説明文（`desc`）、繰り返し回数や変数名（`spec_count="chunk_count"`）、多態バリアント（`variants`）など、**仕様書生成に必要なすべての説明メタデータを `set_caption` に統合** して指定できます。
+#### 仕様書メタデータの統合管理（`set_caption` 完全ガイド）
 
-コンテキストマネージャ（`with writer.set_caption(...)`）を使うことで、ブロック内の一連の書き込み（構造体ループやオフセットテーブル）に対してメタデータが自動適用され、ブロックを抜けると自動的にリセットされます。
+バイナリ出力コードにおいて、コード上のコメント（例: `# --- ヘッダー部 ---`）は生成されたバイナリや自動生成される仕様書・ダイアグラムには反映されません。  
+一方で、納品仕様書や通信プロトコル仕様書（Markdown / Mermaid）には、次のような **仕様書のためだけに必要な説明メタデータ** が不可欠です：
+
+1. **セクション見出し名**: どのバイト範囲が何のブロック（ヘッダー、オフセット配列、ペイロード等）か
+2. **詳細説明文 (`desc`)**: そのセクションの仕様・フォーマット・役割の解説
+3. **仕様書上の繰り返し回数・変数名 (`spec_count`)**: 何件繰り返される領域なのか（例: `num_chunk 回`, `不定回数`）
+4. **多態バリアント候補 (`variants`)**: 条件に応じて格納され得る構造体の一覧
+
+**`set_caption` は、これら仕様書生成に必要なすべての説明メタデータを 1 つの API でスッキリ統合・一元管理** するための仕組みです。
+
+---
+
+##### 1. 引数リファレンス
+
+| 引数名 | 型 | 説明 |
+|---|---|---|
+| `title` | `str \| None` | **セクション見出し名**。Markdown の `### {title} (0xXXXX - 0xYYYY, N B)` 見出しおよび Mermaid の `subgraph SG_{title}` に反映されます。`None` または `""` でキャプションを解除します。 |
+| `desc` | `str` | **セクションの概要説明文**。仕様書の見出し直下に挿入され、プロトコル仕様の意図を読者に伝えます。 |
+| `spec_count` | `int \| str \| -1 \| None` | **仕様書上の繰り返しメタデータ**。<br>・変数名文字列（例: `"num_chunk"`, `"record_count"`）: 前方のフィールド変数を参照し `🔁 **繰り返し**: num_chunk 回` と集約表示。<br>・正の整数（例: `10`）: 固定件数として集約表示。<br>・`-1` または負数: `不定回数 (0回以上 / 可変)` として集約表示。<br>※ 従来の `repeat` もエイリアスとして完全対応。 |
+| `variants` | `list \| dict \| None` | **多態バリアント候補一覧**。`[(tag, StructClass, "説明"), ...]` または `{tag: StructClass}` を指定すると、仕様書上に全候補構造体のレイアウト表とパケット図が自動展開されます。 |
+
+---
+
+##### 2. 2つの利用スタイル（コンテキストマネージャ vs 直接呼び出し）
+
+###### ① `with` 構文によるスコープ管理（★推奨）
+`with writer.set_caption(...):` を使うと、**ブロック内で行われた一連の書き込み（構造体ループやオフセットテーブル等）にのみキャプションと繰り返し情報が適用** されます。  
+ブロックを抜けると直前の状態に自動復元されるため、後続のデータへ意図しない設定が漏洩する心配が一切ありません。
 
 ```python
-@binary_struct
-class Chunk:
-    chunk_id: UInt32
-    data_size: UInt32
+with writer.set_caption("offsets", desc="チャンクのオフセット配列", spec_count="num_chunk"):
+    # このブロック内の書き込みは自動的に 'offsets' セクションかつ 'num_chunk' 繰り返しとして記録される
+    table = writer.write_offset_table(count=10)
 
-writer = BinaryWriter()
-
-# パターン1: with writer.set_caption(...) によるスコープ化（推奨）
-# セクションタイトル、説明文、繰り返し回数・変数名を1箇所でスッキリ定義！
-with writer.set_caption("Chunks", desc="データチャンク群（不定回数）", spec_count=-1):
-    for chunk in chunks:
-        writer.write_struct(chunk)
-
-# パターン2: オフセットテーブルでの活用
-# テーブル定義が 'offsets[i]' として仕様書に自動集約されます
-with writer.set_caption("offsets", desc="各チャンクへのオフセット配列", spec_count="num_chunk"):
-    table = writer.write_offset_table(count=len(chunks))
-
-# パターン3: write_struct で直接指定
-for chunk in chunks:
-    writer.write_struct(chunk, spec_count="chunk_count")
-
-# パターン4: リストを一括繰り返し書き込み
-writer.write_repeated(chunks, spec_count="num_chunks")
+# ブロックを抜けると caption は自動的に None（または元の状態）に戻る！
+# 後続の通常書き込みに offsets の設定が漏れ出さない
+writer.write_uint32(0xFFFFFFFF, name="file_checksum")
 ```
 
-- **仕様書上の表示例**:
-  - `🔁 **繰り返し**: chunk_count 回` または `不定回数 (0回以上 / 可変)`
-  - `**1要素サイズ**: 8 bytes (0x8)`
-  - `**サンプルデータ**: 3 件 (合計 24 bytes)`
+入れ子（ネスト）にも完全対応しており、内側のブロックを抜けると外側のキャプション状態へと正しく戻ります。
+
+###### ② 直接メソッド呼び出し（メソッドチェーン対応）
+手続き的に上から順にセクションを切り替えたい場合は、通常のメソッドとして呼び出すことも可能です。
+```python
+# キャプションを設定
+writer.set_caption("Header", desc="メインコンテナヘッダ")
+writer.write_uint32(0x12345678, name="magic")
+
+# 新しいキャプションに切り替え
+writer.set_caption("Payload", desc="データペイロード")
+writer.write_cstring("Hello", name="message")
+
+# キャプションを解除
+writer.set_caption(None)
+```
+
+---
+
+##### 3. 具体的な実践ユースケース
+
+###### ユースケース A: オフセットテーブル（オフセット配列）の仕様書表現
+「10個のオフセット配列を書き込み、後から各チャンクへのオフセットをパッチする。仕様書には `10行のベタ書き` ではなく `num_chunk 個のオフセット配列 (offsets[i])` として綺麗に載せたい」というケース：
+
+```python
+writer.write_cstring("ARCHIVE", name="magic", desc="アーカイブ識別子")
+writer.write_uint16(10, name="num_chunk", desc="格納チャンク数")
+
+# with set_caption でオフセットテーブルをスコープ化
+with writer.set_caption("offsets", desc="各チャンクへのオフセット配列", spec_count="num_chunk"):
+    # write_offset_table はアクティブな set_caption の情報を自動継承！
+    # 個別に name や desc, spec_count を指定する必要はありません
+    table = writer.write_offset_table(count=10, offset_size=4)
+
+# チャンク本体の書き込み（ブロック外なので offsets に混ざらない）
+for i in range(10):
+    table[i] = writer.tell()
+    writer.write_struct(chunks[i])
+```
+
+- **生成される仕様書（Markdown）の表示**:
+  テーブルが 10 行も重複せず、**1 要素のテンプレート** として美しく集約されます：
+  ```markdown
+  ### offsets (0x000A - 0x0032, 40B)
+
+  各チャンクへのオフセット配列
+
+  - 🔁 **繰り返し**: `num_chunk` 回
+  - **1要素サイズ**: `4` bytes (0x4)
+  - **サンプルデータ**: 10 件 (合計 `40` bytes)
+
+  | Relative Offset | Size (B) | Field Name | Type | Endian | Description |
+  |---|---|---|---|---|---|
+  | `+0x00` | 4 | `offsets[i]` | `Offset[UInt32]` | Little | Offset Table [#i] (`-> 0x...`) |
+  ```
 - **Mermaid ダイアグラム**:
-  重複ノードが排除され、`subgraph SG_Chunk ["Chunk 🔁 xchunk_count (...)"]` として1つのサブグラフに集約可視化されます。
+  10個のノードが1つのサブグラフに集約可視化されます：
+  ```mermaid
+  subgraph SG_offsets ["offsets 🔁 xnum_chunk (0x000A - 0x0032, 40B)"]
+      N1["+0x00: offsets[i] (Offset[UInt32], 4B)"]
+  end
+  ```
+
+###### ユースケース B: 構造体ループの仕様書集約
+何十・何百件ものレコードを書き込むループも、`with writer.set_caption` で囲むだけで仕様書が 1 要素のテンプレート仕様（相対オフセット `+0x00`, `+0x04`...）に自動集約されます。
+
+```python
+with writer.set_caption("DataRecords", desc="計測ログレコード群", spec_count="num_records"):
+    for record in records:
+        writer.write_struct(record)
+```
+
+###### ユースケース C: 多態バリアントの候補一覧仕様
+同一セクションに条件によって異なる構造体が書き込まれる場合、`variants` に候補を登録しておくと、仕様書に全バリアントのレイアウト図表が展開されます。
+
+```python
+with writer.set_caption(
+    "PayloadSection",
+    desc="パケット種別に応じた可変ペイロード",
+    variants=[
+        (1, HeaderPayload, "種別1: ヘッダ"),
+        (2, TextPayload, "種別2: テキスト"),
+    ],
+):
+    writer.write_struct(active_payload)
+```
+
+###### ユースケース D: `BinaryBuilder` での共通構文
+事前設計型の `BinaryBuilder` でも全く同じ構文で利用できます：
+```python
+builder = BinaryBuilder(title="Network Protocol")
+
+with builder.set_caption("HeaderSection", desc="基本ヘッダ", spec_count=1):
+    builder.add_field("magic", "UInt32", 4, desc="プロトコル識別子")
+
+with builder.set_caption("ChunkOffsets", desc="各チャンクのオフセット", spec_count="num_chunks"):
+    builder.add_field("offset", "UInt32", 4, desc="チャンク開始位置")
+```
 
 #### Docstring の仕様書反映
 構造体やビットフィールドに記述した Python 標準の docstring（`"""..."""`）は、自動的に仕様書（マニュアル）の見出し下や概要欄にドキュメントとして反映されます。
@@ -670,43 +770,7 @@ records = writer.dump("dict")
 json_str = writer.dump("json")
 ```
 
-#### ④ バイナリ検証・ベリファイ (`writer.verify()` / `verify()`)
-テストコード（`pytest` など）や実行時チェックで、生成されたバイナリが期待するバイト列（ゴールデンマスター等）と完全一致するかを 1 行で検証できます。  
-不一致がある場合は、**どのバイト位置のどのフィールドが異なるか** を分かりやすく示した `AssertionError` を送出します。
-
-```python
-from binary_master import BinaryWriter, verify
-
-writer = BinaryWriter()
-writer.write_uint32(0x12345678, name="magic")
-writer.write_uint16(42, name="id")
-
-expected_bytes = b"\x78\x56\x34\x12\x2a\x00"
-
-# 方法A: writer.verify() で直接検証（不一致なら詳細な diff 付きで例外発生）
-writer.verify(expected_bytes)
-
-# 方法B: トップレベル関数 verify(actual, expected)
-verify(writer, expected_bytes)
-
-# 方法C: 例外を出さずに True / False の真偽値だけを取得
-is_valid = writer.verify(expected_bytes, raise_error=False)
-```
-
-不一致時のエラー出力例:
-```text
-AssertionError: Binary verification failed:
---- Binary Diff: Expected vs Actual ---
-  Size Expected:  6 bytes (`0x0006`)
-  Size Actual:    6 bytes (`0x0006`)
-  Differing byte count: 1 bytes in 1 range(s)
-
-Offset      Expected Hex            Actual Hex              Field / Context
----------------------------------------------------------------------------
-0x0004..0005   2a                      99                      id (UInt16)
-```
-
-#### ⑤ バイナリ差分比較 (`diff_dump` / `writer.diff()`)
+#### ④ バイナリ差分比較 (`diff_dump` / `writer.diff()`)
 例外を投げずに差分の詳細テキスト（またはコンソールカラー付き差分）を取得したい場合は、`diff()` または `diff_dump()` を使用します。
 
 ```python
@@ -898,7 +962,7 @@ if "footer" in result:
 - **Builder 変換**: `to_builder(title=...)`（書き込み履歴から静的 `Builder` インスタンスを自動生成）
 - **位置制御**: `tell()`, `seek(offset, whence)`
 - **パディング & アライメント**: `pad(count, pad_byte)`, `align(boundary, pad_byte)`
-- **デバッグ・検証**: `verify(expected, raise_error=True)`（期待値との完全一致検証・不一致時 diff 表示）、`diff(other, color=False)`（他バッファとの差分比較）、`hexdump(width=16, color=False, annotate=True)`（注釈付き Hexdump）、`dump(format="hexdump"|"table"|"json"|"dict")`
+- **デバッグ・差分比較**: `diff(other, color=False)`（他バッファとの差分比較）、`hexdump(width=16, color=False, annotate=True)`（注釈付き Hexdump）、`dump(format="hexdump"|"table"|"json"|"dict")`
 - **データ取り出し**: `to_bytes()`, `to_bytearray()`
 
 ### `BinaryReader` / `Reader` 主要メソッド
@@ -912,7 +976,6 @@ if "footer" in result:
 - **初期化**: `BinaryReader(source)`, `BinaryReader.from_bytes(data)`, `BinaryReader.from_file(path)`
 
 ### デバッグ & 検査・検証ユーティリティ (`debug`)
-- **バイナリ検証**: `verify(actual, expected, raise_error=True, color=False)`（期待値との完全一致検証。不一致時は詳細 diff 付きで例外送出）
 - **バイナリ差分比較**: `diff_dump(left, right, name_left="Expected", name_right="Actual", color=False)`
 - **注釈付き Hexdump**: `hexdump(target, width=16, color=False, annotate=True)`（`bytes`, `BinaryWriter`, `BinaryReader`, `@binary_struct` に対応）
 - **統一デバッグダンプ**: `debug_dump(target, format="hexdump"|"table"|"json"|"dict")`

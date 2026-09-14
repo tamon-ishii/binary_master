@@ -8,7 +8,6 @@ Demonstrates:
 - Generating Markdown specs and C headers directly from BinaryWriter (no Builder required!)
 - Procedural stream reading using BinaryReader
 - Specialized debug dumping: annotated hexdump, tabular trace, and reader cursor inspection
-- Binary verification using writer.verify() and diff inspection using writer.diff()
 """
 
 from pathlib import Path
@@ -154,11 +153,10 @@ def main():
     print("\n--- Field Trace Table (writer.dump('table')) ---")
     print(writer.dump("table"))
 
-    # Verify binary output against expected bytes
-    writer.verify(data)
-    print("\nBinary verification (writer.verify): OK (Matches expected bytes perfectly)")
+    # Check binary output
+    assert writer.to_bytes() == data
 
-    print("\nProcedural writer, variants, repeat deduplication, and direct exports verified successfully!")
+    print("\nProcedural writer, variants, repeat deduplication, and direct exports completed successfully!")
 
 
 if __name__ == "__main__":

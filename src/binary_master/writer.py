@@ -490,41 +490,6 @@ class BinaryWriter:
 
         return _diff_dump(self, other, name_left=name_left, name_right=name_right, color=color)
 
-    def verify(
-        self,
-        expected: Any,
-        *,
-        name_expected: str = "Expected",
-        name_actual: str = "Actual",
-        color: bool = False,
-        raise_error: bool = True,
-    ) -> bool:
-        """Verify that this writer's binary content matches expected data.
-
-        Args:
-            expected: Expected bytes, BinaryWriter, or @binary_struct.
-            name_expected: Label for expected data in diff output.
-            name_actual: Label for actual data in diff output.
-            color: Whether to colorize diff output.
-            raise_error: If True, raises AssertionError on mismatch (default: True).
-
-        Returns:
-            True if identical, False if mismatched and raise_error is False.
-
-        Raises:
-            AssertionError: If contents do not match and raise_error is True.
-        """
-        from binary_master.debug import verify as _verify
-
-        return _verify(
-            actual=self,
-            expected=expected,
-            name_actual=name_actual,
-            name_expected=name_expected,
-            color=color,
-            raise_error=raise_error,
-        )
-
     def _record_entry(
         self,
         offset: int,
