@@ -439,13 +439,13 @@ writer.write_cstring("Hello", name="message")
 
 ```python
 # ① C言語スタイル: Null終端文字列 ('\0')
-writer.write_string("SampleApp v2.0", strategy="null_terminated", name="app_name")
+writer.write_cstring("SampleApp v2.0", name="app_name")
 
 # ② Pascalスタイル: 長さプレフィックス（先頭2バイトに文字列長を記録）
-writer.write_string("Confidential Document", strategy="prefixed", prefix_bytes=2, name="doc_title")
+writer.write_prefixed_string("Confidential Document", prefix_bytes=2, name="doc_title")
 
 # ③ 固定長パディング文字列（8バイト固定、空白で埋める）
-writer.write_string("AUTH", length=8, strategy="fixed", pad_byte=b" ", name="author_tag")
+writer.write_fixed_string("AUTH", length=8, pad_byte=b" ", name="author_tag")
 ```
 
 ### 4.3 `BinaryReader` によるストリーム読み込み
@@ -568,7 +568,7 @@ writer.write_go("packet_spec.go", package_name="protocol")
 writer.write_code("packet_spec.rs")
 ```
 
-### 4.7 多態バリアント (`write_variant`) とチャンクの繰り返し集約 (`repeat`)
+### 4.7 多態バリアント (`write_variant`) とチャンクの繰り返し集約 (`spec_count` / `set_caption`)
 
 #### ① 多態バリアント (`write_variant`)
 「同じ領域に条件によって異なる構造体が書き込まれる」ケースでは、`candidates`（候補型辞書またはリスト）を指定して書き込みます。

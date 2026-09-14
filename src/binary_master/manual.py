@@ -27,7 +27,14 @@ class LayoutEntry:
     subcaption: Optional[str] = None
     subcaption_desc: Optional[str] = None
     caption_variants: Optional[list] = None
+    caption_spec_count: Optional[Union[int, str, bool]] = None
     caption_repeat: Optional[Union[int, str, bool]] = None
+
+    def __post_init__(self):
+        if self.caption_spec_count is None and self.caption_repeat is not None:
+            self.caption_spec_count = self.caption_repeat
+        elif self.caption_repeat is None and self.caption_spec_count is not None:
+            self.caption_repeat = self.caption_spec_count
 
 
 def create_dummy_instance(struct_cls: type) -> Any:

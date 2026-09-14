@@ -35,7 +35,7 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - 構造体のネスト
 - ✍️ **柔軟な手続き的ライター & リーダー (`BinaryWriter` / `BinaryReader`)**  
   - **ワンストップ仕様書・多言語出力**: Builder 不要で `writer.to_markdown()` や `writer.to_c_header()`, `writer.to_rust()`, `writer.to_cpp()`, `writer.to_csharp()`, `writer.to_go()` を直接出力可能
-  - **チャンクの繰り返し (`repeat`, `writer.repeat()`, `writer.write_repeated()`)**: 変数名（`repeat="chunk_count"`）、固定回数（`repeat=5`）、不定回数（`repeat=-1`）を指定可能。仕様書上では重複テーブルを出さず1要素のテンプレート（相対オフセット `+0x00`）として美しく自動集約
+  - **チャンクの繰り返し (`spec_count`, `with writer.set_caption(...)`, `writer.write_repeated()`)**: 変数名（`spec_count="chunk_count"`）、固定回数（`spec_count=5`）、不定回数（`spec_count=-1`）を指定可能。仕様書上では重複テーブルを出さず1要素のテンプレート（相対オフセット `+0x00`）として美しく自動集約
   - **多態バリアントの書き込み (`write_variant`, `writer.write_variant`)**: 候補構造体リスト（`candidates`）に対する厳格な型バリデーションおよび先行タグの一致チェック
   - インメモリ（`BytesIO` / `bytes`）またはファイル/ストリームへの直接読み書き
   - 厳格な境界・EOFチェック（オーバーフローや切り捨ての即時エラー検知）
@@ -950,13 +950,13 @@ if "footer" in result:
 - **整数書き込み**: `write_uint8`, `write_int8`, `write_uint16`, `write_int16`, `write_uint32`, `write_int32`, `write_uint64`, `write_int64`
 - **浮動小数点数**: `write_float32`, `write_float64`
 - **論理値 / バイト**: `write_bool`, `write_bytes`
-- **文字列**: `write_cstring`, `write_prefixed_string`, `write_fixed_string`, `write_string`
+- **文字列**: `write_cstring`, `write_prefixed_string`, `write_fixed_string`
 - **オフセットテーブル**: `write_offset_table(count, offset_size=4, endian=None, name="offsets", desc="Offset Table", base_offset=0, spec_count=None)`（戻り値 `OffsetTableHandle` で `set_offset`, `write_offset`, `write_target`, `base_offset`, `get_target_offset`, `get_stored_offset` 等が可能。`spec_count` で仕様書の集約表示が可能）
 - **構造体**: `write_struct(instance, endian=None, section="", spec_count=None)`（`spec_count` で繰り返し回数、変数名、または `-1` 不定回数を指定可能）
 - **多態バリアント**: `write_variant(instance, candidates, tag_field=None, ...)`（候補型辞書・リストによる型バリデーションおよび先行タグ整合性検証付き書き込み）
 - **仕様書メタデータ統合管理**: `set_caption(title=None, desc="", spec_count=None, variants=None)`（セクションタイトル、説明文、繰り返し回数・変数名、候補バリアントを統合指定。`with writer.set_caption(...):` によるスコープ化に対応。`caption` もエイリアスとして完全対応）
 - **サブセクションタイトル**: `subcaption(title=None, desc="")`（大見出し内の階層的サブグループを設定）
-- **チャンク繰り返し**: `repeat(name, count=..., desc=...)`（コンテキストマネージャ）、`write_repeated(items, count=..., section=...)`
+- **チャンク繰り返し**: `write_repeated(items, spec_count=..., title=...)`（または `with writer.set_caption(..., spec_count=...):` でループ展開）
 - **仕様書直接出力**: `to_markdown(...)`（Markdown 文字列生成）、`write_markdown(path_or_file, ...)`（Markdown ファイル出力）
 - **多言語ヘッダー直接出力**: `to_c_header()`, `write_c_header(path)`, `to_rust()`, `write_rust(path)`, `to_cpp()`, `write_cpp(path)`, `to_csharp()`, `write_csharp(path)`, `to_go()`, `write_go(path)`, `write_code(path)`
 - **Builder 変換**: `to_builder(title=...)`（書き込み履歴から静的 `Builder` インスタンスを自動生成）

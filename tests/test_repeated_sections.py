@@ -94,19 +94,19 @@ def test_single_loop_explicit_repeat():
     assert "+0x04: data_size" in mermaid
 
 
-def test_repeat_context_manager():
-    """Verify with writer.repeat('Section', count=N) scopes repetition and restores caption."""
+def test_caption_context_manager_with_spec_count():
+    """Verify with writer.set_caption('Section', spec_count=N) scopes repetition and restores caption."""
     writer = BinaryWriter()
     writer.caption("FileHeader")
     writer.write_struct(Header(magic=0x42, chunk_count=3))
 
-    with writer.repeat("DataChunks", count=3, desc="Array of chunks"):
+    with writer.set_caption("DataChunks", spec_count=3, desc="Array of chunks"):
         for i in range(3):
             writer.write_struct(Chunk(chunk_id=i, data_size=10 * i))
 
     # After exiting with block, caption is restored
     assert writer.current_caption == "FileHeader"
-    assert writer.current_caption_repeat is None
+    assert writer.current_caption_spec_count is None
 
     writer.write_struct(Footer(checksum=0x99), section="FileFooter")
 
@@ -202,7 +202,7 @@ def test_bitfield_deduplication_in_repeated_chunks():
         flags: StatusFlags
 
     writer = BinaryWriter()
-    with writer.repeat("FlaggedItems", count=5):
+    with writer.set_caption("FlaggedItems", spec_count=5):
         for i in range(5):
             writer.write_struct(FlaggedItem(item_id=i, flags=StatusFlags(active=1, ready=0, reserved=0)))
 

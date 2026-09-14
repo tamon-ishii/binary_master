@@ -1004,6 +1004,7 @@ def write_struct(
     parent_struct_name: Optional[str] = None,
     desc: str = "",
     section: str = "",
+    spec_count: Optional[Union[int, str, bool]] = None,
     repeat: Optional[Union[int, str, bool]] = None,
 ) -> Any:
     """Serialize a @binary_struct instance to a BinaryWriter stream."""
@@ -1014,29 +1015,30 @@ def write_struct(
     if meta is None:
         raise TypeError(f"Object of type {type(instance).__name__} is not a binary_struct")
 
+    eff_spec = spec_count if spec_count is not None else repeat
     struct_endian = meta.get("endian", "little")
     active_endian = normalize_endian(endian or struct_endian)
 
     if writer is None:
         writer = BinaryWriter(default_endian=active_endian)
         if section:
-            writer.caption(title=section, desc=desc, repeat=repeat)
-        elif repeat is not None:
-            writer.caption(title=instance.__class__.__name__, desc=desc, repeat=repeat)
+            writer.set_caption(title=section, desc=desc, spec_count=eff_spec)
+        elif eff_spec is not None:
+            writer.set_caption(title=instance.__class__.__name__, desc=desc, spec_count=eff_spec)
     else:
         if section:
             if (
                 getattr(writer, "_current_caption", None) != section
-                or getattr(writer, "_current_caption_repeat", None) != repeat
+                or getattr(writer, "_current_caption_spec_count", None) != eff_spec
             ):
-                if hasattr(writer, "caption"):
-                    writer.caption(title=section, desc=desc, repeat=repeat)
-        elif repeat is not None:
+                if hasattr(writer, "set_caption"):
+                    writer.set_caption(title=section, desc=desc, spec_count=eff_spec)
+        elif eff_spec is not None:
             if getattr(writer, "_current_caption", None) is None:
-                if hasattr(writer, "caption"):
-                    writer.caption(title=instance.__class__.__name__, desc=desc, repeat=repeat)
-            elif hasattr(writer, "_current_caption_repeat"):
-                writer._current_caption_repeat = repeat
+                if hasattr(writer, "set_caption"):
+                    writer.set_caption(title=instance.__class__.__name__, desc=desc, spec_count=eff_spec)
+            elif hasattr(writer, "_current_caption_spec_count"):
+                writer._current_caption_spec_count = eff_spec
 
     if hasattr(writer, "_struct_classes") and instance.__class__ not in writer._struct_classes:
         writer._struct_classes.append(instance.__class__)
@@ -1656,12 +1658,14 @@ def write_variant(
     condition: Optional[str] = None,
     endian: EndianType = None,
     section: str = "",
+    spec_count: Optional[Union[int, str, bool]] = None,
     repeat: Optional[Union[int, str, bool]] = None,
 ) -> Any:
     """Serialize a polymorphic variant struct with candidate validation into a BinaryWriter."""
     from binary_master.writer import BinaryWriter
     if writer is None:
         writer = BinaryWriter(default_endian=endian or Endian.LITTLE)
+    eff_spec = spec_count if spec_count is not None else repeat
     writer.write_variant(
         data,
         candidates=candidates,
@@ -1671,7 +1675,7 @@ def write_variant(
         condition=condition,
         endian=endian,
         section=section,
-        repeat=repeat,
+        spec_count=eff_spec,
     )
     return writer
 

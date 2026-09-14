@@ -43,41 +43,6 @@ def _check_int_bounds(name: str, value: int, min_val: int, max_val: int) -> None
         )
 
 
-class _RepeatContext:
-    """Context manager for scoping a repeated section in BinaryWriter."""
-
-    def __init__(
-        self,
-        writer: BinaryWriter,
-        section: str = "",
-        count: Optional[Union[int, str, bool]] = None,
-        desc: str = "",
-    ) -> None:
-        self.writer = writer
-        self.section = section
-        self.count = count
-        self.desc = desc
-        self._prev_caption: Optional[str] = None
-        self._prev_desc: str = ""
-        self._prev_repeat: Optional[Union[int, str, bool]] = None
-        self._prev_variants: Optional[list] = None
-
-    def __enter__(self) -> BinaryWriter:
-        self._prev_caption = self.writer._current_caption
-        self._prev_desc = self.writer._current_caption_desc
-        self._prev_repeat = self.writer._current_caption_repeat
-        self._prev_variants = self.writer._current_caption_variants
-        title = self.section or self._prev_caption or "Repeat"
-        self.writer.caption(title=title, desc=self.desc, repeat=self.count)
-        return self.writer
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        self.writer._current_caption = self._prev_caption
-        self.writer._current_caption_desc = self._prev_desc
-        self.writer._current_caption_repeat = self._prev_repeat
-        self.writer._current_caption_variants = self._prev_variants
-
-
 class _CaptionContext:
     """Context manager and proxy for scoped section caption and specification metadata."""
 
@@ -97,7 +62,7 @@ class _CaptionContext:
 
         self._prev_caption = writer._current_caption
         self._prev_desc = writer._current_caption_desc
-        self._prev_repeat = writer._current_caption_repeat
+        self._prev_spec_count = writer._current_caption_spec_count
         self._prev_variants = writer._current_caption_variants
         self._prev_subcaption = writer._current_subcaption
         self._prev_subcaption_desc = writer._current_subcaption_desc
@@ -115,7 +80,7 @@ class _CaptionContext:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.writer._current_caption = self._prev_caption
         self.writer._current_caption_desc = self._prev_desc
-        self.writer._current_caption_repeat = self._prev_repeat
+        self.writer._current_caption_spec_count = self._prev_spec_count
         self.writer._current_caption_variants = self._prev_variants
         self.writer._current_subcaption = self._prev_subcaption
         self.writer._current_subcaption_desc = self._prev_subcaption_desc
@@ -163,7 +128,7 @@ class BinaryWriter:
         self._current_caption: Optional[str] = None
         self._current_caption_desc: str = ""
         self._current_caption_variants: Optional[list] = None
-        self._current_caption_repeat: Optional[Union[int, str, bool]] = None
+        self._current_caption_spec_count: Optional[Union[int, str, bool]] = None
         self._current_subcaption: Optional[str] = None
         self._current_subcaption_desc: str = ""
         if stream is None:
@@ -195,7 +160,7 @@ class BinaryWriter:
         self._current_caption = title if title else None
         self._current_caption_desc = desc
         self._current_caption_variants = variants
-        self._current_caption_repeat = spec_count
+        self._current_caption_spec_count = spec_count
         self._current_subcaption = None
         self._current_subcaption_desc = ""
         if title:
@@ -207,7 +172,6 @@ class BinaryWriter:
         desc: str = "",
         spec_count: Optional[Union[int, str, bool]] = None,
         variants: Optional[list] = None,
-        repeat: Optional[Union[int, str, bool]] = None,
     ) -> _CaptionContext:
         """Set active section caption/description/spec_count for subsequent writes.
 
@@ -224,17 +188,15 @@ class BinaryWriter:
             desc: Optional description for this section/caption.
             spec_count: Optional specification count metadata, e.g. 'num_chunk', count, or -1.
             variants: Optional list or dict of candidate variant structures.
-            repeat: Backward-compatible alias for spec_count.
 
         Returns:
             _CaptionContext supporting both context manager (`with`) and direct chaining.
         """
-        rep_val = spec_count if spec_count is not None else repeat
         return _CaptionContext(
             writer=self,
             title=title,
             desc=desc,
-            spec_count=rep_val,
+            spec_count=spec_count,
             variants=variants,
         )
 
@@ -242,17 +204,15 @@ class BinaryWriter:
         self,
         title: Optional[str] = None,
         desc: str = "",
-        variants: Optional[list] = None,
-        repeat: Optional[Union[int, str, bool]] = None,
         spec_count: Optional[Union[int, str, bool]] = None,
+        variants: Optional[list] = None,
     ) -> _CaptionContext:
-        """Alias for set_caption."""
+        """Concise alias for set_caption."""
         return self.set_caption(
             title=title,
             desc=desc,
             spec_count=spec_count,
             variants=variants,
-            repeat=repeat,
         )
 
     def subcaption(self, title: Optional[str] = None, desc: str = "") -> BinaryWriter:
@@ -269,59 +229,35 @@ class BinaryWriter:
         self._current_subcaption_desc = desc
         return self
 
-    def repeat(
-        self,
-        section: str = "",
-        count: Optional[Union[int, str, bool]] = None,
-        desc: str = "",
-        spec_count: Optional[Union[int, str, bool]] = None,
-    ) -> _CaptionContext:
-        """Context manager to write a repeating section (convenience alias for set_caption).
-
-        Note:
-            `with writer.set_caption("title", spec_count=count)` is the recommended unified API.
-            `repeat(...)` is provided for backward compatibility.
-
-        Example:
-            with writer.set_caption("DataChunks", spec_count="chunk_count"):
-                for chunk in chunks:
-                    writer.write_struct(chunk)
-
-        Args:
-            section: Section name / title for the repeating block (default: "").
-            count: Repetition count, loop variable name (e.g. 'chunk_count'), or True.
-            desc: Optional description of this repeating section.
-            spec_count: Specification count metadata (alias for count).
-        """
-        rep_val = spec_count if spec_count is not None else count
-        return self.set_caption(title=section, desc=desc, spec_count=rep_val)
-
     def write_repeated(
         self,
         items: Iterable[Any],
-        section: str = "",
-        count: Optional[Union[int, str, bool]] = None,
+        title: str = "",
+        spec_count: Optional[Union[int, str, bool]] = None,
         desc: str = "",
         endian: EndianType = None,
-        spec_count: Optional[Union[int, str, bool]] = None,
+        section: str = "",
+        count: Optional[Union[int, str, bool]] = None,
     ) -> BinaryWriter:
         """Write an iterable of items (e.g. structs) as a repeated section.
 
         Args:
             items: Iterable of @binary_struct instances or items to write.
-            section: Section name (default: "").
-            count: Repetition count or variable name (defaults to len(items) if items has len).
+            title: Section title (default: "").
+            spec_count: Specification count metadata (e.g. 'chunk_count', 5, -1).
             desc: Optional description for the section.
             endian: Optional endianness override.
-            spec_count: Optional specification count metadata.
+            section: Section title alias.
+            count: Alias for spec_count.
 
         Returns:
             self for method chaining.
         """
+        sec_title = title or section
+        eff_spec = spec_count if spec_count is not None else count
         item_list = list(items) if not isinstance(items, (list, tuple)) else items
-        rep_val = spec_count if spec_count is not None else count
-        effective_count = rep_val if rep_val is not None else len(item_list)
-        with self.set_caption(title=section, desc=desc, spec_count=effective_count):
+        effective_count = eff_spec if eff_spec is not None else len(item_list)
+        with self.set_caption(title=sec_title, desc=desc, spec_count=effective_count):
             for item in item_list:
                 if hasattr(item, "__binary__"):
                     self.write_struct(item, endian=endian)
@@ -334,7 +270,20 @@ class BinaryWriter:
     @property
     def current_caption_spec_count(self) -> Optional[Union[int, str, bool]]:
         """Active specification repetition count for the current caption."""
-        return self._current_caption_repeat
+        return self._current_caption_spec_count
+
+    @property
+    def current_caption_repeat(self) -> Optional[Union[int, str, bool]]:
+        """Alias for current_caption_spec_count."""
+        return self._current_caption_spec_count
+
+    @property
+    def _current_caption_repeat(self) -> Optional[Union[int, str, bool]]:
+        return self._current_caption_spec_count
+
+    @_current_caption_repeat.setter
+    def _current_caption_repeat(self, value: Optional[Union[int, str, bool]]) -> None:
+        self._current_caption_spec_count = value
 
     @property
     def current_caption(self) -> Optional[str]:
@@ -808,41 +757,6 @@ class BinaryWriter:
         )
         return self
 
-    def write_string(
-        self,
-        text: str,
-        encoding: str = "utf-8",
-        strategy: str = "null_terminated",
-        prefix_bytes: int = 2,
-        length: Optional[int] = None,
-        pad_byte: bytes = b"\x00",
-        endian: EndianType = None,
-        name: str = "",
-        desc: str = "",
-    ) -> BinaryWriter:
-        """Write strings with dynamic strategy selection.
-
-        Note:
-            For type safety and IDE autocompletion, prefer using the explicit methods:
-            - `write_cstring(text)` for null-terminated strings
-            - `write_prefixed_string(text, prefix_bytes=...)` for length-prefixed strings
-            - `write_fixed_string(text, length=...)` for fixed-width padded strings
-        """
-        norm_strategy = strategy.lower().replace("-", "_")
-        if norm_strategy in ("null_terminated", "cstring", "c_string"):
-            return self.write_cstring(text, encoding=encoding, name=name, desc=desc)
-        if norm_strategy in ("prefixed", "pascal", "length_prefixed"):
-            return self.write_prefixed_string(
-                text, prefix_bytes=prefix_bytes, encoding=encoding, endian=endian, name=name, desc=desc
-            )
-        if norm_strategy in ("fixed", "fixed_length"):
-            if length is None:
-                raise ValueError("length is required when strategy is 'fixed'")
-            return self.write_fixed_string(
-                text, length=length, encoding=encoding, pad_byte=pad_byte, name=name, desc=desc
-            )
-        raise ValueError(f"Unknown string strategy: {strategy!r}")
-
     # --- Cursor Positioning, Seeking, and Alignment ---
 
     def tell(self) -> int:
@@ -926,9 +840,9 @@ class BinaryWriter:
             desc: Description of the offset table.
             base_offset: The base origin (in bytes) subtracted from recorded target offsets
                          (default: 0, file/stream beginning).
-            repeat: Backward-compatible alias for `spec_count`.
             spec_count: Optional specification count metadata, e.g. 'num_chunk', count, or -1.
                         When specified, manual generation aggregates the table slots into a template.
+            repeat: Optional alias for spec_count.
 
         Returns:
             OffsetTableHandle for recording/writing target offsets.
@@ -944,8 +858,8 @@ class BinaryWriter:
             raise ValueError(f"base_offset must be non-negative, got {base_offset}")
 
         spec_rep = spec_count if spec_count is not None else repeat
-        if spec_rep is None and self._current_caption_repeat is not None:
-            spec_rep = self._current_caption_repeat
+        if spec_rep is None:
+            spec_rep = self._current_caption_spec_count
 
         order = normalize_endian(endian, self._default_endian)
         start_pos = self.tell()
@@ -1014,39 +928,33 @@ class BinaryWriter:
         instance: object,
         endian: EndianType = None,
         section: str = "",
-        repeat: Optional[Union[int, str, bool]] = None,
-        desc: str = "",
         spec_count: Optional[Union[int, str, bool]] = None,
+        desc: str = "",
+        repeat: Optional[Union[int, str, bool]] = None,
     ) -> BinaryWriter:
         """Write a @binary_struct instance to this writer's stream.
-
-        Note:
-            For structuring and grouping sections in manuals, prefer using
-            `with writer.set_caption("SectionName", ...): writer.write_struct(instance)`.
-            Passing `section`, `repeat`, `desc`, or `spec_count` directly to `write_struct`
-            is supported for backward compatibility.
 
         Args:
             instance: An instance of a class decorated with @binary_struct.
             endian: Optional endianness override for this struct write.
-            section: Optional section name (legacy).
-            repeat: Optional repetition count or specifier (legacy alias for spec_count).
+            section: Optional section name.
+            spec_count: Optional specification count metadata (e.g. 5, "chunk_count", -1).
             desc: Optional section description if section is provided.
-            spec_count: Optional specification count metadata (legacy).
+            repeat: Alias for spec_count.
         """
-        rep_val = spec_count if spec_count is not None else repeat
+        eff_spec = spec_count if spec_count is not None else repeat
         if section:
             if (
                 self._current_caption != section
-                or self._current_caption_repeat != rep_val
+                or self._current_caption_spec_count != eff_spec
                 or (desc and self._current_caption_desc != desc)
             ):
-                self.caption(title=section, desc=desc, repeat=rep_val)
-        elif rep_val is not None:
+                self.set_caption(title=section, desc=desc, spec_count=eff_spec)
+        elif eff_spec is not None:
             if self._current_caption is None:
-                self.caption(title=instance.__class__.__name__, desc=desc, repeat=rep_val)
+                self.set_caption(title=instance.__class__.__name__, desc=desc, spec_count=eff_spec)
             else:
-                self._current_caption_repeat = rep_val
+                self._current_caption_spec_count = eff_spec
 
         if self._expected_variant is not None:
             expected = self._expected_variant
@@ -1096,6 +1004,7 @@ class BinaryWriter:
         condition: Optional[str] = None,
         endian: EndianType = None,
         section: str = "",
+        spec_count: Optional[Union[int, str, bool]] = None,
         repeat: Optional[Union[int, str, bool]] = None,
     ) -> BinaryWriter:
         """Write a polymorphic variant struct to the stream while validating against candidate types.
@@ -1105,41 +1014,34 @@ class BinaryWriter:
 
         Args:
             data: The struct instance to write.
-            candidates: Allowed candidate struct types. Supported formats:
-                        - list of struct classes: [StatusPayload, SensorPayload]
-                        - dict of {tag: struct_class}: {0x01: StatusPayload, 0x02: SensorPayload}
-                        - dict of {tag: (struct_class, desc)}
-                        - list of tuples: [(0x01, StatusPayload, "desc"), ...]
+            candidates: Allowed candidate struct types.
             tag_field: Optional name of the tag/discriminator field preceding this variant.
             name: Logical name of this variant field/slot (e.g. 'payload').
             desc: Optional description for this variant field.
             condition: Optional condition string for the variant branch.
             endian: Optional endianness override.
             section: Optional section name (default: "").
-            repeat: Optional repetition count or specifier (e.g. 5, "chunk_count", True).
+            spec_count: Optional specification count metadata (e.g. 5, "chunk_count", -1).
+            repeat: Alias for spec_count.
 
         Returns:
             self for method chaining.
-
-        Raises:
-            TypeError: If data is not an instance of one of the allowed candidate classes.
-            ValueError: If tag_field is provided, candidates specifies tags, and a previously
-                        written field with name tag_field does not match data's expected tag.
         """
+        eff_spec = spec_count if spec_count is not None else repeat
         if section:
             if (
                 self._current_caption != section
-                or self._current_caption_repeat != repeat
+                or self._current_caption_spec_count != eff_spec
                 or (desc and self._current_caption_desc != desc)
             ):
-                self.caption(title=section, desc=desc, repeat=repeat)
-        elif repeat is not None:
+                self.set_caption(title=section, desc=desc, spec_count=eff_spec)
+        elif eff_spec is not None:
             target_cls = getattr(data, "__class__", None)
             c_name = target_cls.__name__ if target_cls else "Variant"
             if self._current_caption is None:
-                self.caption(title=c_name, desc=desc, repeat=repeat)
+                self.set_caption(title=c_name, desc=desc, spec_count=eff_spec)
             else:
-                self._current_caption_repeat = repeat
+                self._current_caption_spec_count = eff_spec
 
         norm_variants = self._normalize_candidates(candidates)
         allowed_classes = tuple(c[1] for c in norm_variants)
@@ -1170,11 +1072,11 @@ class BinaryWriter:
 
         variant_name = name or f"{type(target_obj).__name__}Variant"
         if self._current_caption is None:
-            self.caption(variant_name, desc=desc, variants=norm_variants, repeat=repeat)
+            self.set_caption(variant_name, desc=desc, variants=norm_variants, spec_count=eff_spec)
         else:
             self._current_caption_variants = norm_variants
-            if repeat is not None:
-                self._current_caption_repeat = repeat
+            if eff_spec is not None:
+                self._current_caption_spec_count = eff_spec
 
         v_info = {
             "name": variant_name,
@@ -1278,7 +1180,7 @@ class BinaryWriter:
                 sec_repeat = item[3] if len(item) > 3 else None
                 if sec_title not in seen_sections:
                     seen_sections.add(sec_title)
-                    builder.add_section(sec_title, desc=s_desc, repeat=sec_repeat)
+                    builder.add_section(sec_title, desc=s_desc, spec_count=sec_repeat)
             elif kind == "struct":
                 s_cls = item[1]
                 if s_cls not in seen_structs and s_cls not in choice_variants:

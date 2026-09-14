@@ -63,9 +63,9 @@ def main():
 
     # 2. Section: Metadata and Strings
     writer.set_caption("Metadata", desc="Textual metadata and application properties")
-    writer.write_string("SampleApp v2.0", encoding="utf-8", strategy="null_terminated", name="app_name", desc="App Name")
-    writer.write_string("Confidential Document", encoding="utf-8", strategy="prefixed", prefix_bytes=2, name="doc_title", desc="Doc Title")
-    writer.write_string("AUTH", length=8, strategy="fixed", pad_byte=b" ", name="author_tag", desc="Author Tag")
+    writer.write_cstring("SampleApp v2.0", encoding="utf-8", name="app_name", desc="App Name")
+    writer.write_prefixed_string("Confidential Document", prefix_bytes=2, encoding="utf-8", name="doc_title", desc="Doc Title")
+    writer.write_fixed_string("AUTH", length=8, pad_byte=b" ", encoding="utf-8", name="author_tag", desc="Author Tag")
 
     # 3. Section: Polymorphic Variant with candidate validation
     writer.set_caption("Dynamic Payload", desc="Dynamic payload dispatched by chunk_type")

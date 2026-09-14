@@ -66,7 +66,7 @@ class SectionElement:
     title: str
     desc: str = ""
     is_end: bool = False
-    repeat: Optional[Union[int, str, bool]] = None
+    spec_count: Optional[Union[int, str, bool]] = None
 
 
 class _SectionContext:
@@ -77,15 +77,15 @@ class _SectionContext:
         builder: Any,
         title: str,
         desc: str = "",
-        repeat: Optional[Union[int, str, bool]] = None,
         spec_count: Optional[Union[int, str, bool]] = None,
+        repeat: Optional[Union[int, str, bool]] = None,
     ) -> None:
         self._builder = builder
         self._title = title
         self._desc = desc
-        self._repeat = spec_count if spec_count is not None else repeat
+        self._spec_count = spec_count if spec_count is not None else repeat
         self._in_context = False
-        self._elem = SectionElement(title=title, desc=desc, repeat=self._repeat)
+        self._elem = SectionElement(title=title, desc=desc, spec_count=self._spec_count)
         self._builder.elements.append(self._elem)
 
     def __enter__(self) -> Any:
@@ -99,7 +99,7 @@ class _SectionContext:
                     title=self._title,
                     desc=self._desc,
                     is_end=True,
-                    repeat=self._repeat,
+                    spec_count=self._spec_count,
                 )
             )
 
@@ -351,67 +351,6 @@ class BinaryBuilder:
         )
         return self
 
-    def add_section(
-        self,
-        title: str,
-        desc: str = "",
-        repeat: Optional[Union[int, str, bool]] = None,
-        spec_count: Optional[Union[int, str, bool]] = None,
-    ) -> BinaryBuilder:
-        """Add a section break (convenience alias for set_caption).
-
-        Note:
-            `builder.set_caption(...)` or `with builder.set_caption(...):` is the
-            recommended unified API.
-
-        Args:
-            title: Section title.
-            desc: Section description.
-            repeat: Optional repetition count or specifier.
-            spec_count: Optional specification count metadata (alias for repeat).
-
-        Returns:
-            self for method chaining.
-        """
-        rep_val = spec_count if spec_count is not None else repeat
-        self.elements.append(SectionElement(title=title, desc=desc, repeat=rep_val))
-        return self
-
-    def add_caption(
-        self,
-        title: str,
-        desc: str = "",
-        repeat: Optional[Union[int, str, bool]] = None,
-        spec_count: Optional[Union[int, str, bool]] = None,
-    ) -> BinaryBuilder:
-        """Alias for add_section / set_caption."""
-        return self.add_section(title=title, desc=desc, repeat=repeat, spec_count=spec_count)
-
-    def section(
-        self,
-        title: str,
-        desc: str = "",
-        repeat: Optional[Union[int, str, bool]] = None,
-        spec_count: Optional[Union[int, str, bool]] = None,
-    ) -> _SectionContext:
-        """Create a section grouping (alias for set_caption).
-
-        Note:
-            `with builder.set_caption(...):` is the recommended unified API.
-        """
-        rep_val = spec_count if spec_count is not None else repeat
-        return _SectionContext(self, title=title, desc=desc, repeat=rep_val)
-
-    def caption(
-        self,
-        title: str,
-        desc: str = "",
-        repeat: Optional[Union[int, str, bool]] = None,
-        spec_count: Optional[Union[int, str, bool]] = None,
-    ) -> _SectionContext:
-        """Alias for set_caption()."""
-        return self.section(title=title, desc=desc, repeat=repeat, spec_count=spec_count)
-
     def set_caption(
         self,
         title: str,
@@ -429,12 +368,55 @@ class BinaryBuilder:
             title: Section/caption title.
             desc: Optional section/caption description.
             spec_count: Optional specification count metadata (e.g. 'num_chunk', 5, -1).
-            repeat: Backward-compatible alias for spec_count.
+            repeat: Alias for spec_count.
 
         Returns:
             _SectionContext context manager and proxy.
         """
-        return self.section(title=title, desc=desc, repeat=repeat, spec_count=spec_count)
+        eff_spec = spec_count if spec_count is not None else repeat
+        return _SectionContext(self, title=title, desc=desc, spec_count=eff_spec)
+
+    def caption(
+        self,
+        title: str,
+        desc: str = "",
+        spec_count: Optional[Union[int, str, bool]] = None,
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> _SectionContext:
+        """Concise alias for set_caption()."""
+        return self.set_caption(title=title, desc=desc, spec_count=spec_count, repeat=repeat)
+
+    def section(
+        self,
+        title: str,
+        desc: str = "",
+        spec_count: Optional[Union[int, str, bool]] = None,
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> _SectionContext:
+        """Alias for set_caption()."""
+        return self.set_caption(title=title, desc=desc, spec_count=spec_count, repeat=repeat)
+
+    def add_section(
+        self,
+        title: str,
+        desc: str = "",
+        spec_count: Optional[Union[int, str, bool]] = None,
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> BinaryBuilder:
+        """Alias for set_caption."""
+        eff_spec = spec_count if spec_count is not None else repeat
+        self.elements.append(SectionElement(title=title, desc=desc, spec_count=eff_spec))
+        return self
+
+    def add_caption(
+        self,
+        title: str,
+        desc: str = "",
+        spec_count: Optional[Union[int, str, bool]] = None,
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> BinaryBuilder:
+        """Alias for set_caption."""
+        return self.add_section(title=title, desc=desc, spec_count=spec_count, repeat=repeat)
 
     def add_field(
         self,
@@ -1155,6 +1137,7 @@ class BinaryBuilder:
         result = BuilderReadResult()
         current_caption: Optional[str] = None
         current_caption_desc: str = ""
+        current_spec_count: Optional[Union[int, str, bool]] = None
 
         for elem in self.elements:
             if isinstance(elem, DocumentElement):
@@ -1164,10 +1147,12 @@ class BinaryBuilder:
                 if getattr(elem, "is_end", False):
                     current_caption = None
                     current_caption_desc = ""
+                    current_spec_count = None
                 else:
                     current_caption = elem.title
                     current_caption_desc = elem.desc
-                writer.caption(current_caption, desc=current_caption_desc)
+                    current_spec_count = getattr(elem, "spec_count", None)
+                writer.set_caption(current_caption, desc=current_caption_desc, spec_count=current_spec_count)
                 continue
 
             # Evaluate condition
@@ -1180,7 +1165,7 @@ class BinaryBuilder:
                 if not self._eval_condition(cond_str, result):
                     continue
 
-            writer.caption(current_caption, desc=current_caption_desc)
+            writer.set_caption(current_caption, desc=current_caption_desc, spec_count=current_spec_count)
 
             if isinstance(elem, StructElement):
                 key = elem.name or elem.struct_cls.__name__
