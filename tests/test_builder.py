@@ -457,3 +457,78 @@ def test_builder_import_writer_and_captions():
     assert b_cap.elements[0].title == "File Header"
     assert b_cap.elements[1].title == "Data Payload"
 
+
+def test_builder_serialize_and_roundtrip(tmp_path: Path):
+    """Test schema-driven serialization (builder.to_bytes) and round-trip verification."""
+    builder = Builder("Roundtrip Protocol")
+    builder.add_section("Header Section")
+    builder.add_struct(Header, name="header")
+    builder.add_section("Payload Section")
+    builder.add_choice(
+        name="payload",
+        tag_field="msg_type",
+        variants={
+            1: TextPayload,
+            2: AudioPayload,
+        },
+    )
+    builder.add_section("Footer Section")
+    builder.add_struct(
+        OptionalFooter,
+        name="footer",
+        condition="version >= 2",
+    )
+
+    # 1. Serialize via dict with msg_type = 1 (TextPayload), version = 1 (footer skipped)
+    data1 = {
+        "header": Header(magic=0x5047534D, version=1, msg_type=1, payload_size=4),
+        "payload": TextPayload(encoding=1, length=4, content=b"TEST\x00\x00\x00\x00"),
+        "footer": OptionalFooter(checksum=0xDEADBEEF),
+    }
+    raw1 = builder.to_bytes(data1)
+    # Header: 4+2+2+4 = 12 bytes; TextPayload: 2+2+8 = 12 bytes; Total = 24 bytes (footer skipped by condition)
+    assert len(raw1) == 24
+
+    # Read back and verify
+    res1 = builder.read(raw1)
+    assert res1.header.magic == 0x5047534D
+    assert res1.header.version == 1
+    assert res1.payload.encoding == 1
+    assert res1.payload.content[:4] == b"TEST"
+    assert "footer" not in res1
+
+    # Roundtrip from BuilderReadResult
+    raw1_roundtrip = builder.to_bytes(res1)
+    assert raw1_roundtrip == raw1
+
+    # 2. Serialize with version = 2 (footer included)
+    data2 = {
+        "header": Header(magic=0x5047534D, version=2, msg_type=2, payload_size=6),
+        "payload": AudioPayload(sample_rate=48000, channels=2, bit_depth=24),
+        "footer": OptionalFooter(checksum=0x12345678),
+    }
+    raw2 = builder.to_bytes(data2)
+    # Header: 12B; AudioPayload: 4+1+1 = 6B; OptionalFooter: 4B; Total = 22B
+    assert len(raw2) == 22
+
+    res2 = builder.read(raw2)
+    assert res2.header.version == 2
+    assert res2.payload.sample_rate == 48000
+    assert res2.footer.checksum == 0x12345678
+
+    # 3. Test serialization with list of struct instances
+    raw3 = builder.to_bytes([
+        Header(magic=0x5047534D, version=2, msg_type=2, payload_size=6),
+        AudioPayload(sample_rate=48000, channels=2, bit_depth=24),
+        OptionalFooter(checksum=0x12345678),
+    ])
+    assert raw3 == raw2
+
+    # 4. Test write_markdown
+    md_file = tmp_path / "test_spec.md"
+    content = builder.write_markdown(md_file)
+    assert md_file.exists()
+    assert md_file.read_text(encoding="utf-8") == content
+    assert "Header Section" in content
+
+

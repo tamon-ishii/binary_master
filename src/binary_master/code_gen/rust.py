@@ -33,7 +33,7 @@ from binary_master.binary_struct import (
     UInt64,
     Bool,
 )
-from binary_master.c_header import to_pascal_case, to_snake_case
+from binary_master.code_gen.c import to_pascal_case, to_snake_case
 
 
 def rust_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
@@ -74,6 +74,17 @@ def rust_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
             return "u64", "8-byte boolean"
         else:
             return f"[u8; {size}]", f"{size}-byte boolean"
+
+    from binary_master.binary_struct import Bytes, FixedString, CString, PrefixedString
+    if isinstance(field_type, type) and issubclass(field_type, Bytes):
+        return f"[u8; {field_type._size}]", "raw bytes"
+    if isinstance(field_type, type) and issubclass(field_type, FixedString):
+        return f"[u8; {field_type._size}]", "fixed-length string"
+    if field_type is CString or (isinstance(field_type, type) and issubclass(field_type, CString)):
+        return "*const std::os::raw::c_char", "null-terminated string"
+    if field_type is PrefixedString or (isinstance(field_type, type) and issubclass(field_type, PrefixedString)):
+        p_bytes = getattr(field_type, "prefix_bytes", 1)
+        return "*const std::os::raw::c_char", f"prefixed string ({p_bytes}-byte length prefix)"
 
     # FixedArray[Elem, Count]
     is_fixed = (isinstance(field_type, tuple) and len(field_type) >= 3 and field_type[0] is FixedArray) or (

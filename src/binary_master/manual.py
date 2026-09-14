@@ -66,8 +66,18 @@ def create_dummy_instance(struct_cls: type) -> Any:
         is_offset = (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is Offset) or (get_origin(ft) is Offset)
         is_offset_tbl = (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is OffsetTable) or (get_origin(ft) is OffsetTable)
 
+        from binary_master.binary_struct import (
+            Bytes,
+            FixedString,
+            CString,
+            PrefixedString,
+        )
         if ft is bool or (isinstance(ft, type) and issubclass(ft, Bool)):
             dummy_kwargs[fn] = False
+        elif isinstance(ft, type) and issubclass(ft, (FixedString, CString, PrefixedString)):
+            dummy_kwargs[fn] = ""
+        elif isinstance(ft, type) and issubclass(ft, Bytes):
+            dummy_kwargs[fn] = b"\x00" * getattr(ft, "_size", 0)
         elif isinstance(ft, type) and issubclass(ft, BinaryType):
             dummy_kwargs[fn] = 0
         elif is_fixed:

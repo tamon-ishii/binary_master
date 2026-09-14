@@ -19,6 +19,7 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 1.2 シリアライズとデシリアライズ
   - 1.3 サイズ確認とエンディアンの指定
   - 1.4 メンバのバイトオフセット取得 (`offsetof`)
+  - 1.5 文字列・生バイト列型 (`Bytes`, `FixedString`, `CString`, `PrefixedString`)
 - [Step 2: ビットフィールドとアライメント（応用編）](#step-2-ビットフィールドとアライメント応用編)
   - 2.1 1ビット単位のフラグ定義 (`Bits[N]`)
   - 2.2 パケット境界アライメント (`align=4`, `auto_align=True`)
@@ -26,9 +27,9 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 3.1 自動オフセット計算 (`Offset[T, Base.SELF]`)
   - 3.2 オフセット演算とポインタテーブル (`OffsetTable`)
 - [Step 4: 手続き的ライター & リーダーとデバッグ機能（低レベル制御）](#step-4-手続き的ライター--リーダーとデバッグ機能低レベル制御)
-  - 4.1 `BinaryWriter` によるストリーム書き込みとセクションキャプション (`set_caption`)
+  - 4.1 `BinaryWriter` によるストリーム書き込み、位置管理 (`at_offset`, `preserve_position`)、セクションキャプション (`set_caption`)
   - 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
-  - 4.3 `BinaryReader` によるストリーム読み込み
+  - 4.3 `BinaryReader` によるストリーム読み込み、先読み (`peek`)、位置保護 (`preserve_position`)
   - 4.4 充実したデバッグダンプ（注釈付き Hexdump / テーブル出力）
   - 4.5 バイナリ差分比較 (`writer.diff()`, `diff_dump()`)
   - 4.6 `BinaryWriter` による仕様書・多言語ヘッダーの直接出力 (`write_markdown`, `write_c_header`)
@@ -36,9 +37,9 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
 - [Step 5: スキーマ駆動設計・仕様書自動生成・多言語出力（統合編）](#step-5-スキーマ駆動設計仕様書自動生成多言語出力統合編)
   - 5.1 `Builder` によるプロトコルスキーマ定義
   - 5.2 多態パケットの分岐 (`add_choice`)
-  - 5.3 仕様書（Markdown & Mermaid 図）のワンライナー出力
+  - 5.3 仕様書（Markdown & Mermaid 図）のワンライナー出力 (`write_markdown`)
   - 5.4 多言語ヘッダー出力 (C, Rust, Modern C++, C#, Go)
-  - 5.5 スキーマ駆動の自動デシリアライズ (`builder.read`)
+  - 5.5 スキーマ駆動の双方向シリアライズ (`to_bytes`) と自動デシリアライズ (`read`)
   - 5.6 スキーマ駆動のデバッグ検査 (`builder.hexdump` / `builder.dump`)
 - [まとめ & サンプルコードとの対応](#まとめ--サンプルコードとの対応)
 
@@ -78,14 +79,19 @@ Pythonの標準型アノテーションと同じ感覚でフィールドを定�
 
 ```python
 from binary_master import (
+    Bool,
+    Bytes,
+    Endian,
+    FixedArray,
+    FixedString,
+    Float32,
     UInt8,
     UInt16,
     UInt32,
-    Float32,
-    FixedArray,
     binary_struct,
-    sizeof,
+    offsetof,
     read_struct,
+    sizeof,
 )
 
 @binary_struct(endian="little")
@@ -97,12 +103,14 @@ class PlayerProfile:
     lives: UInt8               # 残機
     score: UInt32              # スコア
     health_ratio: Float32      # 体力比率 (0.0 - 1.0)
-    tag: FixedArray[UInt8, 4]  # 4バイトのクランタグ
+    is_vip: Bool               # VIP会員フラグ (1バイト: 0x01=True, 0x00=False)
+    tag: FixedString[4]        # 4バイトのクランタグ文字列 ("PROG")
 ```
 
 #### ポイント
-- **プリミティブ型**: `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Int8`, `Int16`, `Int32`, `Int64`, `Float32`, `Float64` などを直接指定できます。
-- **固定長配列**: `FixedArray[Type, Length]` で固定長のバイト配列や構造体配列を定義できます。
+- **プリミティブ型**: `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Int8`, `Int16`, `Int32`, `Int64`, `Float32`, `Float64`, `Bool` などを直接指定できます。
+- **固定長文字列 & バイト列**: `FixedString[N]` や `Bytes[N]` により、固定長テキストや生バイト列を Python の `str` / `bytes` として直感的に扱えます。
+- **固定長配列**: `FixedArray[Type, Length]` で任意型の固定長配列を定義できます。
 - **Docstring とインラインコメント**: クラス docstring や `# コメント` は、後述する仕様書生成時に自動抽出され、マニュアルの「説明」に反映されます。
 
 ### 1.2 シリアライズとデシリアライズ
@@ -118,7 +126,8 @@ player = PlayerProfile(
     lives=3,
     score=999999,
     health_ratio=0.85,
-    tag=b"PROG",
+    is_vip=True,
+    tag="PROG",
 )
 
 # 2. バイナリ列へシリアライズ
@@ -132,7 +141,8 @@ restored = PlayerProfile.from_bytes(binary_data)
 
 print(f"復元されたプレイヤーID: {restored.player_id}")
 print(f"復元されたスコア: {restored.score}")
-print(f"復元されたクランタグ: {bytes(restored.tag).decode('ascii')}")
+print(f"復元されたVIP状態: {restored.is_vip}")
+print(f"復元されたクランタグ: {restored.tag}")  # 直接 str ("PROG") として復元される
 ```
 
 ### 1.3 サイズ確認とエンディアンの指定
@@ -140,8 +150,8 @@ print(f"復元されたクランタグ: {bytes(restored.tag).decode('ascii')}")
 クラスの静的バイトサイズは `sizeof()` または `.binary_size` で取得可能です。
 
 ```python
-print(sizeof(PlayerProfile))         # => 20
-print(PlayerProfile.binary_size)     # => 20
+print(sizeof(PlayerProfile))         # => 21
+print(PlayerProfile.binary_size)     # => 21
 ```
 
 エンディアンは `@binary_struct(endian="little")` または `@binary_struct(endian="big")` で指定します。シリアライズ時に一時的にオーバーライドすることも可能です：
@@ -162,6 +172,8 @@ from binary_master import offsetof
 print(PlayerProfile.offsetof("magic"))        # => 0
 print(PlayerProfile.offsetof("player_id"))    # => 4
 print(PlayerProfile.offsetof("score"))        # => 8
+print(PlayerProfile.offsetof("is_vip"))       # => 16
+print(PlayerProfile.offsetof("tag"))          # => 17
 
 # 関数形式でも呼び出し可能
 print(offsetof(PlayerProfile, "score"))       # => 8
@@ -173,6 +185,28 @@ print(player.offsetof("score"))              # => 8
 - **アライメント考慮**: `auto_align=True` やパディングフィールドによってオフセットがずれる場合も、パディング後の正確なバイトオフセットを返します。
 - **ネスト対応**: 入れ子構造体の内部フィールドも `"header.version"` のようにドット記法で階層を辿ってオフセットを取得できます。
 - **レイアウト一覧の取得**: 全メンバのオフセット・サイズ一覧を確認したい場合は `inspect_struct_layout(PlayerProfile)` も利用できます。
+
+### 1.5 文字列・生バイト列型 (`Bytes`, `FixedString`, `CString`, `PrefixedString`)
+
+バイナリ通信やファイルフォーマットで頻出する各種テキスト・バイト表現を、`@binary_struct` の型アノテーションとしてネイティブに記述できます：
+
+| 型 | 説明 | Python 型 | 特徴 |
+|---|---|---|---|
+| `Bytes[N]` | N バイト固定長生データ | `bytes` | `FixedArray[UInt8, N]` の直感的な短縮形 |
+| `FixedString[N]` | N バイト固定長文字列 | `str` | 余白は Null パディング、読み込み時は自動デコード |
+| `CString` | Null 終端文字列 (`\0`) | `str` | 可変長。末尾 Null バイトまで自動読み書き |
+| `PrefixedString[N]` | 長さプレフィックス付き | `str` | 先頭 N バイト (1, 2, 4) の数値で長さを示す |
+
+```python
+from binary_master import Bytes, FixedString, CString, PrefixedString, binary_struct
+
+@binary_struct
+class PacketMeta:
+    guid: Bytes[16]              # 16バイト生バイナリ (UUID等)
+    client_id: FixedString[8]    # 8バイト固定長文字列
+    room_name: CString           # Null終端文字列
+    description: PrefixedString[2] # 2バイト長プレフィックス付き文字列
+```
 
 ---
 
@@ -433,6 +467,22 @@ writer.set_caption("Metadata", desc="テキストメタデータ")
 writer.write_cstring("Hello", name="message")
 ```
 
+##### ③ 位置管理とオフセット指定書き込み (`at_offset`, `preserve_position`)
+ヘッダー内のデータサイズやチェックサムなど、「後続のデータを書き終わった後に先頭へ戻って書き戻したい（バックパッチ）」処理を、コンテキストマネージャで安全に行えます。
+
+```python
+# 方法A: 指定オフセットへ一時ジャンプして書き込み、終了時に元位置へ自動復帰 (at_offset)
+size_offset = 4
+with writer.at_offset(size_offset):
+    writer.write_uint32(1024, name="payload_length")
+
+# 方法B: 現在の書き込み位置を保護したまま任意シーク (preserve_position)
+with writer.preserve_position():
+    writer.seek(0)
+    writer.write_uint32(0x12345678, name="magic")
+# ブロックを抜けると元の位置へ自動復帰
+```
+
 ### 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
 
 実世界のプロトコルで登場する3大文字列フォーマットをネイティブサポートしています：
@@ -467,6 +517,29 @@ doc_title = reader.read_prefixed_string(prefix_bytes=2, encoding="utf-8")
 author_tag = reader.read_fixed_string(length=8, encoding="utf-8").strip()
 
 print(f"App: {app_name}, Title: {doc_title}, Tag: {author_tag}")
+```
+
+#### 先読み (`peek`) と位置保護 (`preserve_position`), EOF判定 (`is_eof`)
+ストリームのカーソルを進めずに次に来るデータを検証したり、一時的に位置を移動して元の位置に戻すことができます：
+
+```python
+# 先読み（カーソル位置はそのまま）
+if reader.peek_uint16() == 0x01:
+    print("タイプ1パケットを検出")
+
+next_magic = reader.peek_uint32()
+next_4bytes = reader.peek_bytes(4)
+next_byte = reader.peek()
+
+# データ終端の確認
+if reader.is_eof:
+    print("すべてのデータを読み込み完了")
+
+# 一時的な位置移動と自動復帰
+with reader.preserve_position():
+    reader.seek(0x20)
+    aux = reader.read_uint32()
+# ブロック終了時に元の位置へ自動復帰
 ```
 
 ### 4.4 充実したデバッグダンプ
@@ -731,12 +804,13 @@ with builder.caption("Footer Section", "整合性チェック"):
     )
 ```
 
-### 5.3 仕様書（Markdown & Mermaid 図）のワンライナー出力
+### 5.3 仕様書（Markdown & Mermaid 図）のワンライナー出力 (`write_markdown`)
 
-`builder.write()` を呼び出すだけで、仕様書 Markdown ファイル（Mermaid フローチャートおよびパケットレイアウト図付き）が瞬時に生成されます。
+`builder.write_markdown()`（または `builder.write()`）を呼び出すだけで、仕様書 Markdown ファイル（Mermaid フローチャートおよびパケットレイアウト図付き）が瞬時に生成されます。また `builder.to_markdown()` で文字列として取得することも可能です。
 
 ```python
-builder.write("telemetry_protocol_spec.md", diagram_direction="TD")
+builder.write_markdown("telemetry_protocol_spec.md", diagram_direction="TD")
+# または: spec_md = builder.to_markdown(diagram_direction="TD")
 ```
 
 生成される Markdown には以下が含まれます：
@@ -768,20 +842,26 @@ builder.write_go("telemetry_protocol.go", package_name="telemetry")
 
 各出力には、ビットフィールドのアライメント属性（例: C言語の `#pragma pack(push, 1)`、Rustの `#[repr(C, packed)]` など）が適切に付与されます。
 
-### 5.5 スキーマ駆動の自動デシリアライズ (`builder.read`)
+### 5.5 スキーマ駆動の双方向シリアライズ (`to_bytes`) と自動デシリアライズ (`read`)
 
+`Builder` は、事前定義したスキーマを用いた **双方向（シリアライズ・デシリアライズ両対応）** のプロトコルエンジンとして機能します。
+
+#### ① スキーマ駆動シリアライズ (`builder.to_bytes` / `builder.serialize`)
+スキーマの各ノード名（`header`, `payload`, `footer`）をキーとする辞書、または構造体インスタンスを渡すだけで、条件フラグや多態バリアントを自動解決してバイナリ列を生成します。
+
+```python
+# 辞書からスキーマに従って一括バイナリ化
+packet_bytes = builder.to_bytes({
+    "header": PacketHeader(magic=0x5047534D, version=1, msg_type=2, payload_size=16, flags=1),
+    "payload": SensorReport(sensor_id=101, temperature=23.5, pressure=1013.25, humidity=48.0),
+    "footer": ChecksumFooter(crc32=0xDEADBEEF),
+})
+```
+
+#### ② スキーマ駆動自動デシリアライズ (`builder.read`)
 受信した生のバイナリバイト列を `builder.read(data)` に渡すだけで、ヘッダーの `msg_type` や `flags` を自動判別し、適切なクラスのインスタンスとしてパースしてくれます。
 
 ```python
-from binary_master import BinaryWriter
-
-# パケットバイナリを構築
-w = BinaryWriter()
-w.write_struct(PacketHeader(magic=0x5047534D, version=1, msg_type=2, payload_size=16, flags=1))
-w.write_struct(SensorReport(sensor_id=101, temperature=23.5, pressure=1013.25, humidity=48.0))
-w.write_struct(ChecksumFooter(crc32=0xDEADBEEF))
-packet_bytes = w.to_bytes()
-
 # スキーマ情報から自動パース！
 result = builder.read(packet_bytes)
 

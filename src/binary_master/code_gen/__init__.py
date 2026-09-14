@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, IO, Optional, Union
 
-from binary_master.c_header import (
+from binary_master.code_gen.c import (
+    generate_c_choice,
     generate_c_header,
     generate_c_struct,
     write_c_header,

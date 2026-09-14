@@ -28,12 +28,15 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - 浮動小数点数（Float32, Float64）
   - **論理値 (`Bool` / `bool`)**: サイズ設定可能（`Bool[1]`, `Bool[2]`, `Bool[4]` 等、デフォルト1バイト）
   - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング・アンパッキング
+  - **文字列・バイト列型 (`Bytes[N]`, `FixedString[N]`, `CString`, `PrefixedString[N]`)**: 固定長バイト配列、Null終端文字列、長さプレフィックス文字列、固定長文字列を構造体メンバとして直接宣言可能
   - **オフセット自動計算 & 解決 (`Offset[T, Size, BaseOffset]`)**: ヘッダーのオフセット値の自動バックパッチ（1, 2, 4, 8バイト指定可、`Base.SELF + 0x20` などの構造体先頭相対指定対応）および読み込み時の参照先自動インスタンス化
   - **オフセットテーブル (`OffsetTable[Count, Type, BaseOffset]`)**: 複数エントリのオフセット配列の予約・自動バックパッチ（`Base.SELF` などの相対指定対応）
   - **多態チャンク & タグ付き共用体 (`Variant[TagField, Mapping]`)**: 種別IDに応じて切り替わる多態構造体の自動ディスパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
   - 構造体のネスト
 - ✍️ **柔軟な手続き的ライター & リーダー (`BinaryWriter` / `BinaryReader`)**  
+  - **位置保存とオフセット指定書き込み (`with writer.preserve_position():`, `with writer.at_offset(off):`)**: ヘッダー長やサイズのバックパッチを安全・宣言的に実施
+  - **先読みと位置保存リード (`reader.peek()`, `peek_uint*()`, `with reader.preserve_position():`, `reader.is_eof`)**: ストリームのカーソルを進めずに次に来るデータや終端を検査
   - **ワンストップ仕様書・多言語出力**: Builder 不要で `writer.to_markdown()` や `writer.to_c_header()`, `writer.to_rust()`, `writer.to_cpp()`, `writer.to_csharp()`, `writer.to_go()` を直接出力可能
   - **チャンクの繰り返し (`spec_count`, `with writer.set_caption(...)`, `writer.write_repeated()`)**: 変数名（`spec_count="chunk_count"`）、固定回数（`spec_count=5`）、不定回数（`spec_count=-1`）を指定可能。仕様書上では重複テーブルを出さず1要素のテンプレート（相対オフセット `+0x00`）として美しく自動集約
   - **多態バリアントの書き込み (`write_variant`, `writer.write_variant`)**: 候補構造体リスト（`candidates`）に対する厳格な型バリデーションおよび先行タグの一致チェック
@@ -44,7 +47,8 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - メソッドチェーン対応ライター、カーソル操作（`seek`, `tell`, `skip`, `remaining`）
   - **仕様書メタデータ統合管理 (`set_caption` / `subcaption`)**: セクションタイトル、詳細説明文（`desc`）、繰り返し回数・変数名（`spec_count="num_chunk"`）、多態バリアント候補（`variants`）を統合指定。`with` ブロックによるスコープ管理にも対応
 - 📐 **事前設計型プロトコルビルダー & 自動リーダー (`Builder` / `BinaryBuilder`)**  
-  - バイナリデータを実際に書き出すことなく、構造体クラス（`@binary_struct`）、説明文（`add_document`）、条件分岐（`condition`）、多態バリアント（`add_choice`）を事前定義して仕様書を生成（`builder.write("spec.md")`）。
+  - バイナリデータを実際に書き出すことなく、構造体クラス（`@binary_struct`）、説明文（`add_document`）、条件分岐（`condition`）、多態バリアント（`add_choice`）を事前定義して仕様書を生成（`builder.write_markdown("spec.md")`）。
+  - **双方向シリアライズ (`builder.to_bytes(data)`)**: 定義したスキーマに基づいて辞書データからバイナリ列への自動組み立てにも対応。
   - 事前に定義したスキーマ情報をもとに、バイナリバイト列から各構造体・バリアントを自動判別して復元する **スキーマ駆動自動リーダー (`builder.read(data)`)** を提供。
 - 📊 **仕様書 & Mermaid 図の自動生成 (`writer.to_markdown` / `builder.write`)**  
   - シリアライズされた全フィールドのオフセット（16進/10進）、サイズ、エンディアン、参照先ターゲット（`-> 0xXXXX`）を記録した Markdown ドキュメントを出力
@@ -287,11 +291,52 @@ writer.write_fixed_string("Fixed", length=10, pad_byte=b"\x00")    # 10バイト
 writer.pad(4, pad_byte=b"\xFF", name="padding")   # 4バイトのパディング
 writer.align(16, name="alignment")                # 16バイト境界へアライメント
 
+# 位置の退避と特定オフセットへの一時書き込み (at_offset / preserve_position)
+# 例: ペイロード長ヘッダーの後から書き戻し（バックパッチ）
+len_pos = 4
+with writer.at_offset(len_pos):
+    writer.write_uint32(1024, name="payload_length")  # 指定位置に書き込み、終了時に末尾へ自動復帰
+
+with writer.preserve_position():
+    writer.seek(0)
+    # カーソル位置を保存したまま一時シーク操作...
+
 # 結果の取得
 binary_data: bytes = writer.to_bytes()
 ```
 
 ### 2. `@binary_struct` の詳細機能
+
+#### 文字列・バイト列型 (`Bytes[N]`, `FixedString[N]`, `CString`, `PrefixedString[N]`)
+構造体メンバとして、固定長バイト配列や各種文字列フォーマットを直接宣言できます。
+
+- `Bytes[N]`: Nバイトの生バイト列（Python `bytes`）。`FixedArray[UInt8, N]` の直感的な短縮形。
+- `FixedString[N]`: Nバイトの固定長文字列（Python `str`）。指定長に満たない場合は Null バイトでパディングされ、読み込み時は自動でデコードされます。
+- `CString`: Null 終端文字列（Python `str`）。末尾に `\0` が自動付与されます。
+- `PrefixedString[N]`: Nバイト（1, 2, 4, 8バイト）の長さプレフィックス付き文字列（Python `str`）。
+
+```python
+from binary_master import Bytes, FixedString, CString, PrefixedString, binary_struct, UInt32
+
+@binary_struct
+class NetworkMessage:
+    magic: Bytes[4]              # 4バイト生バイト列 (b"MSGP")
+    tag: FixedString[8]          # 8バイト固定長文字列 ("CLIENT01")
+    username: CString            # Null終端文字列 ("Alice")
+    payload: PrefixedString[2]   # 2バイト符号なし整数で長さを示す文字列 ("Hello World")
+
+msg = NetworkMessage(
+    magic=b"MSGP",
+    tag="CLIENT01",
+    username="Alice",
+    payload="Hello World",
+)
+data = msg.to_bytes()
+restored = NetworkMessage.from_bytes(data)
+assert restored.username == "Alice"
+assert isinstance(restored.tag, str)
+assert isinstance(restored.magic, bytes)
+```
 
 #### ビットフィールド (`Bits[N]`)
 `bits` 引数を指定することで、ビット単位のフラグを効率よく 1/2/4/8 バイト等の整数にパッキングします。
@@ -724,6 +769,27 @@ reader.align(8)
 header = reader.read_struct(Header)
 ```
 
+#### ③ 先読み (`peek`) と位置保護 (`preserve_position`)
+パケット判定やストリームの事前検証で、**カーソルを進めずに次のバイト列や整数値を先読み** できます。
+
+```python
+# 先読み（カーソル位置は進みません）
+next_byte = reader.peek()                 # 次の1バイト (int: 0..255)
+next_magic = reader.peek_uint32()         # 次のUInt32値
+next_bytes = reader.peek_bytes(4)         # 次の4バイト (bytes)
+next_type = reader.peek_uint16()          # 次のUInt16値
+
+# EOF（データ終端）の判定
+if reader.is_eof:
+    print("終端に到達")
+
+# 一時的な位置移動と自動復帰 (preserve_position)
+with reader.preserve_position():
+    reader.seek(0x40)
+    meta = reader.read_uint32()
+# with ブロックを抜けると元のオフセットへ自動復帰
+```
+
 ### 5. デバッグダンプ & ストリーム検査 (`hexdump` / `dump` / `diff`)
 
 シリアライズ時の実メモリ配置の確認、デシリアライズ時のカーソル追跡、バイナリ差分比較を行うための専門デバッグ機能が用意されています。
@@ -852,9 +918,17 @@ builder.add_choice(
 builder.add_struct(Footer, name="footer", condition="flags & 0x01 != 0")
 
 # 2. 仕様書を Markdown ファイルに出力
-builder.write("protocol_spec.md")
+builder.write_markdown("protocol_spec.md")  # builder.write() も同等
 
-# 3. 多言語ヘッダー・型定義ファイルの出力
+# 3. 定義したスキーマに基づく双方向シリアライズ (to_bytes / serialize)
+# スキーマとバリアント定義に基づき、辞書から自動でバイナリ列を生成
+packet_bytes = builder.to_bytes({
+    "header": Header(magic=0x54454C4D, msg_type=1, flags=1),
+    "payload": TextPayload(length=16, content=list(b"HELLO_WORLD_1234")),
+    "footer": Footer(crc32=0x12345678),
+})
+
+# 4. 多言語ヘッダー・型定義ファイルの出力
 # C言語ヘッダー (#pragma pack(1), typedef struct, enum, union)
 builder.write_c_header("protocol.h")
 
@@ -877,16 +951,16 @@ builder.write_code("export/packet.hpp")  # -> C++
 builder.write_code("export/packet.go")   # -> Go
 builder.write_code("export/packet.h")    # -> C
 
-# 4. 定義したスキーマに基づく自動デシリアライズ
+# 5. 定義したスキーマに基づく自動デシリアライズ
 # （タグ値に応じたバリアント選択や条件判定を自動実行）
-result = builder.read(binary_bytes)
+result = builder.read(packet_bytes)
 print(result.header.magic)
 print(result.payload)       # TextPayload または SensorPayload インスタンス
 if "footer" in result:
     print(result.footer.crc32)
 ```
 
-### 6. 多言語ヘッダー・構造体定義のエクスポート (C, Rust, C#, Modern C++, Go)
+### 7. 多言語ヘッダー・構造体定義のエクスポート (C, Rust, C#, Modern C++, Go)
 
 `Builder` / `BinaryBuilder` および `@binary_struct` は、Python 側で定義したバイナリレイアウト（1バイトパッキング整合）を保ったまま、主要なネイティブ・システムプログラミング言語向けのコードを自動生成できます。
 

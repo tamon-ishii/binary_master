@@ -101,6 +101,23 @@ class _CaptionContext:
         return str(self.writer)
 
 
+class _WriterPositionContext:
+    """Context manager for preserving writer position or seeking to a specific offset."""
+
+    def __init__(self, writer: BinaryWriter, target_offset: Optional[int] = None) -> None:
+        self._writer = writer
+        self._pos = writer.tell()
+        self._target_offset = target_offset
+
+    def __enter__(self) -> BinaryWriter:
+        if self._target_offset is not None:
+            self._writer.seek(self._target_offset)
+        return self._writer
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self._writer.seek(self._pos)
+
+
 class BinaryWriter:
     """A sequential binary writer supporting in-memory buffers and stream/file targets."""
 
@@ -783,6 +800,14 @@ class BinaryWriter:
         if hasattr(self._stream, "seekable") and not self._stream.seekable():
             raise io.UnsupportedOperation("Underlying stream is not seekable")
         return self._stream.seek(offset, whence)
+
+    def preserve_position(self) -> _WriterPositionContext:
+        """Context manager that preserves and restores the current write position upon exit."""
+        return _WriterPositionContext(self)
+
+    def at_offset(self, offset: int) -> _WriterPositionContext:
+        """Context manager that temporarily seeks to `offset` and restores position upon exit."""
+        return _WriterPositionContext(self, target_offset=offset)
 
     def pad(self, count: int, pad_byte: bytes = b"\x00", name: str = "padding", desc: str = "") -> BinaryWriter:
         """Write a number of padding bytes."""

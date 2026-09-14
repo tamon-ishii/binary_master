@@ -12,6 +12,20 @@ from binary_master.enums import Endian, EndianType, normalize_endian
 T = TypeVar("T")
 
 
+class _ReaderPositionContext:
+    """Context manager for preserving reader cursor position."""
+
+    def __init__(self, reader: BinaryReader) -> None:
+        self._reader = reader
+        self._pos = reader.tell()
+
+    def __enter__(self) -> BinaryReader:
+        return self._reader
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self._reader.seek(self._pos, io.SEEK_SET)
+
+
 class BinaryReader:
     """A sequential binary reader supporting in-memory buffers and stream/file targets."""
 
@@ -105,6 +119,76 @@ class BinaryReader:
             self.skip(padding_needed)
         return self.tell()
 
+    @property
+    def is_eof(self) -> bool:
+        """Return True if cursor has reached or passed the end of the stream."""
+        return self.remaining() == 0
+
+    @property
+    def eof(self) -> bool:
+        """Alias for is_eof."""
+        return self.is_eof
+
+    def preserve_position(self) -> _ReaderPositionContext:
+        """Context manager that preserves and restores the stream cursor upon exit."""
+        return _ReaderPositionContext(self)
+
+    def peek(self, count: int) -> bytes:
+        """Read up to `count` bytes without advancing the stream position."""
+        if count < 0:
+            raise ValueError(f"peek count must be non-negative, got {count}")
+        if count == 0:
+            return b""
+        cur = self.tell()
+        try:
+            return self._stream.read(count)
+        finally:
+            self._stream.seek(cur, io.SEEK_SET)
+
+    def peek_bytes(self, count: int) -> bytes:
+        """Alias for peek(count)."""
+        return self.peek(count)
+
+    def peek_uint8(self) -> int:
+        """Peek an unsigned 8-bit integer without advancing the cursor."""
+        with self.preserve_position():
+            return self.read_uint8()
+
+    def peek_int8(self) -> int:
+        """Peek a signed 8-bit integer without advancing the cursor."""
+        with self.preserve_position():
+            return self.read_int8()
+
+    def peek_uint16(self, endian: EndianType = None) -> int:
+        """Peek an unsigned 16-bit integer without advancing the cursor."""
+        with self.preserve_position():
+            return self.read_uint16(endian=endian)
+
+    def peek_int16(self, endian: EndianType = None) -> int:
+        """Peek a signed 16-bit integer without advancing the cursor."""
+        with self.preserve_position():
+            return self.read_int16(endian=endian)
+
+    def peek_uint32(self, endian: EndianType = None) -> int:
+        """Peek an unsigned 32-bit integer without advancing the cursor."""
+        with self.preserve_position():
+            return self.read_uint32(endian=endian)
+
+    def peek_int32(self, endian: EndianType = None) -> int:
+        """Peek a signed 32-bit integer without advancing the cursor."""
+        with self.preserve_position():
+            return self.read_int32(endian=endian)
+
+    def peek_uint64(self, endian: EndianType = None) -> int:
+        """Peek an unsigned 64-bit integer without advancing the cursor."""
+        with self.preserve_position():
+            return self.read_uint64(endian=endian)
+
+    def peek_int64(self, endian: EndianType = None) -> int:
+        """Peek a signed 64-bit integer without advancing the cursor."""
+        with self.preserve_position():
+            return self.read_int64(endian=endian)
+
     def close(self) -> None:
         """Close the reader and underlying stream if auto_close is True."""
         if self._auto_close and hasattr(self._stream, "close"):
@@ -115,6 +199,7 @@ class BinaryReader:
 
     def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         self.close()
+
 
     # --- Internal Read Helpers ---
 

@@ -11,8 +11,10 @@ Demonstrates:
 
 from binary_master import (
     Bool,
+    Bytes,
     Endian,
     FixedArray,
+    FixedString,
     Float32,
     UInt8,
     UInt16,
@@ -36,7 +38,7 @@ class PlayerProfile:
     score: UInt32  # Current score
     health_ratio: Float32  # Normalized health: 0.0 to 1.0
     is_vip: Bool  # VIP account status (1 byte boolean: 0x01 = True, 0x00 = False)
-    tag: FixedArray[UInt8, 4]  # 4-byte clan tag
+    tag: FixedString[4]  # 4-byte clan tag string (e.g. "PROG")
 
 
 def main():
@@ -63,7 +65,7 @@ def main():
         score=999999,
         health_ratio=0.85,
         is_vip=True,
-        tag=b"PROG",
+        tag="PROG",
     )
 
     data = player.to_bytes()
@@ -79,9 +81,10 @@ def main():
     print(f"  score:        {restored.score}")
     print(f"  health_ratio: {restored.health_ratio:.2f}")
     print(f"  is_vip:       {restored.is_vip}")
-    print(f"  tag:          {bytes(restored.tag).decode('ascii')}")
+    print(f"  tag:          {restored.tag}")
 
     assert restored.is_vip is True
+    assert restored.tag == "PROG"
     assert restored.score == 999999
 
     # 5. Big-endian override

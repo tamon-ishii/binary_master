@@ -39,6 +39,10 @@ from binary_master import (
 
     # Generic & Advanced Type Annotations
     Bits,                # Bits[N]: Bitfield slice (used with @binary_struct(bits=N))
+    Bytes,               # Bytes[N]: Static raw byte sequence (bytes)
+    FixedString,         # FixedString[N]: Static fixed-length string (str)
+    CString,             # CString: Null-terminated string (str)
+    PrefixedString,      # PrefixedString[N]: Length-prefixed string (str)
     Offset,              # Offset[Target, OffsetType=UInt32, BaseOffset=0]
     OffsetTable,         # OffsetTable[Count, OffsetType=UInt32, BaseOffset=0]
     Variant,             # Variant[tag_field_name, {tag_val: StructCls, ...}]
@@ -99,6 +103,10 @@ from binary_master import (
 | `Int8`, `Int16`, `Int32`, `Int64` | 1, 2, 4, 8 bytes | `int` | Signed 2's complement integers |
 | `Float32`, `Float64` | 4, 8 bytes | `float` | IEEE 754 single / double precision |
 | `Bool` / `bool` | 1 byte (or `Bool[N]` bytes) | `bool` | `0x00` = False, non-zero = True (supports `Bool[1]`, `Bool[2]`, `Bool[4]`) |
+| `Bytes[N]` | `N` bytes | `bytes` | Static raw bytes buffer. Example: `Bytes[16]` |
+| `FixedString[N]` | `N` bytes | `str` | Static fixed-length string (null/space-padded). Example: `FixedString[8]` |
+| `CString` | Variable (`len + 1` bytes) | `str` | Null-terminated C string (`\0`) |
+| `PrefixedString[N]` | Variable (`N + len` bytes) | `str` | Length-prefixed string with N-byte length prefix (1, 2, 4) |
 | `FixedArray[T, N]` | `N * sizeof(T)` | `bytes` (if T is UInt8) or `list[T]` | Static fixed element buffer. Example: `FixedArray[UInt8, 16]` |
 | `Array[T]` | Dynamic (`len * sizeof(T)`) | `bytes` (if T is UInt8) or `list[T]` | Dynamic sequence. Consumes remaining bytes on read unless bounded. |
 | `Bits[N]` | `N` bits | `int` | Bitfield slice. Must be within struct decorated with `@binary_struct(bits=Total)`. |
@@ -278,8 +286,10 @@ While `BinaryWriter` can generate specs and C headers directly from serialized d
 | `add_choice` | `name: str, tag_field: str\|Callable, variants: dict\|list, desc: str = "", condition: str = None, condition_func: Callable = None` | Register polymorphic branch dispatched by `tag_field` |
 | `add_field` | `name: str, type_name: str, size: int, desc: str = "", endian: str = None, condition: str = None` | Register ad-hoc primitive field without dedicated struct class |
 | `set_caption`, `section`, `caption` | `title: str, desc: str = "", spec_count: int\|str = None` | Context manager to group elements: `with builder.set_caption(...):` |
-| `write` | `path_or_file: str\|Path\|IO, diagram_direction: str = "TD", ...` | Generate and save complete Markdown specification with Mermaid diagrams |
-| `read` | `data: bytes\|bytearray\|Reader, trace: bool = False` | Automatically parse binary into a `BuilderReadResult` |
+| `write`, `write_markdown` | `path_or_file: str|Path|IO, diagram_direction: str = "TD", ...` | Generate and save complete Markdown specification with Mermaid diagrams |
+| `to_markdown` | `diagram_direction: str = "TD", ... -> str` | Return generated Markdown specification string |
+| `to_bytes`, `serialize` | `data: dict|Any, endian: str = None -> bytes` | Serialize structured data into binary bytes according to schema |
+| `read` | `data: bytes|bytearray|Reader, trace: bool = False` | Automatically parse binary into a `BuilderReadResult` |
 | `hexdump` | `data: bytes\|bytearray, width: int = 16, color: bool = False` | Output annotated hexdump correlated with schema fields |
 | `dump` | `data: bytes\|bytearray, format: str = "table"` | Output decoded layout table |
 | `write_c_header` | `path_or_file, guard: str = None, pack: bool = True` | Export C header (`.h`) |
@@ -450,6 +460,14 @@ writer.write_go("protocol.go", package_name="protocol")
 writer.write_code("output.rs") # Auto-detects language from file extension
 builder = writer.to_builder(title="Generated Spec") # Convert to static Builder if needed
 
+# Position Preservation & Direct Offset Patching
+with writer.preserve_position():
+    writer.seek(0)
+    writer.write_uint32(0x12345678) # returns to original position on exit
+
+with writer.at_offset(0x04):
+    writer.write_uint32(1024)       # writes at offset 0x04 and returns on exit
+
 # Inspection & Output
 pos = writer.tell()
 data = writer.to_bytes()
@@ -475,6 +493,12 @@ f64 = reader.read_float64()
 b   = reader.read_bool()
 raw = reader.read_bytes(4) # None reads until EOF
 
+# Lookahead (Peek) without advancing cursor
+byte_val = reader.peek()
+raw_peek = reader.peek_bytes(4)
+u16_peek = reader.peek_uint16()
+u32_peek = reader.peek_uint32()
+
 # Strings
 s_null = reader.read_cstring(encoding="utf-8")
 s_pref = reader.read_prefixed_string(prefix_bytes=2, encoding="utf-8")
@@ -486,6 +510,13 @@ reader.seek(0)
 reader.skip(4)
 reader.align(4)
 rem = reader.remaining() # Number of bytes left
+is_done = reader.is_eof  # Boolean property: True if remaining() == 0
+
+# Position Preservation Context
+with reader.preserve_position():
+    reader.seek(0x20)
+    sub_val = reader.read_uint32()
+# automatically restores cursor on exit
 
 # Struct Integration
 obj = reader.read_struct(MyStructClass)

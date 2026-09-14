@@ -926,6 +926,22 @@ class BinaryBuilder:
                 raise TypeError(f"Invalid path_or_file: {type(path_or_file).__name__}")
         return content
 
+    def write_markdown(
+        self,
+        path_or_file: Union[str, Path, IO[str]],
+        **kwargs,
+    ) -> str:
+        """Generate specification markdown and write it to a file or stream.
+
+        Args:
+            path_or_file: File path string, Path object, or writable text stream.
+            **kwargs: Options forwarded to to_markdown().
+
+        Returns:
+            The complete Markdown document as a string.
+        """
+        return self.write(path_or_file=path_or_file, **kwargs)
+
     def to_c_header(self, guard: Optional[str] = None, pack: bool = True) -> str:
         """Generate a complete C99/C11 header file from this specification schema.
 
@@ -1039,6 +1055,149 @@ class BinaryBuilder:
 
         return write_code(self, path_or_file=path_or_file, lang=lang, **kwargs)
 
+    def serialize(
+        self,
+        data: Union[dict[str, Any], BuilderReadResult, list[Any], tuple[Any, ...], Any],
+        writer: Optional[Any] = None,
+        endian: Optional[str] = None,
+    ) -> Any:
+        """Serialize data structures and fields into binary according to this schema.
+
+        Args:
+            data: Dictionary, BuilderReadResult, or sequence mapping element names to instances or values.
+            writer: Optional BinaryWriter instance to write into (creates in-memory writer if None).
+            endian: Optional endianness override.
+
+        Returns:
+            The BinaryWriter instance containing serialized binary data and layout metadata.
+        """
+        from binary_master.writer import BinaryWriter
+
+        if writer is None:
+            writer = BinaryWriter(default_endian=endian or self.default_endian)
+
+        # Normalize data into mapping
+        if isinstance(data, dict):
+            data_dict = dict(data)
+        elif isinstance(data, (list, tuple)):
+            data_dict = {}
+            for item in data:
+                if hasattr(item, "__class__"):
+                    data_dict[item.__class__.__name__] = item
+        elif hasattr(data, "__dict__"):
+            data_dict = dict(data.__dict__)
+        else:
+            data_dict = {}
+
+        current_caption: Optional[str] = None
+        current_caption_desc: str = ""
+        current_spec_count: Optional[Union[int, str, bool]] = None
+
+        for elem in self.elements:
+            if isinstance(elem, DocumentElement):
+                continue
+
+            if isinstance(elem, SectionElement):
+                if getattr(elem, "is_end", False):
+                    current_caption = None
+                    current_caption_desc = ""
+                    current_spec_count = None
+                else:
+                    current_caption = elem.title
+                    current_caption_desc = elem.desc
+                    current_spec_count = getattr(elem, "spec_count", None)
+                writer.set_caption(current_caption, desc=current_caption_desc, spec_count=current_spec_count)
+                continue
+
+            # Evaluate condition
+            cond_func = getattr(elem, "condition_func", None)
+            cond_str = getattr(elem, "condition", None)
+            if cond_func is not None:
+                if not cond_func(data_dict):
+                    continue
+            elif cond_str is not None:
+                if not self._eval_condition(cond_str, data_dict):
+                    continue
+
+            writer.set_caption(current_caption, desc=current_caption_desc, spec_count=current_spec_count)
+
+            if isinstance(elem, StructElement):
+                key = elem.name or elem.struct_cls.__name__
+                val = data_dict.get(key)
+                if val is None:
+                    val = data_dict.get(elem.struct_cls.__name__)
+                if val is None:
+                    val = data_dict.get(elem.struct_cls)
+                if val is None and elem.name:
+                    val = data_dict.get(elem.name.lower())
+                if val is None:
+                    val = data_dict.get(elem.struct_cls.__name__.lower())
+                if val is None:
+                    for k, v in data_dict.items():
+                        if isinstance(v, elem.struct_cls):
+                            val = v
+                            break
+                        elif isinstance(v, (list, tuple)) and v and isinstance(v[0], elem.struct_cls):
+                            val = v
+                            break
+
+                if val is not None:
+                    if elem.count is not None or isinstance(val, (list, tuple)):
+                        item_list = val if isinstance(val, (list, tuple)) else [val]
+                        writer.write_repeated(
+                            item_list,
+                            title=elem.name or elem.struct_cls.__name__,
+                            spec_count=elem.count,
+                            desc=elem.desc,
+                            endian=endian or self.default_endian,
+                        )
+                    else:
+                        writer.write_struct(val, endian=endian or self.default_endian)
+
+            elif isinstance(elem, ChoiceElement):
+                val = data_dict.get(elem.name)
+                if val is None:
+                    norm_vars = _normalize_variants(elem.variants)
+                    candidate_classes = tuple(v[1] for v in norm_vars)
+                    for k, v in data_dict.items():
+                        if isinstance(v, candidate_classes):
+                            val = v
+                            break
+
+                if val is not None:
+                    tag_str = elem.tag_field if isinstance(elem.tag_field, str) else None
+                    writer.write_variant(
+                        val,
+                        candidates=elem.variants,
+                        tag_field=tag_str,
+                        name=elem.name,
+                        desc=elem.desc,
+                        endian=endian or self.default_endian,
+                    )
+
+            elif isinstance(elem, FieldElement):
+                val = data_dict.get(elem.name)
+                if val is not None:
+                    self._write_primitive_field(writer, elem, val, endian=endian or self.default_endian)
+
+        return writer
+
+    def to_bytes(
+        self,
+        data: Union[dict[str, Any], BuilderReadResult, list[Any], tuple[Any, ...], Any],
+        endian: Optional[str] = None,
+    ) -> bytes:
+        """Serialize data according to the registered schema and return raw bytes.
+
+        Args:
+            data: Dictionary, BuilderReadResult, or sequence containing struct instances and values.
+            endian: Optional endianness override.
+
+        Returns:
+            The serialized bytes.
+        """
+        writer = self.serialize(data, endian=endian)
+        return writer.to_bytes()
 
     def read(
         self,
@@ -1401,6 +1560,47 @@ class BinaryBuilder:
         if "bool" in t:
             return reader.read_bool(size=elem.size or 1, endian=endian)
         return reader.read_bytes(elem.size)
+
+    def _write_primitive_field(
+        self,
+        writer: Any,
+        elem: FieldElement,
+        val: Any,
+        endian: str,
+    ) -> None:
+        """Write an ad-hoc primitive field."""
+        t = elem.type_name.lower()
+        order = elem.endian or endian
+        if "uint8" in t:
+            writer.write_uint8(int(val), name=elem.name, desc=elem.desc)
+        elif "uint16" in t:
+            writer.write_uint16(int(val), endian=order, name=elem.name, desc=elem.desc)
+        elif "uint32" in t:
+            writer.write_uint32(int(val), endian=order, name=elem.name, desc=elem.desc)
+        elif "uint64" in t:
+            writer.write_uint64(int(val), endian=order, name=elem.name, desc=elem.desc)
+        elif "int8" in t:
+            writer.write_int8(int(val), name=elem.name, desc=elem.desc)
+        elif "int16" in t:
+            writer.write_int16(int(val), endian=order, name=elem.name, desc=elem.desc)
+        elif "int32" in t:
+            writer.write_int32(int(val), endian=order, name=elem.name, desc=elem.desc)
+        elif "int64" in t:
+            writer.write_int64(int(val), endian=order, name=elem.name, desc=elem.desc)
+        elif "float32" in t:
+            writer.write_float32(float(val), endian=order, name=elem.name, desc=elem.desc)
+        elif "float64" in t:
+            writer.write_float64(float(val), endian=order, name=elem.name, desc=elem.desc)
+        elif "bool" in t:
+            writer.write_bool(bool(val), size=elem.size or 1, endian=order, name=elem.name, desc=elem.desc)
+        elif "cstring" in t:
+            writer.write_cstring(str(val), name=elem.name, desc=elem.desc)
+        elif "fixedstring" in t:
+            writer.write_fixed_string(str(val), length=elem.size, name=elem.name, desc=elem.desc)
+        elif isinstance(val, (bytes, bytearray, memoryview)):
+            writer.write_bytes(bytes(val), name=elem.name, desc=elem.desc)
+        else:
+            writer.write_bytes(bytes(val), name=elem.name, desc=elem.desc)
 
 
 # Canonical aliases

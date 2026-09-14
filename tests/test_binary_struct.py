@@ -414,4 +414,55 @@ def test_offsetof_dynamic_fields():
     assert pkt.offsetof("checksum") == 7
 
 
+def test_bytes_and_string_types_in_binary_struct():
+    """Test Bytes[N], FixedString[N], CString, and PrefixedString in @binary_struct."""
+    from binary_master import Bytes, FixedString, CString, PrefixedString, read_struct
+
+    @binary_struct(endian="little")
+    class UserProfile:
+        magic: FixedString[4]          # 4-byte fixed string
+        uuid: Bytes[8]                 # 8 raw bytes
+        name: FixedString[16]         # 16-byte padded string
+        description: CString           # Null-terminated
+        auth_token: PrefixedString[2]  # Pascal string with 2-byte prefix
+
+    # 1. Static size checks
+    assert sizeof(Bytes[8]) == 8
+    assert sizeof(FixedString[16]) == 16
+    assert UserProfile.offsetof("magic") == 0
+    assert UserProfile.offsetof("uuid") == 4
+    assert UserProfile.offsetof("name") == 12
+
+    # 2. Serialization
+    user = UserProfile(
+        magic="USER",
+        uuid=b"\x01\x02\x03\x04\x05\x06\x07\x08",
+        name="Alice",
+        description="Software Engineer",
+        auth_token="secret_token_123",
+    )
+    raw = user.to_bytes()
+
+    # Verify binary contents
+    assert raw[:4] == b"USER"
+    assert raw[4:12] == b"\x01\x02\x03\x04\x05\x06\x07\x08"
+    assert raw[12:28] == b"Alice" + b"\x00" * 11
+    assert b"Software Engineer\x00" in raw
+
+    # 3. Deserialization
+    restored = read_struct(UserProfile, raw)
+    assert restored.magic == "USER"
+    assert isinstance(restored.uuid, bytes)
+    assert restored.uuid == b"\x01\x02\x03\x04\x05\x06\x07\x08"
+    assert restored.name == "Alice"
+    assert restored.description == "Software Engineer"
+    assert restored.auth_token == "secret_token_123"
+
+    # 4. Instance size
+    expected_size = 4 + 8 + 16 + (len("Software Engineer") + 1) + (2 + len("secret_token_123"))
+    assert sizeof(user) == expected_size
+    assert len(raw) == expected_size
+
+
+
 

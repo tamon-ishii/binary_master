@@ -33,7 +33,7 @@ from binary_master.binary_struct import (
     UInt64,
     Bool,
 )
-from binary_master.c_header import to_pascal_case
+from binary_master.code_gen.c import to_pascal_case
 
 
 def cpp_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
@@ -74,6 +74,17 @@ def cpp_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
             return "uint64_t", "8-byte boolean"
         else:
             return f"std::array<uint8_t, {size}>", f"{size}-byte boolean"
+
+    from binary_master.binary_struct import Bytes, FixedString, CString, PrefixedString
+    if isinstance(field_type, type) and issubclass(field_type, Bytes):
+        return f"std::array<uint8_t, {field_type._size}>", "raw bytes"
+    if isinstance(field_type, type) and issubclass(field_type, FixedString):
+        return f"std::array<char, {field_type._size}>", "fixed-length string"
+    if field_type is CString or (isinstance(field_type, type) and issubclass(field_type, CString)):
+        return "const char*", "null-terminated string"
+    if field_type is PrefixedString or (isinstance(field_type, type) and issubclass(field_type, PrefixedString)):
+        p_bytes = getattr(field_type, "prefix_bytes", 1)
+        return "const char*", f"prefixed string ({p_bytes}-byte length prefix)"
 
     # FixedArray[Elem, Count]
     is_fixed = (isinstance(field_type, tuple) and len(field_type) >= 3 and field_type[0] is FixedArray) or (

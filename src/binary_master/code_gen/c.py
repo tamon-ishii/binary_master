@@ -1,8 +1,9 @@
-"""C# (.NET / Unity) code generator for binary_master schemas and structs."""
+"""C/C++ header file generator for binary_master schemas and structs."""
 
 from __future__ import annotations
 
 import inspect
+import re
 from pathlib import Path
 from typing import (
     Any,
@@ -33,31 +34,57 @@ from binary_master.binary_struct import (
     UInt64,
     Bool,
 )
-from binary_master.code_gen.c import to_pascal_case
 
 
-def csharp_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
-    """Determine the C# type, array length, and optional comment note."""
+def to_snake_case(name: str) -> str:
+    """Convert PascalCase or camelCase name to snake_case."""
+    s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    s2 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1)
+    return s2.lower()
+
+
+def to_screaming_snake_case(name: str) -> str:
+    """Convert PascalCase, camelCase, or snake_case to SCREAMING_SNAKE_CASE."""
+    return to_snake_case(name).upper()
+
+
+def to_pascal_case(name: str) -> str:
+    """Convert snake_case or identifier to PascalCase."""
+    snake = to_snake_case(name)
+    parts = re.split(r"[^a-zA-Z0-9]+", snake)
+    return "".join(p.capitalize() for p in parts if p)
+
+
+def c_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
+    """Determine the C type, array count, and optional inline comment for a binary field type.
+
+    Returns:
+        (c_type_name, array_size_or_None, comment_annotation_or_None)
+    """
     if get_origin(field_type) is Annotated:
         args = get_args(field_type)
-        return csharp_type_of(args[0])
+        base_t = args[0]
+        c_name, arr_sz, _ = c_type_of(base_t)
+        ann_desc = str(args[1]) if len(args) > 1 else None
+        return c_name, arr_sz, ann_desc
 
+    # Primitives
     if field_type is UInt8:
-        return "byte", None, None
+        return "uint8_t", None, None
     if field_type is UInt16:
-        return "ushort", None, None
+        return "uint16_t", None, None
     if field_type is UInt32:
-        return "uint", None, None
+        return "uint32_t", None, None
     if field_type is UInt64:
-        return "ulong", None, None
+        return "uint64_t", None, None
     if field_type is Int8:
-        return "sbyte", None, None
+        return "int8_t", None, None
     if field_type is Int16:
-        return "short", None, None
+        return "int16_t", None, None
     if field_type is Int32:
-        return "int", None, None
+        return "int32_t", None, None
     if field_type is Int64:
-        return "long", None, None
+        return "int64_t", None, None
     if field_type is Float32:
         return "float", None, None
     if field_type is Float64:
@@ -67,24 +94,24 @@ def csharp_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
         if size == 1:
             return "bool", None, None
         elif size == 2:
-            return "ushort", None, "2-byte boolean"
+            return "uint16_t", None, "2-byte boolean"
         elif size == 4:
-            return "uint", None, "4-byte boolean"
+            return "uint32_t", None, "4-byte boolean"
         elif size == 8:
-            return "ulong", None, "8-byte boolean"
+            return "uint64_t", None, "8-byte boolean"
         else:
-            return "byte", size, f"{size}-byte boolean"
+            return "uint8_t", size, f"{size}-byte boolean"
 
     from binary_master.binary_struct import Bytes, FixedString, CString, PrefixedString
     if isinstance(field_type, type) and issubclass(field_type, Bytes):
-        return "byte[]", field_type._size, "raw bytes"
+        return "uint8_t", field_type._size, "raw bytes"
     if isinstance(field_type, type) and issubclass(field_type, FixedString):
-        return "string", field_type._size, "fixed-length string"
+        return "char", field_type._size, "fixed-length string"
     if field_type is CString or (isinstance(field_type, type) and issubclass(field_type, CString)):
-        return "string", None, "null-terminated string"
+        return "char*", None, "null-terminated string"
     if field_type is PrefixedString or (isinstance(field_type, type) and issubclass(field_type, PrefixedString)):
         p_bytes = getattr(field_type, "prefix_bytes", 1)
-        return "string", None, f"prefixed string ({p_bytes}-byte length prefix)"
+        return "char*", None, f"prefixed string ({p_bytes}-byte length prefix)"
 
     # FixedArray[Elem, Count]
     is_fixed = (isinstance(field_type, tuple) and len(field_type) >= 3 and field_type[0] is FixedArray) or (
@@ -98,8 +125,8 @@ def csharp_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
             args = get_args(field_type)
             elem_t = args[0]
             cnt = args[1]
-        elem_cs, _, _ = csharp_type_of(elem_t)
-        return f"{elem_cs}[]", cnt, None
+        elem_c, _, _ = c_type_of(elem_t)
+        return elem_c, cnt, None
 
     # Offset[Target, Size, Base]
     is_offset = (isinstance(field_type, tuple) and len(field_type) >= 1 and field_type[0] is Offset) or (
@@ -120,8 +147,8 @@ def csharp_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
             if len(args) >= 2 and args[1] in (UInt8, UInt16, UInt32, UInt64):
                 offset_t = args[1]
 
-        cs_name, _, _ = csharp_type_of(offset_t)
-        return cs_name, None, f"Offset to {target_name}"
+        c_name, _, _ = c_type_of(offset_t)
+        return c_name, None, f"Offset to {target_name}"
 
     # OffsetTable[Count, Type, Base]
     is_offset_tbl = (isinstance(field_type, tuple) and len(field_type) >= 1 and field_type[0] is OffsetTable) or (
@@ -141,14 +168,15 @@ def csharp_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
                 count = args[0]
             if len(args) >= 2:
                 offset_t = args[1]
-        cs_name, _, _ = csharp_type_of(offset_t)
-        return f"{cs_name}[]", count, "Offset table"
+        c_name, _, _ = c_type_of(offset_t)
+        return c_name, count, "Offset table"
 
     # Nested binary_struct
     if hasattr(field_type, "__binary__"):
         return field_type.__name__, None, None
 
-    return "byte", None, None
+    # Fallback
+    return "uint8_t", None, None
 
 
 def _get_type_name(type_obj: Any) -> str:
@@ -159,13 +187,13 @@ def _get_type_name(type_obj: Any) -> str:
     return type_obj.__class__.__name__
 
 
-def generate_csharp_struct(
+def generate_c_struct(
     struct_cls: type,
     name: Optional[str] = None,
     desc: str = "",
     condition: Optional[str] = None,
 ) -> str:
-    """Generate C# struct definition for a @binary_struct class."""
+    """Generate a C typedef struct definition for a @binary_struct class."""
     if not hasattr(struct_cls, "__binary__"):
         raise TypeError(f"Class {_get_type_name(struct_cls)} is not a binary_struct")
 
@@ -174,73 +202,67 @@ def generate_csharp_struct(
     field_alias = name if (name and name != cls_name) else None
     doc_text = desc or getattr(struct_cls, "__doc__", "") or meta.get("doc", "")
 
-    lines: List[str] = ["/// <summary>"]
+    # Doxygen docstring header
+    lines: List[str] = ["/**"]
     if field_alias:
-        lines.append(f"/// Logical Name: {field_alias}")
+        lines.append(f" * @brief Logical Name: `{field_alias}`")
     if doc_text:
         for d_line in inspect.cleandoc(doc_text).splitlines():
-            lines.append(f"/// {d_line}")
+            lines.append(f" * {d_line}")
     elif not field_alias:
-        lines.append(f"/// {cls_name} binary structure.")
+        lines.append(f" * @brief {cls_name} structure.")
+
     if condition:
-        lines.append(f"/// Condition: {condition}")
-    lines.append("/// </summary>")
+        lines.append(f" * @note Condition: {condition}")
+    lines.append(" */")
 
     total_bits = meta.get("bits")
     if isinstance(total_bits, int):
+        # Bitfield struct
         if total_bits <= 8:
-            base_type = "byte"
+            base_type = "uint8_t"
         elif total_bits <= 16:
-            base_type = "ushort"
+            base_type = "uint16_t"
         elif total_bits <= 32:
-            base_type = "uint"
+            base_type = "uint32_t"
         else:
-            base_type = "ulong"
+            base_type = "uint64_t"
 
-        lines.append("[StructLayout(LayoutKind.Sequential, Pack = 1)]")
-        lines.append(f"public struct {cls_name} {{")
-        lines.append(f"    public {base_type} Raw;")
-
+        lines.append(f"typedef struct {cls_name} {{")
         fields = meta.get("fields", {})
         descriptions = meta.get("descriptions", {})
         shift = 0
         for field_name, field_type in fields.items():
             width = field_type[1] if isinstance(field_type, tuple) and len(field_type) >= 2 else 1
             field_desc = descriptions.get(field_name, "")
-            mask = (1 << width) - 1
-            prop_name = to_pascal_case(field_name)
-            doc = f"    /// <summary>Bits [{shift}:{shift + width - 1}]{': ' + field_desc if field_desc else ''}</summary>"
-            lines.append(doc)
-            lines.append(f"    public {base_type} {prop_name} => ({base_type})((Raw >> {shift}) & 0x{mask:X});")
+            bit_end = shift + width - 1
+            bit_range = f"[{shift}:{bit_end}]" if width > 1 else f"[{shift}]"
+            comment = f" /**< Bit {bit_range}{': ' + field_desc if field_desc else ''} */"
+            lines.append(f"    {base_type} {field_name} : {width};{comment}")
             shift += width
-
-        lines.append("}")
+        lines.append(f"}} {cls_name};")
     else:
-        lines.append("[StructLayout(LayoutKind.Sequential, Pack = 1)]")
-        lines.append(f"public struct {cls_name} {{")
+        # Regular struct
+        lines.append(f"typedef struct {cls_name} {{")
         fields = meta.get("fields", {})
         descriptions = meta.get("descriptions", {})
 
         for field_name, field_type in fields.items():
-            cs_type, arr_cnt, note = csharp_type_of(field_type)
+            c_name, arr_cnt, note = c_type_of(field_type)
             field_desc = descriptions.get(field_name, "") or note or ""
-            prop_name = to_pascal_case(field_name)
-
-            if field_desc:
-                lines.append(f"    /// <summary>{field_desc}</summary>")
+            comment = f" /**< {field_desc} */" if field_desc else ""
 
             if arr_cnt is not None:
-                lines.append(f"    [MarshalAs(UnmanagedType.ByValArray, SizeConst = {arr_cnt})]")
-                lines.append(f"    public {cs_type} {prop_name};")
+                lines.append(f"    {c_name} {field_name}[{arr_cnt}];{comment}")
             else:
-                lines.append(f"    public {cs_type} {prop_name};")
+                lines.append(f"    {c_name} {field_name};{comment}")
 
-        lines.append("}")
+        lines.append(f"}} {cls_name};")
 
     return "\n".join(lines)
 
 
-def generate_csharp_choice(
+def generate_c_choice(
     choice_name: str,
     tag_field: Union[str, Any],
     variants: Any,
@@ -248,7 +270,7 @@ def generate_csharp_choice(
     condition: Optional[str] = None,
     emitted_structs: Optional[Set[str]] = None,
 ) -> str:
-    """Generate C# enum tag and explicit union for a choice."""
+    """Generate C enum tag constants, variant structs, and union definition for a choice."""
     from binary_master.builder import _normalize_variants
 
     if emitted_structs is None:
@@ -260,51 +282,57 @@ def generate_csharp_choice(
     # 1. Tag Enum definition
     enum_name = f"{to_pascal_case(choice_name)}Tag"
     lines: List[str] = [
-        "/// <summary>",
-        f"/// Tag values for choice `{choice_name}` (dispatched by `{tag_field_name}`).",
+        "/**",
+        f" * @brief Tag values for choice `{choice_name}` (dispatched by `{tag_field_name}`).",
     ]
     if desc:
-        lines.append(f"/// {desc}")
+        lines.append(f" * {desc}")
     if condition:
-        lines.append(f"/// Condition: {condition}")
-    lines.append("/// </summary>")
-    lines.append(f"public enum {enum_name} : ushort {{")
+        lines.append(f" * @note Condition: {condition}")
+    lines.append(" */")
+    lines.append(f"typedef enum {enum_name} {{")
 
+    prefix = to_screaming_snake_case(choice_name)
     for tag, v_cls, v_desc in norm_vars:
         v_cls_name = _get_type_name(v_cls)
         tag_val_str = f"0x{tag:02X}" if isinstance(tag, int) else f"{tag}"
-        variant_tag_name = to_pascal_case(v_cls_name)
-        if v_desc:
-            lines.append(f"    /// <summary>{v_desc}</summary>")
-        lines.append(f"    {variant_tag_name} = {tag_val_str},")
-    lines.append("}\n")
+        tag_enum_id = f"{prefix}_TAG_{to_screaming_snake_case(v_cls_name)}"
+        comment = f" /**< Tag {tag_val_str}: {v_desc or v_cls_name} */"
+        lines.append(f"    {tag_enum_id} = {tag_val_str},{comment}")
+    lines.append(f"}} {enum_name};\n")
 
     # 2. Emit each variant struct if not already emitted
     for tag, v_cls, v_desc in norm_vars:
         v_cls_name = _get_type_name(v_cls)
         if v_cls_name not in emitted_structs:
-            lines.append(generate_csharp_struct(v_cls, desc=v_desc))
+            lines.append(generate_c_struct(v_cls, desc=v_desc))
             lines.append("")
             emitted_structs.add(v_cls_name)
 
-    # 3. Emit C# Explicit Layout Union
+    # 3. Emit Union definition
     union_name = f"{to_pascal_case(choice_name)}Union"
-    lines.append("/// <summary>")
-    lines.append(f"/// Polymorphic union container for choice `{choice_name}`.")
-    lines.append("/// </summary>")
-    lines.append("[StructLayout(LayoutKind.Explicit, Pack = 1)]")
-    lines.append(f"public struct {union_name} {{")
+    lines.append("/**")
+    lines.append(f" * @brief Polymorphic union for choice `{choice_name}`.")
+    lines.append(" */")
+    lines.append(f"typedef union {union_name} {{")
     for tag, v_cls, v_desc in norm_vars:
         v_cls_name = _get_type_name(v_cls)
-        prop_name = to_pascal_case(v_cls_name)
-        lines.append(f"    [FieldOffset(0)] public {v_cls_name} {prop_name};")
-    lines.append("}")
+        member_name = to_snake_case(v_cls_name)
+        lines.append(f"    {v_cls_name} {member_name};")
+    lines.append(f"}} {union_name};")
 
     return "\n".join(lines)
 
 
-def generate_csharp_code(builder: Any, namespace: str = "BinaryProtocol") -> str:
-    """Generate complete C# source file from a BinaryBuilder instance."""
+def generate_c_header(
+    builder: Any,
+    guard: Optional[str] = None,
+    pack: bool = True,
+) -> str:
+    """Generate a complete C99/C11 header file from a BinaryBuilder or BinaryWriter instance."""
+    if hasattr(builder, "to_builder"):
+        builder = builder.to_builder()
+
     from binary_master.builder import (
         ChoiceElement,
         DocumentElement,
@@ -317,57 +345,79 @@ def generate_csharp_code(builder: Any, namespace: str = "BinaryProtocol") -> str
     version = getattr(builder, "version", None)
     elements = getattr(builder, "elements", [])
 
+    if guard is None:
+        clean_title = re.sub(r"[^a-zA-Z0-9_]", "_", title).strip("_").upper()
+        guard = f"{clean_title}_H"
+
+    # Include Guard
     lines: List[str] = [
-        "// " + "=" * 76,
-        f"// {title}",
+        f"#ifndef {guard}",
+        f"#define {guard}\n",
+        "/**",
+        " * @file",
+        f" * @brief {title}",
     ]
     if version:
-        lines.append(f"// Version: {version}")
+        lines.append(f" * @version {version}")
     if getattr(builder, "description", ""):
         for d in builder.description.strip().splitlines():
-            lines.append(f"// {d}")
-    lines.append("// Automatically generated by binary_master.")
-    lines.append("// " + "=" * 76 + "\n")
+            lines.append(f" * {d}")
+    lines.append(" *")
+    lines.append(" * Automatically generated by binary_master.")
+    lines.append(" */\n")
 
-    lines.append("using System;")
-    lines.append("using System.Runtime.InteropServices;\n")
+    # Standard C Includes
+    lines.append("#include <stdint.h>")
+    lines.append("#include <stdbool.h>\n")
 
-    lines.append(f"namespace {namespace} {{")
+    # C++ extern "C" guard
+    lines.append("#ifdef __cplusplus")
+    lines.append('extern "C" {')
+    lines.append("#endif\n")
+
+    # Packing Pragma
+    if pack:
+        lines.append("/* Force 1-byte struct alignment for exact binary wire format */")
+        lines.append("#if defined(_MSC_VER)")
+        lines.append("#pragma pack(push, 1)")
+        lines.append("#elif defined(__GNUC__) || defined(__clang__)")
+        lines.append("#pragma pack(push, 1)")
+        lines.append("#endif\n")
 
     emitted_structs: Set[str] = set()
 
     for elem in elements:
         if isinstance(elem, DocumentElement):
-            lines.append("    // " + "=" * 72)
-            lines.append(f"    // {elem.title}")
-            lines.append("    // " + "=" * 72)
+            lines.append("/*")
+            lines.append(" * " + "=" * 76)
+            lines.append(f" * {elem.title}")
+            lines.append(" * " + "=" * 76)
             for c_line in elem.content.splitlines():
-                lines.append(f"    // {c_line}" if c_line else "    //")
-            lines.append("")
+                lines.append(f" * {c_line}" if c_line else " *")
+            lines.append(" */\n")
 
         elif isinstance(elem, SectionElement):
-            lines.append("    // " + "-" * 72)
-            lines.append(f"    // Section: {elem.title}")
+            lines.append("/* " + "-" * 76)
+            lines.append(f" * Section: {elem.title}")
             if elem.desc:
-                lines.append(f"    // {elem.desc}")
-            lines.append("    // " + "-" * 72 + "\n")
+                lines.append(f" * {elem.desc}")
+            lines.append(" * " + "-" * 76 + " */\n")
 
         elif isinstance(elem, StructElement):
             s_name = elem.struct_cls.__name__
             if s_name not in emitted_structs:
-                s_code = generate_csharp_struct(
+                s_code = generate_c_struct(
                     elem.struct_cls,
                     name=elem.name,
                     desc=elem.desc,
                     condition=elem.condition,
                 )
-                for sc_line in s_code.splitlines():
-                    lines.append(f"    {sc_line}" if sc_line else "")
+                lines.append(s_code)
                 lines.append("")
                 emitted_structs.add(s_name)
 
         elif isinstance(elem, ChoiceElement):
-            c_code = generate_csharp_choice(
+            c_code = generate_c_choice(
                 choice_name=elem.name,
                 tag_field=elem.tag_field,
                 variants=elem.variants,
@@ -375,27 +425,42 @@ def generate_csharp_code(builder: Any, namespace: str = "BinaryProtocol") -> str
                 condition=elem.condition,
                 emitted_structs=emitted_structs,
             )
-            for cc_line in c_code.splitlines():
-                lines.append(f"    {cc_line}" if cc_line else "")
+            lines.append(c_code)
             lines.append("")
 
         elif isinstance(elem, FieldElement):
-            cs_t, _, _ = csharp_type_of(elem.type_name)
-            desc_str = f" // {elem.desc}" if elem.desc else ""
-            lines.append(f"    // Ad-hoc field: {elem.name} ({elem.type_name}, {elem.size}B){desc_str}\n")
+            c_type, arr_cnt, _ = c_type_of(elem.type_name)
+            desc_str = f" /**< {elem.desc} */" if elem.desc else ""
+            lines.append(f"/* Ad-hoc field: {elem.name} ({elem.type_name}, {elem.size}B){desc_str} */\n")
 
+    # Restore Packing Pragma
+    if pack:
+        lines.append("#if defined(_MSC_VER) || defined(__GNUC__) || defined(__clang__)")
+        lines.append("#pragma pack(pop)")
+        lines.append("#endif\n")
+
+    # Close C++ extern "C" guard
+    lines.append("#ifdef __cplusplus")
     lines.append("}")
+    lines.append("#endif\n")
+
+    # Close Include Guard
+    lines.append(f"#endif /* {guard} */\n")
 
     return "\n".join(lines)
 
 
-def write_csharp(
+to_c_header = generate_c_header
+
+
+def write_c_header(
     builder: Any,
     path_or_file: Optional[Union[str, Path, IO[str]]] = None,
-    namespace: str = "BinaryProtocol",
+    guard: Optional[str] = None,
+    pack: bool = True,
 ) -> str:
-    """Generate C# code from a BinaryBuilder and optionally save to file."""
-    content = generate_csharp_code(builder, namespace=namespace)
+    """Generate C header code from a BinaryBuilder and optionally save to file."""
+    content = generate_c_header(builder, guard=guard, pack=pack)
     if path_or_file is not None:
         if isinstance(path_or_file, (str, Path)):
             p = Path(path_or_file)
@@ -406,3 +471,8 @@ def write_csharp(
         else:
             raise TypeError(f"Invalid path_or_file: {type(path_or_file).__name__}")
     return content
+
+
+def to_c_struct(struct_cls: type, name: Optional[str] = None, desc: str = "") -> str:
+    """Convenience helper to generate a C struct definition from a single @binary_struct class."""
+    return generate_c_struct(struct_cls, name=name, desc=desc)

@@ -33,7 +33,7 @@ from binary_master.binary_struct import (
     UInt64,
     Bool,
 )
-from binary_master.c_header import to_pascal_case
+from binary_master.code_gen.c import to_pascal_case
 
 
 def go_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
@@ -74,6 +74,17 @@ def go_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
             return "uint64", "8-byte boolean"
         else:
             return f"[{size}]byte", f"{size}-byte boolean"
+
+    from binary_master.binary_struct import Bytes, FixedString, CString, PrefixedString
+    if isinstance(field_type, type) and issubclass(field_type, Bytes):
+        return f"[{field_type._size}]byte", "raw bytes"
+    if isinstance(field_type, type) and issubclass(field_type, FixedString):
+        return f"[{field_type._size}]byte", "fixed-length string"
+    if field_type is CString or (isinstance(field_type, type) and issubclass(field_type, CString)):
+        return "string", "null-terminated string"
+    if field_type is PrefixedString or (isinstance(field_type, type) and issubclass(field_type, PrefixedString)):
+        p_bytes = getattr(field_type, "prefix_bytes", 1)
+        return "string", f"prefixed string ({p_bytes}-byte length prefix)"
 
     # FixedArray[Elem, Count]
     is_fixed = (isinstance(field_type, tuple) and len(field_type) >= 3 and field_type[0] is FixedArray) or (

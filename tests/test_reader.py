@@ -286,3 +286,43 @@ def test_roundtrip_auto_aligned():
     unpacked = AutoAlignedRoundTrip.from_bytes(raw)
     assert unpacked.tag == 0x77
     assert unpacked.value == 0xAABBCCDD
+
+
+def test_reader_peek_and_is_eof():
+    """Test BinaryReader.peek, typed peeks, is_eof, and preserve_position."""
+    data = b"\x12\x34\x56\x78\x9A\xBC\xDE\xF0"
+    reader = BinaryReader(data, default_endian="little")
+
+    assert not reader.is_eof
+    assert not reader.eof
+    assert reader.tell() == 0
+
+    # Peek raw bytes
+    assert reader.peek(4) == b"\x12\x34\x56\x78"
+    assert reader.peek_bytes(4) == b"\x12\x34\x56\x78"
+    assert reader.tell() == 0
+
+    # Peek typed integers
+    assert reader.peek_uint8() == 0x12
+    assert reader.peek_uint16() == 0x3412
+    assert reader.peek_uint32() == 0x78563412
+    assert reader.tell() == 0
+
+    # Read some bytes
+    assert reader.read_uint32() == 0x78563412
+    assert reader.tell() == 4
+    assert not reader.is_eof
+
+    # preserve_position context manager
+    with reader.preserve_position():
+        val = reader.read_uint32()
+        assert val == 0xF0DEBC9A
+        assert reader.tell() == 8
+
+    # Cursor restored
+    assert reader.tell() == 4
+    assert reader.read_uint32() == 0xF0DEBC9A
+    assert reader.tell() == 8
+    assert reader.is_eof
+    assert reader.eof
+    assert reader.peek(4) == b""

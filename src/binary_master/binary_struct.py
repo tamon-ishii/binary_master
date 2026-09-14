@@ -133,6 +133,177 @@ class Bool(BinaryType, metaclass=BoolMeta):
     _size = 1
 
 
+class BytesMeta(BinaryTypeMeta):
+    """Metaclass for Bytes allowing parameterized length like Bytes[16], Bytes[4], etc."""
+
+    _cache: dict[int, type] = {}
+
+    def __getitem__(cls, length: int) -> type:
+        if not isinstance(length, int) or length <= 0:
+            raise ValueError(f"Bytes length must be a positive integer, got {length}")
+        if length in cls._cache:
+            return cls._cache[length]
+
+        name = f"Bytes[{length}]"
+        base_cls = cls if cls.__name__ == "Bytes" else cls.__bases__[0]
+        subcls = BytesMeta(
+            name,
+            (base_cls,),
+            {
+                "_size": length,
+                "_fmt": f"{length}s",
+                "length": length,
+                "__module__": cls.__module__,
+                "__qualname__": name,
+            },
+        )
+        cls._cache[length] = subcls
+        return subcls
+
+    def __call__(cls, *args, **kwargs):
+        if args and isinstance(args[0], int) and len(args) == 1 and not kwargs:
+            return cls[args[0]]
+        if "length" in kwargs and len(kwargs) == 1 and not args:
+            return cls[kwargs["length"]]
+        if args:
+            return bytes(args[0])
+        return b""
+
+    def __repr__(cls) -> str:
+        if cls._size == 0 and cls.__name__ == "Bytes":
+            return "Bytes"
+        return f"Bytes[{cls._size}]"
+
+
+class Bytes(BinaryType, metaclass=BytesMeta):
+    """Fixed-length raw byte sequence type: Bytes[N] (e.g. Bytes[16])."""
+
+    _size = 0
+    _fmt = "s"
+
+
+class FixedStringMeta(BinaryTypeMeta):
+    """Metaclass for FixedString allowing parameterized length like FixedString[16]."""
+
+    _cache: dict[tuple, type] = {}
+
+    def __getitem__(cls, args: Union[int, tuple]) -> type:
+        if isinstance(args, tuple):
+            length = args[0]
+            encoding = args[1] if len(args) > 1 else "utf-8"
+            pad_byte = args[2] if len(args) > 2 else b"\x00"
+        else:
+            length = args
+            encoding = "utf-8"
+            pad_byte = b"\x00"
+
+        if not isinstance(length, int) or length <= 0:
+            raise ValueError(f"FixedString length must be a positive integer, got {length}")
+
+        cache_key = (length, encoding, pad_byte)
+        if cache_key in cls._cache:
+            return cls._cache[cache_key]
+
+        name = f"FixedString[{length}]"
+        base_cls = cls if cls.__name__ == "FixedString" else cls.__bases__[0]
+        subcls = FixedStringMeta(
+            name,
+            (base_cls,),
+            {
+                "_size": length,
+                "_fmt": f"{length}s",
+                "length": length,
+                "encoding": encoding,
+                "pad_byte": pad_byte,
+                "__module__": cls.__module__,
+                "__qualname__": name,
+            },
+        )
+        cls._cache[cache_key] = subcls
+        return subcls
+
+    def __call__(cls, *args, **kwargs):
+        if args and isinstance(args[0], int) and len(args) == 1 and not kwargs:
+            return cls[args[0]]
+        if args:
+            return str(args[0])
+        return ""
+
+    def __repr__(cls) -> str:
+        if cls._size == 0 and cls.__name__ == "FixedString":
+            return "FixedString"
+        return f"FixedString[{cls._size}]"
+
+
+class FixedString(BinaryType, metaclass=FixedStringMeta):
+    """Fixed-length string type: FixedString[N] (e.g. FixedString[32])."""
+
+    _size = 0
+    _fmt = "s"
+    encoding = "utf-8"
+    pad_byte = b"\x00"
+
+
+class CString(BinaryType):
+    """Null-terminated (C-style) string type."""
+
+    _size = 0
+    _fmt = "s"
+    encoding = "utf-8"
+
+    def __repr__(self) -> str:
+        return "CString"
+
+
+class PrefixedStringMeta(BinaryTypeMeta):
+    """Metaclass for PrefixedString allowing parameterized prefix bytes like PrefixedString[2]."""
+
+    _cache: dict[tuple, type] = {}
+
+    def __getitem__(cls, args: Union[int, tuple]) -> type:
+        if isinstance(args, tuple):
+            prefix_bytes = args[0]
+            encoding = args[1] if len(args) > 1 else "utf-8"
+        else:
+            prefix_bytes = args
+            encoding = "utf-8"
+
+        if prefix_bytes not in (1, 2, 4, 8):
+            raise ValueError(f"PrefixedString prefix_bytes must be 1, 2, 4, or 8, got {prefix_bytes}")
+
+        cache_key = (prefix_bytes, encoding)
+        if cache_key in cls._cache:
+            return cls._cache[cache_key]
+
+        name = f"PrefixedString[{prefix_bytes}]"
+        base_cls = cls if cls.__name__ == "PrefixedString" else cls.__bases__[0]
+        subcls = PrefixedStringMeta(
+            name,
+            (base_cls,),
+            {
+                "_size": 0,
+                "prefix_bytes": prefix_bytes,
+                "encoding": encoding,
+                "__module__": cls.__module__,
+                "__qualname__": name,
+            },
+        )
+        cls._cache[cache_key] = subcls
+        return subcls
+
+    def __repr__(cls) -> str:
+        p = getattr(cls, "prefix_bytes", 1)
+        return f"PrefixedString[{p}]"
+
+
+class PrefixedString(BinaryType, metaclass=PrefixedStringMeta):
+    """Length-prefixed Pascal-style string type: PrefixedString or PrefixedString[prefix_bytes]."""
+
+    _size = 0
+    prefix_bytes = 1
+    encoding = "utf-8"
+
+
 # ==========================================================
 # Generic Types
 # ==========================================================
@@ -494,6 +665,17 @@ def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool =
             if isinstance(target_obj, (bytes, bytearray, memoryview)):
                 return len(target_obj)
             return 0
+        if isinstance(val, str):
+            if ftype is CString or (isinstance(ftype, type) and issubclass(ftype, CString)):
+                return len(val.encode(getattr(ftype, "encoding", "utf-8"))) + 1
+            if ftype is PrefixedString or (isinstance(ftype, type) and issubclass(ftype, PrefixedString)):
+                p_bytes = getattr(ftype, "prefix_bytes", 1)
+                return len(val.encode(getattr(ftype, "encoding", "utf-8"))) + p_bytes
+            if ftype is FixedString or (isinstance(ftype, type) and issubclass(ftype, FixedString)):
+                return ftype._size
+            return len(val.encode("utf-8")) + 1
+        if isinstance(ftype, type) and issubclass(ftype, Bytes):
+            return ftype._size if ftype._size > 0 else (len(val) if val is not None else 0)
         is_arr = (
             (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] is Array)
             or (get_origin(ftype) is Array)
@@ -547,6 +729,10 @@ def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool =
     elif hasattr(ftype, "__binary__"):
         return sizeof(ftype)
     elif isinstance(ftype, type) and issubclass(ftype, BinaryType):
+        if is_cls and ftype._size == 0:
+            raise ValueError(
+                f"Cannot determine static binary size for variable-length field '{name}' with type {getattr(ftype, '__name__', str(ftype))}; use sizeof(instance) or offsetof(instance, '{name}') instead"
+            )
         return ftype._size
     elif ftype in (int, float):
         return 4
@@ -1313,6 +1499,42 @@ def write_struct(
             )
             continue
 
+        # Check FixedString type
+        if isinstance(ftype, type) and issubclass(ftype, FixedString):
+            s_val = str(val) if val is not None else ""
+            enc = getattr(ftype, "encoding", "utf-8")
+            pad = getattr(ftype, "pad_byte", b"\x00")
+            writer.write_fixed_string(s_val, length=ftype._size, pad_byte=pad, encoding=enc, name=name, desc=f_desc)
+            continue
+
+        # Check Bytes type
+        if isinstance(ftype, type) and issubclass(ftype, Bytes):
+            b_val = bytes(val) if val is not None else b""
+            if ftype._size > 0:
+                if len(b_val) < ftype._size:
+                    b_val = b_val.ljust(ftype._size, b"\x00")
+                elif len(b_val) > ftype._size:
+                    b_val = b_val[:ftype._size]
+            writer.write_bytes(b_val, name=name, desc=f_desc)
+            if hasattr(writer, "_entries") and writer._entries and ftype._size > 0:
+                writer._entries[-1].type_name = f"Bytes[{ftype._size}]"
+            continue
+
+        # Check CString type
+        if ftype is CString or (isinstance(ftype, type) and issubclass(ftype, CString)):
+            s_val = str(val) if val is not None else ""
+            enc = getattr(ftype, "encoding", "utf-8")
+            writer.write_cstring(s_val, encoding=enc, name=name, desc=f_desc)
+            continue
+
+        # Check PrefixedString type
+        if ftype is PrefixedString or (isinstance(ftype, type) and issubclass(ftype, PrefixedString)):
+            s_val = str(val) if val is not None else ""
+            p_bytes = getattr(ftype, "prefix_bytes", 1)
+            enc = getattr(ftype, "encoding", "utf-8")
+            writer.write_prefixed_string(s_val, prefix_bytes=p_bytes, endian=active_endian, encoding=enc, name=name, desc=f_desc)
+            continue
+
         # Check primitive BinaryType
         if isinstance(ftype, type) and issubclass(ftype, BinaryType):
             fmt = ftype._fmt
@@ -1614,6 +1836,31 @@ def read_struct(
         # Check Bool type
         if ftype is Bool or (isinstance(ftype, type) and issubclass(ftype, Bool)):
             kwargs[name] = reader.read_bool(size=ftype._size, endian=active_endian)
+            continue
+
+        # Check FixedString type
+        if isinstance(ftype, type) and issubclass(ftype, FixedString):
+            enc = getattr(ftype, "encoding", "utf-8")
+            pad = getattr(ftype, "pad_byte", b"\x00")
+            kwargs[name] = reader.read_fixed_string(ftype._size, pad_byte=pad, encoding=enc)
+            continue
+
+        # Check Bytes type
+        if isinstance(ftype, type) and issubclass(ftype, Bytes):
+            kwargs[name] = reader.read_bytes(ftype._size if ftype._size > 0 else None)
+            continue
+
+        # Check CString type
+        if ftype is CString or (isinstance(ftype, type) and issubclass(ftype, CString)):
+            enc = getattr(ftype, "encoding", "utf-8")
+            kwargs[name] = reader.read_cstring(encoding=enc)
+            continue
+
+        # Check PrefixedString type
+        if ftype is PrefixedString or (isinstance(ftype, type) and issubclass(ftype, PrefixedString)):
+            p_bytes = getattr(ftype, "prefix_bytes", 1)
+            enc = getattr(ftype, "encoding", "utf-8")
+            kwargs[name] = reader.read_prefixed_string(prefix_bytes=p_bytes, endian=active_endian, encoding=enc)
             continue
 
         # Check primitive BinaryType

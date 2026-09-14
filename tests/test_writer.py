@@ -193,3 +193,28 @@ def test_end_to_end_packet_builder():
     assert data.endswith(b"\xDE\xAD\xBE\xEF")
     assert len(data) % 4 == 0
 
+
+def test_writer_preserve_position_and_at_offset():
+    """Test BinaryWriter.preserve_position and at_offset context managers."""
+    writer = BinaryWriter()
+    writer.write_uint32(0)  # placeholder for checksum/length at offset 0
+    writer.write_bytes(b"hello world")
+    assert writer.tell() == 15
+
+    # Use at_offset to backpatch offset 0
+    with writer.at_offset(0):
+        assert writer.tell() == 0
+        writer.write_uint32(11)  # payload length
+        assert writer.tell() == 4
+
+    # Position is automatically restored to end of stream
+    assert writer.tell() == 15
+    writer.write_uint8(0xFF)
+    assert writer.tell() == 16
+
+    data = writer.to_bytes()
+    assert data[:4] == b"\x0b\x00\x00\x00"
+    assert data[4:15] == b"hello world"
+    assert data[15] == 0xFF
+
+
