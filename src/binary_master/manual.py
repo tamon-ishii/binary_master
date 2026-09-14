@@ -34,7 +34,7 @@ def create_dummy_instance(struct_cls: type) -> Any:
     if not hasattr(struct_cls, "__binary__"):
         return None
     from typing import get_origin, get_args, Annotated
-    from binary_master.binary_struct import BinaryType, FixedArray, Array, Offset, UInt8, OffsetTable
+    from binary_master.binary_struct import BinaryType, FixedArray, Array, Offset, UInt8, OffsetTable, Bool
 
     meta: dict[str, Any] = getattr(struct_cls, "__binary__", {})
     fields = meta.get("fields", {})
@@ -58,7 +58,9 @@ def create_dummy_instance(struct_cls: type) -> Any:
         is_offset = (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is Offset) or (get_origin(ft) is Offset)
         is_offset_tbl = (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is OffsetTable) or (get_origin(ft) is OffsetTable)
 
-        if isinstance(ft, type) and issubclass(ft, BinaryType):
+        if ft is bool or (isinstance(ft, type) and issubclass(ft, Bool)):
+            dummy_kwargs[fn] = False
+        elif isinstance(ft, type) and issubclass(ft, BinaryType):
             dummy_kwargs[fn] = 0
         elif is_fixed:
             cnt = ft[2] if isinstance(ft, tuple) else get_args(ft)[1]

@@ -1185,6 +1185,8 @@ class BinaryBuilder:
             writer.write_float32(val, endian=endian, name=elem.name, desc=elem.desc)
         elif "float64" in t:
             writer.write_float64(val, endian=endian, name=elem.name, desc=elem.desc)
+        elif "bool" in t:
+            writer.write_bool(bool(val), size=elem.size or 1, endian=endian, name=elem.name, desc=elem.desc)
         else:
             raw = val if isinstance(val, (bytes, bytearray)) else bytes(val)
             writer.write_bytes(raw, name=elem.name, desc=elem.desc)
@@ -1353,6 +1355,8 @@ class BinaryBuilder:
             return reader.read_float32(endian=endian)
         if "float64" in t:
             return reader.read_float64(endian=endian)
+        if "bool" in t:
+            return reader.read_bool(size=elem.size or 1, endian=endian)
         return reader.read_bytes(elem.size)
 
 

@@ -80,6 +80,59 @@ class Float64(BinaryType):
     _size = 8
 
 
+class BoolMeta(BinaryTypeMeta):
+    """Metaclass for Bool allowing parameterized sizes like Bool[2], Bool[4], etc."""
+
+    _cache: dict[int, type] = {}
+
+    def __getitem__(cls, size: int) -> type:
+        if not isinstance(size, int) or size <= 0:
+            raise ValueError(f"Bool size must be a positive integer, got {size}")
+        if size == 1 and cls.__name__ == "Bool":
+            return cls
+        if size in cls._cache:
+            return cls._cache[size]
+
+        fmt_map = {1: "?", 2: "H", 4: "I", 8: "Q"}
+        fmt = fmt_map.get(size, f"{size}s")
+        name = f"Bool[{size}]"
+
+        base_cls = cls if cls.__name__ == "Bool" else cls.__bases__[0]
+        subcls = BoolMeta(
+            name,
+            (base_cls,),
+            {
+                "_size": size,
+                "_fmt": fmt,
+                "__module__": cls.__module__,
+                "__qualname__": name,
+            },
+        )
+        cls._cache[size] = subcls
+        return subcls
+
+    def __call__(cls, *args, **kwargs):
+        if args and isinstance(args[0], int) and not isinstance(args[0], bool) and len(args) == 1 and not kwargs:
+            return cls[args[0]]
+        if "size" in kwargs and len(kwargs) == 1 and not args:
+            return cls[kwargs["size"]]
+        if args:
+            return bool(args[0])
+        return False
+
+    def __repr__(cls) -> str:
+        if cls._size == 1 and cls.__name__ == "Bool":
+            return "Bool"
+        return f"Bool[{cls._size}]"
+
+
+class Bool(BinaryType, metaclass=BoolMeta):
+    """Boolean binary type. Default size is 1 byte, configurable via Bool[size] or Bool(size)."""
+
+    _fmt = "?"
+    _size = 1
+
+
 # ==========================================================
 # Generic Types
 # ==========================================================
@@ -844,7 +897,10 @@ def _write_array(name: str, elem_type: Any, val: Any, writer: Any, endian: Endia
 
 def _write_element(elem_type: Any, val: Any, writer: Any, endian: Endian) -> None:
     import struct
-    if isinstance(elem_type, type) and issubclass(elem_type, BinaryType):
+    if elem_type is Bool or (isinstance(elem_type, type) and issubclass(elem_type, Bool)) or elem_type is bool:
+        size = getattr(elem_type, "_size", 1) if elem_type is not bool else 1
+        writer.write_bool(bool(val), size=size, endian=endian)
+    elif isinstance(elem_type, type) and issubclass(elem_type, BinaryType):
         data = struct.pack(f"{endian.value}{elem_type._fmt}", val)
         writer._stream.write(data)
     elif hasattr(val, "__binary__"):
@@ -1198,6 +1254,19 @@ def write_struct(
             )
             continue
 
+        # Check Bool type
+        if ftype is Bool or (isinstance(ftype, type) and issubclass(ftype, Bool)):
+            writer.write_bool(
+                bool(val) if val is not None else False,
+                size=ftype._size,
+                endian=active_endian,
+                name=name,
+                desc=f_desc,
+                struct_name=current_struct_name,
+                struct_doc=struct_doc,
+            )
+            continue
+
         # Check primitive BinaryType
         if isinstance(ftype, type) and issubclass(ftype, BinaryType):
             fmt = ftype._fmt
@@ -1308,10 +1377,14 @@ def read_struct(
         shift = 0
         kwargs = {}
         for name, ftype in fields.items():
+            base_t = ftype[0] if isinstance(ftype, tuple) and len(ftype) >= 2 else ftype
             width = ftype[1] if isinstance(ftype, tuple) and len(ftype) >= 2 else 1
             mask = (1 << width) - 1
             val = (packed_value >> shift) & mask
-            kwargs[name] = val
+            if base_t is Bool or (isinstance(base_t, type) and issubclass(base_t, Bool)) or base_t is bool:
+                kwargs[name] = bool(val)
+            else:
+                kwargs[name] = val
             shift += width
         return cls(**kwargs)
 
@@ -1454,7 +1527,10 @@ def read_struct(
                 args = get_args(ftype)
                 elem_t, count = args[0], args[1]
 
-            if elem_t is UInt8:
+            if elem_t is Bool or (isinstance(elem_t, type) and issubclass(elem_t, Bool)) or elem_t is bool:
+                b_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
+                kwargs[name] = [reader.read_bool(size=b_size, endian=active_endian) for _ in range(count)]
+            elif elem_t is UInt8:
                 kwargs[name] = reader.read_bytes(count)
             elif elem_t is Int8:
                 kwargs[name] = [reader.read_int8() for _ in range(count)]
@@ -1479,7 +1555,13 @@ def read_struct(
         )
         if is_arr:
             elem_t = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
-            if elem_t is UInt8:
+            if elem_t is Bool or (isinstance(elem_t, type) and issubclass(elem_t, Bool)) or elem_t is bool:
+                b_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
+                items = []
+                while reader.remaining() >= b_size:
+                    items.append(reader.read_bool(size=b_size, endian=active_endian))
+                kwargs[name] = items
+            elif elem_t is UInt8:
                 kwargs[name] = reader.read_bytes()
             elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
                 items = []
@@ -1498,6 +1580,11 @@ def read_struct(
         # Check nested binary_struct
         if hasattr(ftype, "__binary__"):
             kwargs[name] = read_struct(ftype, reader=reader, endian=active_endian)
+            continue
+
+        # Check Bool type
+        if ftype is Bool or (isinstance(ftype, type) and issubclass(ftype, Bool)):
+            kwargs[name] = reader.read_bool(size=ftype._size, endian=active_endian)
             continue
 
         # Check primitive BinaryType

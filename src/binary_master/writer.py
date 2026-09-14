@@ -30,6 +30,7 @@ _FMT_TO_TYPE_NAME = {
     "q": "Int64",
     "f": "Float32",
     "d": "Float64",
+    "?": "Bool",
 }
 
 
@@ -402,18 +403,45 @@ class BinaryWriter:
             raise TypeError(f"write_float64 requires a float or int, got {type(value).__name__}")
         return self._pack_write("d", float(value), endian, name=name, desc=desc)
 
-    def write_bool(self, value: bool, name: str = "", desc: str = "") -> BinaryWriter:
-        """Write a boolean value as a single byte (0x01 for True, 0x00 for False)."""
+    def write_bool(
+        self,
+        value: bool,
+        size: int = 1,
+        endian: EndianType = None,
+        name: str = "",
+        desc: str = "",
+        struct_name: Optional[str] = None,
+        struct_doc: Optional[str] = None,
+    ) -> BinaryWriter:
+        """Write a boolean value with configurable byte size (default 1 byte)."""
+        if not isinstance(size, int) or size <= 0:
+            raise ValueError(f"Bool size must be a positive integer, got {size}")
+        order = normalize_endian(endian, self._default_endian)
         offset = self.tell()
-        self._stream.write(b"\x01" if value else b"\x00")
+        bool_int = 1 if value else 0
+        if size == 1:
+            data = b"\x01" if value else b"\x00"
+        elif size == 2:
+            data = struct.pack(f"{order.value}H", bool_int)
+        elif size == 4:
+            data = struct.pack(f"{order.value}I", bool_int)
+        elif size == 8:
+            data = struct.pack(f"{order.value}Q", bool_int)
+        else:
+            byteorder = "little" if order == Endian.LITTLE else "big"
+            data = bool_int.to_bytes(size, byteorder=byteorder)
+        self._stream.write(data)
+        type_str = "Bool" if size == 1 else f"Bool[{size}]"
         self._record_entry(
             offset=offset,
-            size=1,
-            type_name="Bool",
-            value=value,
+            size=size,
+            type_name=type_str,
+            value=bool(value),
             name=name,
-            endian="-",
+            endian=order.name.capitalize() if size > 1 else "-",
             description=desc,
+            struct_name=struct_name,
+            struct_doc=struct_doc,
         )
         return self
 

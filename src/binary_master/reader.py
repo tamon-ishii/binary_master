@@ -180,10 +180,21 @@ class BinaryReader:
         """Read a 64-bit double precision IEEE 754 float."""
         return self._unpack_read("d", 8, endian)
 
-    def read_bool(self) -> bool:
-        """Read a boolean value (0x00 is False, any non-zero is True)."""
-        b = self.read_uint8()
-        return b != 0
+    def read_bool(self, size: int = 1, endian: EndianType = None) -> bool:
+        """Read a boolean value with configurable byte size (0 is False, any non-zero is True)."""
+        if not isinstance(size, int) or size <= 0:
+            raise ValueError(f"Bool size must be a positive integer, got {size}")
+        if size == 1:
+            return self.read_uint8() != 0
+        elif size == 2:
+            return self.read_uint16(endian=endian) != 0
+        elif size == 4:
+            return self.read_uint32(endian=endian) != 0
+        elif size == 8:
+            return self.read_uint64(endian=endian) != 0
+        else:
+            raw = self.read_bytes(size)
+            return any(b != 0 for b in raw)
 
     def read_bytes(self, count: Optional[int] = None) -> bytes:
         """Read raw bytes from the stream.

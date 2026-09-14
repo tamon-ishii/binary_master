@@ -21,6 +21,7 @@ src/binary_master/code_gen/go.py
 src/binary_master/code_gen/rust.py
 tests/test_advanced_features.py
 tests/test_binary_struct.py
+tests/test_bool.py
 tests/test_builder.py
 tests/test_c_header.py
 tests/test_caption.py

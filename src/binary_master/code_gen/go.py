@@ -31,6 +31,7 @@ from binary_master.binary_struct import (
     UInt16,
     UInt32,
     UInt64,
+    Bool,
 )
 from binary_master.c_header import to_pascal_case
 
@@ -61,8 +62,18 @@ def go_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
         return "float32", None
     if field_type is Float64:
         return "float64", None
-    if field_type is bool:
-        return "bool", None
+    if field_type is bool or field_type is Bool or (isinstance(field_type, type) and issubclass(field_type, Bool)):
+        size = getattr(field_type, "_size", 1) if field_type is not bool else 1
+        if size == 1:
+            return "bool", None
+        elif size == 2:
+            return "uint16", "2-byte boolean"
+        elif size == 4:
+            return "uint32", "4-byte boolean"
+        elif size == 8:
+            return "uint64", "8-byte boolean"
+        else:
+            return f"[{size}]byte", f"{size}-byte boolean"
 
     # FixedArray[Elem, Count]
     is_fixed = (isinstance(field_type, tuple) and len(field_type) >= 3 and field_type[0] is FixedArray) or (
