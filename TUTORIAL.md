@@ -41,6 +41,25 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 5.4 多言語ヘッダー出力 (C, Rust, Modern C++, C#, Go)
   - 5.5 スキーマ駆動の双方向シリアライズ (`to_bytes`) と自動デシリアライズ (`read`)
   - 5.6 スキーマ駆動のデバッグ検査 (`builder.hexdump` / `builder.dump`)
+- [Step 6: v2.0 高度機能（型安全制約・可変長・ストリーミング・直接エクスポート）](#step-6-v20-高度機能型安全制約可変長ストリーミング直接エクスポート)
+  - 6.1 `Magic` & `Constant`（シグネチャ・定数値の自動補完と検証）
+  - 6.2 `BinaryEnum`（整数サイズ固定列挙型）
+  - 6.3 統合チェックサム計算 & 検証 (`CRC32`, `CRC16`, `Adler32`, `Fletcher16`, etc.)
+  - 6.4 JSON / 辞書相互変換 (`to_dict`, `from_dict`, `to_json`, `from_json`)
+  - 6.5 巨大ファイル & ストリーミング処理 (`iter_struct`, `from_mmap`)
+  - 6.6 可変長整数（LEB128 VarInt / VarUInt）
+  - 6.7 任意ビットストリーム操作 (`BitWriter`, `BitReader`)
+  - 6.8 CLI バイナリインスペクター (`binary-master`)
+  - 6.9 構造体・インスタンスからの直接仕様書 & コード出力 (`to_markdown`, `to_code`)
+- [Step 7: 実践業界別レシピ集 (Real-World Industry Recipes)](#step-7-実践業界別レシピ集-real-world-industry-recipes)
+  - 7.1 レシピ 1: ゲームセーブデータ・アーカイブ形式（Header + File Table + VarInt + CRC32）
+  - 7.2 レシピ 2: IoT / 車載センサーテレメトリストリーム（Magic + BinaryEnum + LEB128タイムスタンプ）
+  - 7.3 レシピ 3: 高頻度取引 (HFT) / 金融ティックロガー（ゼロコピー `from_mmap` + `iter_struct`）
+  - 7.4 レシピ 4: 多態RPCメッセージキュー（`Variant` 動的ディスパッチ + 型安全ヘッダー）
+- [Step 8: アーキテクチャ設計選定ガイド & トラブルシューティングFAQ](#step-8-アーキテクチャ設計選定ガイド--トラブルシューティングfaq)
+  - 8.1 `@binary_struct` vs `BinaryWriter` vs `Builder` 使い分け早見表
+  - 8.2 ゼロコピー & パフォーマンス最適化
+  - 8.3 よくある落とし穴 & トラブルシューティング
 - [まとめ & サンプルコードとの対応](#まとめ--サンプルコードとの対応)
 
 ---
@@ -1075,6 +1094,278 @@ binary-master spec my_module:MyPacket -o spec.md
 # 構造体クラスから各言語（Rust/C/C++/C#/Go）コードを出力
 binary-master export my_module:MyPacket --lang rust -o -
 ```
+
+### 6.9 構造体・インスタンスからの直接仕様書 & コード出力 (`to_markdown`, `to_code`)
+
+`Builder` や `BinaryWriter` を介さずとも、`@binary_struct` クラスまたはそのインスタンスから直接 `.to_markdown()` や `.to_code("rust")` を呼び出せます。
+
+```python
+from binary_master import binary_struct, Magic, UInt32, Float32
+
+@binary_struct
+class SensorPacket:
+    """環境センサーパケット"""
+    magic: Magic[b"SENS"]
+    sequence: UInt32
+    temperature: Float32
+
+# 1. クラス定義から直接仕様書・コード文字列を取得
+md_spec = SensorPacket.to_markdown(title="Sensor Protocol Specification")
+rust_code = SensorPacket.to_code("rust")
+cpp_code = SensorPacket.to_code("cpp")
+go_code = SensorPacket.to_code("go")
+
+# 2. ファイルへの直接書き出し
+SensorPacket.write_markdown("docs/sensor_spec.md")
+SensorPacket.write_code("src/sensor.rs", "rust")
+
+# 3. 実データが入ったインスタンスからもワンライナーで出力可能
+pkt = SensorPacket(sequence=1001, temperature=24.5)
+md_live = pkt.to_markdown(include_values=True)  # 実測値付きの仕様書
+```
+
+---
+
+## Step 7: 実践業界別レシピ集 (Real-World Industry Recipes)
+
+現場で頻出する4大ドメインの実践的バイナリ設計パターンを解説します。
+
+### 7.1 レシピ 1: ゲームセーブデータ・アーカイブ形式
+
+ヘッダー検証（`Magic`）、暗号化/圧縮フラグ（`Bits`）、可変個ファイルテーブル（`OffsetTable`）、そしてデータ整合性検証（`CRC32`）を組み合わせた完全なセーブファイル実装です。
+
+```mermaid
+graph TD
+    A[SaveHeader<br/>Magic: SAVE, Version: 1] -->|offset_table| B[FileEntry Table]
+    B -->|Offset 0| C[Chunk 0: PlayerState]
+    B -->|Offset 1| D[Chunk 1: Inventory]
+    B -->|Offset 2| E[Chunk 2: WorldData]
+    A -->|crc32| F[CRC32 Checksum Validation]
+```
+
+```python
+from binary_master import (
+    binary_struct, Magic, Constant, Bits, UInt8, UInt16, UInt32,
+    OffsetTable, FixedString, CString, CRC32, compute_checksum,
+    BinaryWriter, BinaryReader
+)
+
+# 1. ヘッダービットフラグ
+@binary_struct(bits=16)
+class SaveFlags:
+    compressed: Bits[1]
+    encrypted: Bits[1]
+    hardcore_mode: Bits[1]
+    reserved: Bits[13]
+
+# 2. メインセーブヘッダー
+@binary_struct
+class SaveHeader:
+    magic: Magic[b"SAVE"]
+    version: Constant[UInt16, 1]
+    flags: SaveFlags
+    chunk_count: UInt16
+    chunks_offset: OffsetTable["chunk_count", UInt32]
+    crc32: UInt32  # ヘッダー以降の全データのCRC32チェックサム
+
+# 3. チャンクエントリ
+@binary_struct
+class PlayerStateChunk:
+    player_name: FixedString[16]
+    level: UInt16
+    hp: UInt32
+    gold: UInt32
+
+# 書き込み
+writer = BinaryWriter(endian="little")
+header = SaveHeader(
+    flags=SaveFlags(compressed=0, encrypted=0, hardcore_mode=1),
+    chunk_count=1,
+    crc32=0  # 一旦ダミー
+)
+handle = writer.write_struct(header)
+
+with writer.section("Chunks"):
+    payload_start = writer.tell()
+    player_chunk = PlayerStateChunk(player_name="Hero", level=50, hp=1200, gold=9999)
+    chunk_off = writer.tell()
+    writer.write_struct(player_chunk)
+    handle.resolve_entry(0, chunk_off)
+
+# CRC32のバックパッチ
+payload_data = writer.to_bytes()[payload_start:]
+computed_crc = compute_checksum(payload_data, CRC32)
+with writer.at_offset(header.offsetof("crc32")):
+    writer.write_uint32(computed_crc)
+
+save_data = writer.to_bytes()
+
+# 読み込み & CRC32自動検証
+reader = BinaryReader(save_data, endian="little")
+read_hdr = reader.read_struct(SaveHeader)
+assert read_hdr.magic == b"SAVE"
+assert read_hdr.flags.hardcore_mode == 1
+
+calc_crc = compute_checksum(save_data[payload_start:], CRC32)
+assert read_hdr.crc32 == calc_crc  # 完全検証
+```
+
+### 7.2 レシピ 2: IoT / 車載センサーテレメトリストリーム
+
+エッジデバイスからの省帯域・高信頼テレメトリプロトコル。`Magic`、`BinaryEnum`、LEB128（`VarUInt`, `VarInt`）、および `Adler32` / `CRC16` による軽量チェックサムを融合します。
+
+```python
+from enum import auto
+from binary_master import (
+    binary_struct, BinaryEnum, Magic, VarUInt, VarInt, Float32,
+    Adler32, compute_checksum, read_struct
+)
+
+class SensorType(BinaryEnum, size=1):
+    TEMPERATURE_HUMIDITY = 1
+    ACCELEROMETER = 2
+    GPS_LOCATION = 3
+
+@binary_struct
+class TelemetryFrame:
+    magic: Magic[b"\xAA\x55"]          # 2バイトフレーム同期シグネチャ
+    sensor_type: SensorType            # 1バイト列挙型
+    device_id: VarUInt                 # LEB128可変長 (ID 120なら1B, 100000なら3B)
+    timestamp_delta_ms: VarUInt        # 前フレームからの差分ミリ秒 (可変長)
+    reading_delta: VarInt              # 負数対応差分温度 (可変長)
+    checksum: Adler32[lambda self: self.device_id]  # 自動チェックサム
+
+frame = TelemetryFrame(
+    sensor_type=SensorType.TEMPERATURE_HUMIDITY,
+    device_id=98765,
+    timestamp_delta_ms=16,
+    reading_delta=-3
+)
+raw_frame = frame.to_bytes()
+# デシリアライズ
+decoded = TelemetryFrame.from_bytes(raw_frame)
+assert decoded.sensor_type == SensorType.TEMPERATURE_HUMIDITY
+assert decoded.reading_delta == -3
+```
+
+### 7.3 レシピ 3: 高頻度取引 (HFT) / 金融ティックロガー
+
+マイクロ秒精度の市場約定データログ。GBクラスのファイルでもメモリ使用量 0 で超高速に走査する **ゼロコピー `from_mmap`** と **`iter_struct`** パターンです。
+
+```python
+from binary_master import binary_struct, Magic, UInt64, UInt32, Float64, BinaryReader
+
+@binary_struct(endian="little")
+class MarketTick:
+    magic: Magic[b"TICK"]
+    timestamp_ns: UInt64   # エポックナノ秒
+    symbol_id: UInt32      # 銘柄ID
+    bid_price: Float64     # 最良買気配
+    ask_price: Float64     # 最良売気配
+    volume: UInt32         # 約定株数
+
+# 巨大なマーケットログファイルをメモリマップでゼロコピー走査
+def scan_ticks_for_arbitrage(log_path: str, target_symbol: int):
+    with BinaryReader.from_mmap(log_path) as reader:
+        # iter_struct は終端までジェネレータで1件ずつゼロコピー復元
+        for tick in reader.iter_struct(MarketTick):
+            if tick.symbol_id == target_symbol:
+                spread = tick.ask_price - tick.bid_price
+                if spread < 0.01:
+                    print(f"Tight spread detected at {tick.timestamp_ns}: {spread}")
+```
+
+### 7.4 レシピ 4: 多態RPCメッセージキュー
+
+メッセージ種別（`msg_type`）によってペイロード構造が動的に変化するネットワークRPCプロトコル。`Variant` デコレータと `Builder` の完全統合です。
+
+```python
+from binary_master import (
+    binary_struct, BinaryEnum, Magic, UInt16, UInt32, CString,
+    Variant, Builder
+)
+
+class MsgType(BinaryEnum, size=2):
+    LOGIN_REQ = 1
+    CHAT_MSG = 2
+    PING = 3
+
+@binary_struct
+class LoginPayload:
+    user_id: UInt32
+    auth_token: CString
+
+@binary_struct
+class ChatPayload:
+    channel_id: UInt32
+    message: CString
+
+@binary_struct
+class PingPayload:
+    sequence: UInt32
+
+@binary_struct
+class RpcMessage:
+    magic: Magic[b"RPC\x01"]
+    msg_type: MsgType
+    body: Variant["msg_type", {
+        MsgType.LOGIN_REQ: LoginPayload,
+        MsgType.CHAT_MSG: ChatPayload,
+        MsgType.PING: PingPayload,
+    }]
+
+# 送信パケットの作成
+msg = RpcMessage(
+    msg_type=MsgType.CHAT_MSG,
+    body=ChatPayload(channel_id=101, message="Hello Binary Master!")
+)
+wire_bytes = msg.to_bytes()
+
+# 受信側での自動判別・復元
+received = RpcMessage.from_bytes(wire_bytes)
+assert isinstance(received.body, ChatPayload)
+assert received.body.message == "Hello Binary Master!"
+```
+
+---
+
+## Step 8: アーキテクチャ設計選定ガイド & トラブルシューティングFAQ
+
+### 8.1 `@binary_struct` vs `BinaryWriter` vs `Builder` 使い分け早見表
+
+| 目的・アプローチ | 推奨ツール | 代表的なシチュエーション |
+|---|---|---|
+| **ヘッダー・パケットの型安全モデリング** | `@binary_struct` | Python のクラスとして綺麗に構造体を定義し、`to_bytes()` / `from_bytes()` で直感的に読み書きしたい時。 |
+| **動的ストリーム・手動オフセット制御** | `BinaryWriter` / `BinaryReader` | 途中で長さをバックパッチしたい時、可変長の生データを順次流し込みたい時、位置保護（`preserve_position`）や先読み（`peek`）が必要な時。 |
+| **スキーマ先行プロトコル設計・仕様書生成** | `Builder` (`BinaryBuilder`) | バイナリを書く前にまず仕様書（Markdown / Mermaid図）を確定させたい時、多言語コード（C/C++/Rust/C#/Go）を一斉生成したい時、辞書データから自動ビルドしたい時。 |
+
+### 8.2 ゼロコピー & パフォーマンス最適化
+
+1. **`from_mmap` の活用**:
+   - 100MB 以上のファイルや複数GBのログファイルを処理する際は、`BinaryReader.from_mmap("file.bin")` を使用してください。OS のページキャッシュを直接参照し、Python のヒープメモリ消費をほぼゼロに抑えます。
+2. **`iter_struct` によるストリーミング**:
+   - リスト内包表記で全件を一度にリスト化せず、`for item in reader.iter_struct(Cls):` でイテレータ処理することで、メモリフットプリントを一定に保ちます。
+3. **`bytearray` / `memoryview` の直接渡し**:
+   - `BinaryReader(buf)` に渡すバッファは `bytes` だけでなく `bytearray` や `memoryview` もそのまま受け付けます。コピーを発生させずにスライス可能です。
+
+### 8.3 よくある落とし穴 & トラブルシューティング
+
+> [!WARNING]
+> **Q. C言語と構造体のサイズが一致しない（パディングのズレ）**
+> - **原因**: Cコンパイラはデフォルトでメンバのアライメント境界（4バイト境界、8バイト境界）にパディングバイトを挿入します。
+> - **解決策**: `@binary_struct(auto_align=True)` を指定するか、C側で `#pragma pack(push, 1)` を指定してアライメント規則を一致させてください。
+
+> [!TIP]
+> **Q. エンディアンの指定が複数ある場合、どれが優先されるか？**
+> - **優先順位**:
+>   1. フィールド定義時の個別指定（例: `UInt32` の `endian`）
+>   2. 構造体デコレータの指定（`@binary_struct(endian="big")`）
+>   3. `BinaryWriter` / `BinaryReader` のコンストラクタ指定（`BinaryWriter(endian="big")`）
+>   4. デフォルト（`Endian.LITTLE`）
+
+> [!NOTE]
+> **Q. `OffsetTable` のオフセット基準点（BaseOffset）が構造体の先頭からずれる**
+> - **解決策**: デフォルトのオフセットはファイル先頭（`0x0000`）基準です。構造体先頭からの相対オフセットにしたい場合は、`OffsetTable[Count, Type, Base.SELF]` または `Base.SELF + 0x10` などの相対指定を活用してください。
 
 ---
 

@@ -294,6 +294,8 @@ class BinaryWriter:
             variants=variants,
         )
 
+    section = set_caption
+
     def subcaption(self, title: Optional[str] = None, desc: str = "") -> BinaryWriter:
         """Set an active subcaption under the current section caption.
 

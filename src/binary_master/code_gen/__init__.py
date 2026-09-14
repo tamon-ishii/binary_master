@@ -68,8 +68,14 @@ def normalize_lang(lang: str) -> str:
 
 
 def generate_code(builder: Any, lang: str, **kwargs) -> str:
-    """Generate source code in the requested language from a BinaryBuilder or BinaryWriter."""
-    if hasattr(builder, "to_builder"):
+    """Generate source code in the requested language from a BinaryBuilder, BinaryWriter, or @binary_struct."""
+    if hasattr(builder, "__binary__"):
+        from binary_master.builder import Builder
+        cls = builder if isinstance(builder, type) else builder.__class__
+        b = Builder(title=getattr(cls, "__name__", "Schema"))
+        b.add_struct(cls)
+        builder = b
+    elif hasattr(builder, "to_builder"):
         builder = builder.to_builder()
     norm = normalize_lang(lang)
     if norm == "c":
@@ -92,7 +98,13 @@ def write_code(
     **kwargs,
 ) -> str:
     """Generate source code in the target language and write to file."""
-    if hasattr(builder, "to_builder"):
+    if hasattr(builder, "__binary__"):
+        from binary_master.builder import Builder
+        cls = builder if isinstance(builder, type) else builder.__class__
+        b = Builder(title=getattr(cls, "__name__", "Schema"))
+        b.add_struct(cls)
+        builder = b
+    elif hasattr(builder, "to_builder"):
         builder = builder.to_builder()
     if lang is None:
         p_str = str(path_or_file) if not hasattr(path_or_file, "name") else str(getattr(path_or_file, "name"))

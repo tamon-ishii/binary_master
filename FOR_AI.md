@@ -160,6 +160,14 @@ Every `@binary_struct` class receives:
 - `Cls.to_cpp(name=None, desc="") -> str`: Generates Modern C++ struct code.
 - `Cls.to_csharp(name=None, desc="") -> str`: Generates C# struct code.
 - `Cls.to_go(name=None, desc="") -> str`: Generates Go struct code.
+- `Cls.to_code(lang: str, **kwargs) -> str` / `instance.to_code(...)`: Unified code generator for any supported language.
+- `Cls.write_code(path, lang=None, **kwargs) -> str` / `instance.write_code(...)`: Writes generated code to a file (infers language from extension if omitted).
+- `Cls.to_markdown(title=..., **kwargs) -> str` / `instance.to_markdown(...)`: Generates comprehensive Markdown specification with Mermaid diagrams.
+- `Cls.write_markdown(path, **kwargs) -> str` / `instance.write_markdown(...)`: Writes Markdown specification to file.
+- `instance.to_dict(bytes_format="hex"|"base64"|"list") -> dict`: Serializes struct to Python dict recursively.
+- `Cls.from_dict(d: dict, bytes_format="hex") -> Cls`: Deserializes struct from dict recursively.
+- `instance.to_json(indent=None, bytes_format="hex") -> str`: Serializes struct to JSON string.
+- `Cls.from_json(json_str: str, bytes_format="hex") -> Cls`: Deserializes struct from JSON string.
 - `__len__(self)`: `len(instance)` returns `sizeof(instance)`.
 
 ### 3.3 Documentation & Comment Reflection

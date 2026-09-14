@@ -402,11 +402,9 @@ class BinaryBuilder:
         desc: str = "",
         spec_count: Optional[Union[int, str, bool]] = None,
         repeat: Optional[Union[int, str, bool]] = None,
-    ) -> BinaryBuilder:
-        """Alias for set_caption."""
-        eff_spec = spec_count if spec_count is not None else repeat
-        self.elements.append(SectionElement(title=title, desc=desc, spec_count=eff_spec))
-        return self
+    ) -> _SectionContext:
+        """Alias for set_caption()."""
+        return self.set_caption(title=title, desc=desc, spec_count=spec_count, repeat=repeat)
 
     def add_caption(
         self,
@@ -414,9 +412,9 @@ class BinaryBuilder:
         desc: str = "",
         spec_count: Optional[Union[int, str, bool]] = None,
         repeat: Optional[Union[int, str, bool]] = None,
-    ) -> BinaryBuilder:
-        """Alias for set_caption."""
-        return self.add_section(title=title, desc=desc, spec_count=spec_count, repeat=repeat)
+    ) -> _SectionContext:
+        """Alias for set_caption()."""
+        return self.set_caption(title=title, desc=desc, spec_count=spec_count, repeat=repeat)
 
     def add_field(
         self,

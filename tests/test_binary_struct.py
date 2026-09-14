@@ -27,6 +27,7 @@ from binary_master import (
     binary_size,
     offsetof,
     bit_offsetof,
+    Magic,
 )
 
 
@@ -462,6 +463,48 @@ def test_bytes_and_string_types_in_binary_struct():
     expected_size = 4 + 8 + 16 + (len("Software Engineer") + 1) + (2 + len("secret_token_123"))
     assert sizeof(user) == expected_size
     assert len(raw) == expected_size
+
+
+def test_struct_to_markdown_and_code(tmp_path):
+    @binary_struct
+    class PacketHeader:
+        magic: Magic[b"PKT\x01"]
+        seq: UInt32
+        length: UInt16
+
+    # Class-level export
+    md_cls = PacketHeader.to_markdown(title="Packet Specification")
+    assert "Packet Specification" in md_cls
+    assert "magic" in md_cls
+    assert "seq" in md_cls
+
+    rust_cls = PacketHeader.to_code("rust")
+    assert "struct PacketHeader" in rust_cls
+    assert "pub seq: u32" in rust_cls
+
+    c_cls = PacketHeader.to_code("c")
+    assert "typedef struct" in c_cls
+    assert "uint32_t seq" in c_cls
+
+    # Instance-level export
+    pkt = PacketHeader(seq=42, length=100)
+    md_inst = pkt.to_markdown(include_values=True)
+    assert "42" in md_inst or "0x2a" in md_inst.lower()
+
+    rust_inst = pkt.to_code("rust")
+    assert "struct PacketHeader" in rust_inst
+
+    # File output test
+    md_file = tmp_path / "spec.md"
+    pkt.write_markdown(md_file)
+    assert md_file.exists()
+    assert len(md_file.read_text(encoding="utf-8")) > 0
+
+    rs_file = tmp_path / "packet.rs"
+    PacketHeader.write_code(rs_file, "rust")
+    assert rs_file.exists()
+    assert "PacketHeader" in rs_file.read_text(encoding="utf-8")
+
 
 
 

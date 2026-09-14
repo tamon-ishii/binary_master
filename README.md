@@ -20,12 +20,18 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - Python の型ヒントとデータクラス記法を用いて、バイナリヘッダーやパケットフォーマットを直感的に定義可能。
   - **双方向シリアライズ**: `instance.to_bytes()` による書き込みと `Cls.from_bytes(data)` による自動デシリアライズの両方に対応。
   - **バイナリサイズ取得 (`Cls.binary_size`, `sizeof(Cls)`, `len(instance)`)**: クラス定義からの静的計算や、インスタンスからの動的バイト数取得に対応。
+  - **ワンライナー仕様書 & 多言語コード直接出力 (`Cls.to_markdown()`, `Cls.to_code("rust")`, `Cls.write_markdown()`, `Cls.write_code()`)**: Builder や Writer を介さず、構造体クラスや実データインスタンスから直接 Markdown 仕様書や Rust/C/C++/C#/Go コードを出力可能。
+  - **JSON & 辞書相互シリアライズ (`to_dict()`, `from_dict()`, `to_json()`, `from_json()`)**: Web API や設定ファイル連携のための完全な JSON/dict 双方向変換（16進文字列、Base64、数値配列のフォーマット選択可能）。
   - **Docstring の仕様書自動反映**: クラスの docstring（`"""..."""`）が仕様書の概要やビットフィールド詳細にそのまま自動反映。
   - **コメントの自動抽出**: コード上のインラインコメント（`# ...`）や `Annotated[Type, "説明"]` を自動抽出し、仕様書の `Description` 列に反映。
   - **自動アライメント & パディング (`auto_align=True`, `align=N`)**: C言語の構造体アライメント規則に基づき、メンバ境界や構造体サイズのアライメントパディングを自動挿入。
-- 🧩 **高度な型サポート**  
-  - 符号付き / 符号なし整数（8, 16, 32, 64-bit）
-  - 浮動小数点数（Float32, Float64）
+- 🧩 **高度な型サポート & 制約システム**  
+  - **シグネチャ & 定数制約 (`Magic[b"..."]`, `Constant[Type, Val]`)**: ヘッダーマジックや固定値のコンストラクタ自動補完とデシリアライズ時の自動不整合検知。
+  - **サイズ固定列挙型 (`BinaryEnum`)**: `MyEnum[UInt8]` や `size=1` など、バイナリサイズが明示された型安全な列挙型。
+  - **統合チェックサム (`CRC32`, `CRC16`, `CRC16_CCITT`, `CRC16_ARC`, `Adler32`, `Fletcher16`, `Checksum8`, `Checksum16`)**: ヘッダーやペイロードのチェックサム自動計算・検証。
+  - **LEB128 可変長整数 (`VarUInt`, `VarInt`)**: Protocol Buffers / WebAssembly 準拠の可変長整数（1〜10バイト動的サイズ）。
+  - **任意ビットストリーム (`BitWriter`, `BitReader`)**: バイト境界をまたぐ任意ビット幅（1〜64ビット）データの連続パッキング・アンパッキング。
+  - 符号付き / 符号なし整数（8, 16, 32, 64-bit）および浮動小数点数（Float32, Float64）
   - **論理値 (`Bool` / `bool`)**: サイズ設定可能（`Bool[1]`, `Bool[2]`, `Bool[4]` 等、デフォルト1バイト）
   - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング・アンパッキング
   - **文字列・バイト列型 (`Bytes[N]`, `FixedString[N]`, `CString`, `PrefixedString[N]`)**: 固定長バイト配列、Null終端文字列、長さプレフィックス文字列、固定長文字列を構造体メンバとして直接宣言可能
@@ -34,6 +40,9 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - **多態チャンク & タグ付き共用体 (`Variant[TagField, Mapping]`)**: 種別IDに応じて切り替わる多態構造体の自動ディスパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
   - 構造体のネスト
+- ⚡ **ゼロコピー & 巨大ファイルストリーミング (`from_mmap`, `iter_struct`)**  
+  - **OS メモリマップによるゼロコピー読み込み (`BinaryReader.from_mmap()`)**: ギガバイト級の巨大ファイルでもメモリ消費ほぼゼロで超高速アクセス。
+  - **ジェネレータによる連続パケット復元 (`reader.iter_struct(Cls)`)**: ネットワークストリームやログファイルから構造体を 1 件ずつ省メモリに逐次デシリアライズ。
 - ✍️ **柔軟な手続き的ライター & リーダー (`BinaryWriter` / `BinaryReader`)**  
   - **位置保存とオフセット指定書き込み (`with writer.preserve_position():`, `with writer.at_offset(off):`)**: ヘッダー長やサイズのバックパッチを安全・宣言的に実施
   - **先読みと位置保存リード (`reader.peek()`, `peek_uint*()`, `with reader.preserve_position():`, `reader.is_eof`)**: ストリームのカーソルを進めずに次に来るデータや終端を検査
@@ -45,12 +54,12 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - 各種文字列形式（C言語スタイルの Null 終端、Pascal スタイルの長さプレフィックス、固定長パディング）
   - バイト境界アライメント（`align`）およびパディング（`pad`）
   - メソッドチェーン対応ライター、カーソル操作（`seek`, `tell`, `skip`, `remaining`）
-  - **仕様書メタデータ統合管理 (`set_caption` / `subcaption`)**: セクションタイトル、詳細説明文（`desc`）、繰り返し回数・変数名（`spec_count="num_chunk"`）、多態バリアント候補（`variants`）を統合指定。`with` ブロックによるスコープ管理にも対応
+  - **仕様書メタデータ統合管理 (`set_caption` / `section` / `subcaption`)**: セクションタイトル、詳細説明文（`desc`）、繰り返し回数・変数名（`spec_count="num_chunk"`）、多態バリアント候補（`variants`）を統合指定。`with` ブロックによるスコープ管理にも対応
 - 📐 **事前設計型プロトコルビルダー & 自動リーダー (`Builder` / `BinaryBuilder`)**  
   - バイナリデータを実際に書き出すことなく、構造体クラス（`@binary_struct`）、説明文（`add_document`）、条件分岐（`condition`）、多態バリアント（`add_choice`）を事前定義して仕様書を生成（`builder.write_markdown("spec.md")`）。
   - **双方向シリアライズ (`builder.to_bytes(data)`)**: 定義したスキーマに基づいて辞書データからバイナリ列への自動組み立てにも対応。
   - 事前に定義したスキーマ情報をもとに、バイナリバイト列から各構造体・バリアントを自動判別して復元する **スキーマ駆動自動リーダー (`builder.read(data)`)** を提供。
-- 📊 **仕様書 & Mermaid 図の自動生成 (`writer.to_markdown` / `builder.write`)**  
+- 📊 **仕様書 & Mermaid 図の自動生成 (`writer.to_markdown` / `builder.write` / `Cls.to_markdown`)**  
   - シリアライズされた全フィールドのオフセット（16進/10進）、サイズ、エンディアン、参照先ターゲット（`-> 0xXXXX`）を記録した Markdown ドキュメントを出力
   - **Mermaid Flowchart**: 条件分岐ひし形ノード、バリアント選択ノード、サブグラフとオフセット参照矢印の描画（繰り返し領域は `🔁 xCount` で集約）
   - **Mermaid packet-beta**: ネットワークパケット形式のビット/バイト配置図およびビットフィールド詳細図の生成
@@ -62,6 +71,8 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - **リーダー状態検査 (`reader.hexdump()`)**: 現在のカーソル位置（`--> CURSOR @ 0xXXXX`）、消費済み／残りバイト数の即時把握
   - **表形式トレース (`dump("table")`)**: Offset, Size, Field Name, Type, Hex Bytes, Value, Caption を整然と表示するモノスペース表
   - **構造化ダンプ (`dump("json")` / `dump("dict")`)**: ロギングやテスト検証のための辞書／JSON 配列エクスポート
+- 💻 **CLI バイナリインスペクター (`binary-master`)**  
+  - ターミナルから直接バイナリファイルの検査（`inspect`）、ファイル比較（`diff`）、仕様書生成（`spec`）、多言語コード生成（`export`）を実行可能。
 
 
 ---

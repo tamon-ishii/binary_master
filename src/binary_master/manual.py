@@ -575,8 +575,15 @@ def generate_manual(
     section_packet_diagrams: bool = False,
     include_values: bool = False,
 ) -> str:
-    """Generate a comprehensive Markdown manual with Mermaid diagram and tables."""
-    if hasattr(entries, "entries"):
+    if hasattr(entries, "__binary__"):
+        if isinstance(entries, type):
+            entries = inspect_struct_layout(entries)
+        else:
+            from binary_master.writer import BinaryWriter
+            w = BinaryWriter()
+            w.write_struct(entries)
+            entries = w.entries
+    elif hasattr(entries, "entries"):
         entries = getattr(entries, "entries")
     total_bytes = 0
     if entries:

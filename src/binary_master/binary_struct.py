@@ -1140,6 +1140,45 @@ def to_go_struct_method(cls, name: Optional[str] = None, desc: str = "") -> str:
     return generate_go_struct(cls, name=name, desc=desc)
 
 
+class _ToMarkdownDescriptor:
+    def __get__(self, instance, owner=None):
+        target = instance if instance is not None else owner
+        def _to_markdown(**kwargs):
+            from binary_master.manual import generate_manual
+            return generate_manual(target, **kwargs)
+        return _to_markdown
+
+
+class _WriteMarkdownDescriptor:
+    def __get__(self, instance, owner=None):
+        target = instance if instance is not None else owner
+        def _write_markdown(path, **kwargs):
+            from pathlib import Path
+            from binary_master.manual import generate_manual
+            md = generate_manual(target, **kwargs)
+            Path(path).write_text(md, encoding="utf-8")
+            return md
+        return _write_markdown
+
+
+class _ToCodeDescriptor:
+    def __get__(self, instance, owner=None):
+        target = instance if instance is not None else owner
+        def _to_code(lang: str, **kwargs):
+            from binary_master.code_gen import generate_code
+            return generate_code(target, lang=lang, **kwargs)
+        return _to_code
+
+
+class _WriteCodeDescriptor:
+    def __get__(self, instance, owner=None):
+        target = instance if instance is not None else owner
+        def _write_code(path, lang: Optional[str] = None, **kwargs):
+            from binary_master.code_gen import write_code
+            return write_code(target, path, lang=lang, **kwargs)
+        return _write_code
+
+
 def _serialize_dict_value(val: Any, bytes_format: str = "hex") -> Any:
     if hasattr(val, "to_dict"):
         return val.to_dict(bytes_format=bytes_format)
@@ -1318,6 +1357,10 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
         target_cls.to_csharp = classmethod(to_csharp_struct_method)
         target_cls.to_go_struct = classmethod(to_go_struct_method)
         target_cls.to_go = classmethod(to_go_struct_method)
+        target_cls.to_markdown = _ToMarkdownDescriptor()
+        target_cls.write_markdown = _WriteMarkdownDescriptor()
+        target_cls.to_code = _ToCodeDescriptor()
+        target_cls.write_code = _WriteCodeDescriptor()
         target_cls.binary_size = _BinarySizeDescriptor()
         target_cls.offsetof = _OffsetofDescriptor()
         target_cls.bit_offsetof = _BitOffsetofDescriptor()
