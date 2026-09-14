@@ -662,6 +662,9 @@ md = generate_manual(
 - **Use `BinaryWriter` (Code-First / Data-Driven)**: When writing real binaries or when structure depends on dynamic execution logic (loops, header branches). `writer.write_markdown()` and `writer.write_c_header()` produce specifications and headers directly from written data, with automatic repeat deduplication (`repeat=-1`, `repeat="expr"`).
 - **Use `Builder` (Schema-First / Specification-Driven)**: When modeling protocols ahead of implementation, generating code definitions without real data, or using automated schema-driven deserialization (`builder.read(bytes)`). `Builder` also serves as the internal Intermediate Representation (IR) across all code generators.
 
+### ⚠️ RULE 9: Direct Struct Export Over Manual Builder Wrappers
+- When exporting specifications or multi-language code for a single `@binary_struct` class or instance, call `Cls.to_markdown()` or `Cls.to_code("rust")` directly (or `Cls.write_markdown("spec.md")` / `Cls.write_code("out.rs")`) instead of manually instantiating `Builder` or `BinaryWriter`.
+
 ---
 
 ## 10. Common Implementation Patterns
@@ -766,3 +769,12 @@ binary_data = writer.to_bytes()
 - `binary-master diff <file1> <file2>`: Visual byte diff.
 - `binary-master spec <module:Class> [-o output.md]`: Markdown protocol manual generation.
 - `binary-master export <module:Class> --lang <rust|c|cpp|csharp|go> [-o output]`: Multi-language code generation (pass `-o -` for stdout).
+
+### 11.9 Direct Struct Export & Descriptors
+`@binary_struct` classes and instances support direct specification and multi-language code export without instantiating `Builder` or `BinaryWriter`:
+- `Cls.to_markdown(title=None, **kwargs) -> str` / `inst.to_markdown(include_values=True, **kwargs) -> str`
+- `Cls.write_markdown(path, **kwargs) -> str` / `inst.write_markdown(path, **kwargs) -> str`
+- `Cls.to_code(lang="rust"|"c"|"cpp"|"csharp"|"go", **kwargs) -> str` / `inst.to_code(lang, **kwargs) -> str`
+- `Cls.write_code(path, lang=None, **kwargs) -> str` / `inst.write_code(path, **kwargs) -> str` (infers language from file extension if `lang` is omitted)
+- Individual language shortcuts: `Cls.to_c()`, `Cls.to_rust()`, `Cls.to_cpp()`, `Cls.to_csharp()`, `Cls.to_go()`.
+
