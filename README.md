@@ -51,7 +51,8 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - **Mermaid Flowchart**: 条件分岐ひし形ノード、バリアント選択ノード、サブグラフとオフセット参照矢印の描画（繰り返し領域は `🔁 xCount` で集約）
   - **Mermaid packet-beta**: ネットワークパケット形式のビット/バイト配置図およびビットフィールド詳細図の生成
   - **多態チャンク・バリアント仕様の自動展開**: 条件に応じて格納される候補構造体のレイアウト表と相対パケット図の自動生成
-- 🔍 **専用デバッグダンプ & ストリーム検査 (`hexdump` / `dump` / `diff`)**  
+- 🔍 **専用デバッグダンプ & バイナリ検証・差分比較 (`verify` / `hexdump` / `dump` / `diff`)**  
+  - **バイナリ検証・アサーション (`writer.verify` / `verify`)**: 期待するバイト列との完全一致検証。不一致時は該当バイト位置とフィールド注釈付き diff を自動出力（テスト自動化に最適）
   - **注釈付き Hexdump (`hexdump`)**: 16バイト標準ヘックスダンプ＋ASCII文字表示＋出力されたフィールド名・型・値の注釈表示
   - **ターミナル色分け表示 (`color=True`)**: ANSI カラーによるフィールド境界ごとの色分け、カーソル位置のハイライト
   - **リーダー状態検査 (`reader.hexdump()`)**: 現在のカーソル位置（`--> CURSOR @ 0xXXXX`）、消費済み／残りバイト数の即時把握
@@ -664,14 +665,51 @@ records = writer.dump("dict")
 json_str = writer.dump("json")
 ```
 
-#### ④ バイナリ差分比較 (`diff_dump` / `writer.diff()`)
-期待値と実際のシリアライズ結果でどのバイトやフィールドが不一致かを素早く検出します。
+#### ④ バイナリ検証・ベリファイ (`writer.verify()` / `verify()`)
+テストコード（`pytest` など）や実行時チェックで、生成されたバイナリが期待するバイト列（ゴールデンマスター等）と完全一致するかを 1 行で検証できます。  
+不一致がある場合は、**どのバイト位置のどのフィールドが異なるか** を分かりやすく示した `AssertionError` を送出します。
+
+```python
+from binary_master import BinaryWriter, verify
+
+writer = BinaryWriter()
+writer.write_uint32(0x12345678, name="magic")
+writer.write_uint16(42, name="id")
+
+expected_bytes = b"\x78\x56\x34\x12\x2a\x00"
+
+# 方法A: writer.verify() で直接検証（不一致なら詳細な diff 付きで例外発生）
+writer.verify(expected_bytes)
+
+# 方法B: トップレベル関数 verify(actual, expected)
+verify(writer, expected_bytes)
+
+# 方法C: 例外を出さずに True / False の真偽値だけを取得
+is_valid = writer.verify(expected_bytes, raise_error=False)
+```
+
+不一致時のエラー出力例:
+```text
+AssertionError: Binary verification failed:
+--- Binary Diff: Expected vs Actual ---
+  Size Expected:  6 bytes (`0x0006`)
+  Size Actual:    6 bytes (`0x0006`)
+  Differing byte count: 1 bytes in 1 range(s)
+
+Offset      Expected Hex            Actual Hex              Field / Context
+---------------------------------------------------------------------------
+0x0004..0005   2a                      99                      id (UInt16)
+```
+
+#### ⑤ バイナリ差分比較 (`diff_dump` / `writer.diff()`)
+例外を投げずに差分の詳細テキスト（またはコンソールカラー付き差分）を取得したい場合は、`diff()` または `diff_dump()` を使用します。
 
 ```python
 from binary_master import diff_dump
 
-diff_text = writer_expected.diff(writer_actual)
-print(diff_text)
+# 2つの Writer やバイト列の差分レポート文字列を取得
+diff_report = writer_expected.diff(writer_actual, color=True)
+print(diff_report)
 ```
 
 ### 6. プロトコル全体の事前スキーマ定義・仕様書・多言語・リーダー統合 (`Builder` / `BinaryBuilder`)
@@ -855,7 +893,7 @@ if "footer" in result:
 - **セクションタイトル**: `caption(title=None, desc="", variants=None)`（マニュアル・図のグループ化見出し、説明、候補バリアントを設定）
 - **サブセクションタイトル**: `subcaption(title=None, desc="")`（大見出し内の階層的サブグループを設定）
 - **パディング & アライメント**: `pad(count, pad_byte)`, `align(boundary, pad_byte)`
-- **デバッグダンプ**: `hexdump(width=16, color=False, annotate=True)`（注釈付き Hexdump）、`dump(format="hexdump"|"table"|"json"|"dict")`、`diff(other, color=False)`（他バッファとの差分比較）
+- **デバッグ・検証**: `verify(expected, raise_error=True)`（期待値との完全一致検証・不一致時 diff 表示）、`diff(other, color=False)`（他バッファとの差分比較）、`hexdump(width=16, color=False, annotate=True)`（注釈付き Hexdump）、`dump(format="hexdump"|"table"|"json"|"dict")`
 - **データ取り出し**: `to_bytes()`, `to_bytearray()`
 
 ### `BinaryReader` / `Reader` 主要メソッド
@@ -868,12 +906,13 @@ if "footer" in result:
 - **デバッグダンプ**: `hexdump(width=16, color=False)`（カーソル位置・未読込バイト表示付き Hexdump）、`dump(format="hexdump")`
 - **初期化**: `BinaryReader(source)`, `BinaryReader.from_bytes(data)`, `BinaryReader.from_file(path)`
 
-### デバッグ & 検査ユーティリティ (`debug`)
-- **注釈付き Hexdump**: `hexdump(target, width=16, color=False, annotate=True)`（`bytes`, `BinaryWriter`, `BinaryReader` に対応）
+### デバッグ & 検査・検証ユーティリティ (`debug`)
+- **バイナリ検証**: `verify(actual, expected, raise_error=True, color=False)`（期待値との完全一致検証。不一致時は詳細 diff 付きで例外送出）
+- **バイナリ差分比較**: `diff_dump(left, right, name_left="Expected", name_right="Actual", color=False)`
+- **注釈付き Hexdump**: `hexdump(target, width=16, color=False, annotate=True)`（`bytes`, `BinaryWriter`, `BinaryReader`, `@binary_struct` に対応）
 - **統一デバッグダンプ**: `debug_dump(target, format="hexdump"|"table"|"json"|"dict")`
 - **表形式トレース**: `dump_table(target, color=False)`
 - **構造化エクスポート**: `dump_json(target, indent=2)`, `dump_dict(target)`
-- **バイナリ差分比較**: `diff_dump(left, right, name_left="Expected", name_right="Actual", color=False)`
 
 ---
 

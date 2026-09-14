@@ -77,6 +77,7 @@ from binary_master import (
     hexdump,             # hexdump(target, width=16, color=False, annotate=True, cursor=None)
     debug_dump,          # debug_dump(target, format="hexdump"|"table"|"json"|"dict")
     diff_dump,           # diff_dump(target_a, target_b, color=False)
+    verify,              # verify(actual, expected, raise_error=True)
     dump_table, dump_json, dump_dict,
 
     # Manual & Mermaid Generation
@@ -538,6 +539,26 @@ from binary_master import diff_dump
 # Compare two writers, readers, or bytes
 diff_text = diff_dump(writer1, writer2, color=True)
 print(diff_text)
+```
+
+### 7.4 Binary Verification & Assertions (`verify`, `writer.verify`)
+Asserts binary equivalence with automatic rich diff reports on mismatch (ideal for pytest):
+```python
+from binary_master import BinaryWriter, verify
+
+writer = BinaryWriter()
+writer.write_uint32(0x12345678, name="magic")
+
+expected = b"\x78\x56\x34\x12"
+
+# 1. Via writer method (raises AssertionError with diff if mismatch)
+writer.verify(expected)
+
+# 2. Via top-level function
+verify(writer, expected)
+
+# 3. Non-raising check
+is_valid = writer.verify(expected, raise_error=False)  # returns bool
 ```
 
 ---

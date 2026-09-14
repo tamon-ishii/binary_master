@@ -488,3 +488,51 @@ def diff_dump(
             lines.append(f"0x{len2:04X}..{len1:04X}   {missing_hex.ljust(22)}  {'-'.ljust(22)}  {note}")
 
     return "\n".join(lines)
+
+
+def verify(
+    actual: Any,
+    expected: Any,
+    *,
+    name_actual: str = "Actual",
+    name_expected: str = "Expected",
+    color: bool = False,
+    raise_error: bool = True,
+) -> bool:
+    """Verify that actual binary data matches expected data.
+
+    If the binary data matches, returns True.
+    If there is a mismatch and `raise_error=True`, raises AssertionError with a
+    detailed byte-level and field-correlated diff report.
+
+    Args:
+        actual: Actual target (BinaryWriter, bytes, @binary_struct, etc.).
+        expected: Expected target (BinaryWriter, bytes, @binary_struct, etc.).
+        name_actual: Label for actual data in diff output.
+        name_expected: Label for expected data in diff output.
+        color: Whether to colorize diff output.
+        raise_error: If True, raises AssertionError on mismatch (default: True).
+
+    Returns:
+        True if identical, False if mismatched and raise_error is False.
+
+    Raises:
+        AssertionError: If actual does not match expected and raise_error is True.
+    """
+    b1, _, _, _ = _extract_target(actual)
+    b2, _, _, _ = _extract_target(expected)
+
+    if b1 == b2:
+        return True
+
+    if raise_error:
+        diff_report = diff_dump(
+            left=expected,
+            right=actual,
+            name_left=name_expected,
+            name_right=name_actual,
+            color=color,
+        )
+        raise AssertionError(f"Binary verification failed:\n{diff_report}")
+
+    return False

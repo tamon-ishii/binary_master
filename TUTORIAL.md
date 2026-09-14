@@ -29,9 +29,10 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 4.1 `BinaryWriter` によるストリーム書き込みとセクションキャプション (`caption`)
   - 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
   - 4.3 `BinaryReader` によるストリーム読み込み
-  - 4.4 充実したデバッグダンプ（注釈付き Hexdump / テーブル出力 / 差分比較）
-  - 4.5 `BinaryWriter` による仕様書・多言語ヘッダーの直接出力 (`write_markdown`, `write_c_header`)
-  - 4.6 多態バリアント (`write_variant`) とチャンクの繰り返し集約 (`repeat`)
+  - 4.4 充実したデバッグダンプ（注釈付き Hexdump / テーブル出力）
+  - 4.5 バイナリ検証・ベリファイ (`writer.verify()`, `writer.diff()`)
+  - 4.6 `BinaryWriter` による仕様書・多言語ヘッダーの直接出力 (`write_markdown`, `write_c_header`)
+  - 4.7 多態バリアント (`write_variant`) とチャンクの繰り返し集約 (`repeat`)
 - [Step 5: スキーマ駆動設計・仕様書自動生成・多言語出力（統合編）](#step-5-スキーマ駆動設計仕様書自動生成多言語出力統合編)
   - 5.1 `Builder` によるプロトコルスキーマ定義
   - 5.2 多態パケットの分岐 (`add_choice`)
@@ -484,7 +485,55 @@ reader.read_uint32()
 print(reader.hexdump())  # --> CURSOR @ 0x0004 と表示される
 ```
 
-### 4.5 `BinaryWriter` による仕様書・多言語ヘッダーの直接出力 (`write_markdown`, `write_c_header`)
+### 4.5 バイナリ検証・ベリファイ (`writer.verify()`, `writer.diff()`)
+
+Binary Master には、期待するゴールデンマスターデータやパケット仕様との整合性を確実に担保するための **強力なベリファイ（検証）機能** が備わっています。
+
+#### ① 完全一致アサーション (`writer.verify()` / `verify()`)
+単体テスト（`pytest`）や通信パケットの照合において、生成されたバイナリが期待値と完全に一致するかを 1 行で検証できます。  
+万一不一致がある場合は、**何バイト目で、どのフィールドがどう異なっているか** をフィールド注釈付きの diff レポートとして `AssertionError` を送出します。
+
+```python
+from binary_master import BinaryWriter, verify
+
+writer = BinaryWriter()
+writer.write_uint32(0x12345678, name="magic")
+writer.write_uint16(42, name="packet_id")
+
+expected = b"\x78\x56\x34\x12\x2a\x00"
+
+# 方法A: writer.verify() で直接検証（不一致なら詳細な diff 付きで例外発生）
+writer.verify(expected)
+
+# 方法B: トップレベル関数 verify(actual, expected)
+verify(writer, expected)
+
+# 方法C: 例外を出さずに真偽値（True/False）のみ取得
+is_ok = writer.verify(expected, raise_error=False)
+```
+
+不一致時の例外出力例（どこが違うのかが一目でわかる！）：
+```text
+AssertionError: Binary verification failed:
+--- Binary Diff: Expected vs Actual ---
+  Size Expected:  6 bytes (`0x0006`)
+  Size Actual:    6 bytes (`0x0006`)
+  Differing byte count: 1 bytes in 1 range(s)
+
+Offset      Expected Hex            Actual Hex              Field / Context
+---------------------------------------------------------------------------
+0x0004..0005   2a                      99                      packet_id (UInt16)
+```
+
+#### ② 差分比較レポートの取得 (`writer.diff()` / `diff_dump()`)
+例外を送出せずに、差分レポートの文字列や ANSI カラー付きテキストを取得したい場合は `diff()` を使用します。
+
+```python
+diff_report = writer_expected.diff(writer_actual, color=True)
+print(diff_report)
+```
+
+### 4.6 `BinaryWriter` による仕様書・多言語ヘッダーの直接出力 (`write_markdown`, `write_c_header`)
 
 `BinaryWriter` でバイナリを書き進めた後、その書き込み履歴（エントリ）をもとに仕様書や多言語コードを直接生成できます。
 
@@ -503,7 +552,7 @@ writer.write_go("packet_spec.go", package_name="protocol")
 writer.write_code("packet_spec.rs")
 ```
 
-### 4.6 多態バリアント (`write_variant`) とチャンクの繰り返し集約 (`repeat`)
+### 4.7 多態バリアント (`write_variant`) とチャンクの繰り返し集約 (`repeat`)
 
 #### ① 多態バリアント (`write_variant`)
 「同じ領域に条件によって異なる構造体が書き込まれる」ケースでは、`candidates`（候補型辞書またはリスト）を指定して書き込みます。
