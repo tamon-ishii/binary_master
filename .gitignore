@@ -4,7 +4,10 @@ __pycache__/
 *$py.class
 *.bin
 *.egg-info/
+src/*.egg-info/
 build/
 dist/
+.venv/
+venv/
 .pytest_cache/
 .ruff_cache/
