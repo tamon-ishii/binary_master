@@ -23,6 +23,7 @@ from binary_master import (
     # Core Structures & Decorators
     binary_struct,       # Class decorator for declarative structs
     write_struct,        # Procedural struct serializer
+    write_variant,       # Procedural variant serializer with candidate validation
     read_struct,         # Procedural struct deserializer
     sizeof,              # Binary size in bytes (alias: binary_size)
     binary_size,         # Alias for sizeof
@@ -31,6 +32,7 @@ from binary_master import (
 
     # Primitive Binary Types
     BinaryType,          # Base type for all primitives
+    Bool,                # Configurable boolean type (default 1 byte, supports Bool[1], Bool[2], Bool[4])
     UInt8, UInt16, UInt32, UInt64,
     Int8,  Int16,  Int32,  Int64,
     Float32, Float64,
@@ -96,7 +98,7 @@ from binary_master import (
 | `UInt8`, `UInt16`, `UInt32`, `UInt64` | 1, 2, 4, 8 bytes | `int` | Unsigned standard integers |
 | `Int8`, `Int16`, `Int32`, `Int64` | 1, 2, 4, 8 bytes | `int` | Signed 2's complement integers |
 | `Float32`, `Float64` | 4, 8 bytes | `float` | IEEE 754 single / double precision |
-| `bool` | 1 byte | `bool` | `0x00` = False, non-zero = True |
+| `Bool` / `bool` | 1 byte (or `Bool[N]` bytes) | `bool` | `0x00` = False, non-zero = True (supports `Bool[1]`, `Bool[2]`, `Bool[4]`) |
 | `FixedArray[T, N]` | `N * sizeof(T)` | `bytes` (if T is UInt8) or `list[T]` | Static fixed element buffer. Example: `FixedArray[UInt8, 16]` |
 | `Array[T]` | Dynamic (`len * sizeof(T)`) | `bytes` (if T is UInt8) or `list[T]` | Dynamic sequence. Consumes remaining bytes on read unless bounded. |
 | `Bits[N]` | `N` bits | `int` | Bitfield slice. Must be within struct decorated with `@binary_struct(bits=Total)`. |
@@ -257,7 +259,15 @@ assert isinstance(restored.payload, TextPayload)
 
 ## 4. Schema-First Builder Layer: `Builder` (`BinaryBuilder`)
 
-Use `Builder` when you want to define the overall protocol layout once, generate human-readable Markdown specifications with Mermaid diagrams, export headers for other languages, and perform schema-driven automated deserialization (`builder.read`).
+### 4.0 Why Builder? (Builder vs Writer Core Rationale)
+While `BinaryWriter` can generate specs and C headers directly from serialized data, `Builder` remains essential for three primary architectural reasons:
+1. **Zero-Data Specification Authoring (Design Phase)**: Define protocol layouts, narrative chapters (`add_document`), and multi-language exports upfront *before* any serializing code or binary test data exists.
+2. **Schema-Driven Automated Deserialization (`builder.read`)**: Parses arbitrary raw byte streams into structured Python objects by evaluating tags and conditions dynamically, eliminating the need to write custom procedural `Reader` loops.
+3. **Compiler Intermediate Representation (IR)**: `Builder` serves as the internal AST/IR for all code generators (`c_header`, `code_gen/*`). Methods like `writer.to_c_header()` actually convert writer traces to a `Builder` via `writer.to_builder()` under the hood.
+
+**Rule of Thumb**:
+- Use `BinaryWriter` for daily binary generation and execution-trace documentation.
+- Use `Builder` for specification-first design and automated incoming packet parsing.
 
 ### 4.1 Builder Methods Signature Table
 | Method | Arguments | Description |
@@ -396,8 +406,26 @@ writer.write_fixed_string("Fixed", length=16, pad_byte=b"\x00") # Padded fixed s
 writer.pad(count=4, pad_byte=b"\x00")
 writer.align(boundary=4, pad_byte=b"\x00") # Pad to 4-byte multiple
 
-# Struct Integration
+# Struct Integration & Repetition
 writer.write_struct(my_struct_instance)
+writer.write_struct(chunk, repeat="chunk_count")  # Expression / variable name in spec
+writer.write_struct(chunk, repeat=-1)             # Indefinite count: 不定回数 (0回以上 / 可変)
+# Note: section is optional (default=""). When omitted, repeats automatically group under struct class name.
+
+# Polymorphic Variants (Type validation & auto-registration for specs/code)
+writer.write_variant(
+    payload_instance,
+    candidates={0x01: HeaderChunk, 0x02: TextChunk}, # dict or list of allowed struct classes
+    tag_field="msg_type",                            # optional: checks preceding field value matches
+    name="payload",
+    desc="Dynamic payload",
+)
+
+# Repetition Scopes
+with writer.repeat("Chunks", count=-1, desc="Indefinite stream of chunks"):
+    for c in chunks:
+        writer.write_struct(c)
+writer.write_repeated(chunks, count="num_chunks")
 
 # Captions (for Manual & Trace Table)
 writer.caption("Body Section", "Payload contents")
@@ -408,6 +436,17 @@ table_handle = writer.write_offset_table(count=2, offset_size=4, base_offset=0)
 # Later...
 table_handle.set_offset(0, target_offset=0x100) # manual offset
 table_handle.write_target(1, child_struct)       # writes target at current pos & records offset
+
+# One-Stop Specification & Multi-Language Code Generation (No Builder Required!)
+writer.write_markdown("protocol_spec.md")
+md_str = writer.to_markdown()
+writer.write_c_header("protocol.h")
+writer.write_rust("protocol.rs")
+writer.write_cpp("protocol.hpp")
+writer.write_csharp("protocol.cs", namespace="MyProtocol")
+writer.write_go("protocol.go", package_name="protocol")
+writer.write_code("output.rs") # Auto-detects language from file extension
+builder = writer.to_builder(title="Generated Spec") # Convert to static Builder if needed
 
 # Inspection & Output
 pos = writer.tell()
@@ -456,15 +495,15 @@ obj = reader.read_struct(MyStructClass)
 
 Export schemas or individual structs across 5 languages:
 
-| Target Language | Single Struct Method | Builder Method | File Extension |
-|---|---|---|---|
-| **C (C99 / C11)** | `Cls.to_c()` | `builder.write_c_header("p.h")` | `.h`, `.c` |
-| **Rust (2021+)** | `Cls.to_rust()` | `builder.write_rust("p.rs")` | `.rs` |
-| **Modern C++ (C++17/20)** | `Cls.to_cpp()` | `builder.write_cpp("p.hpp")` | `.hpp`, `.cpp` |
-| **C# (.NET 8+)** | `Cls.to_csharp(namespace="...")` | `builder.write_csharp("p.cs")` | `.cs` |
-| **Go (1.20+)** | `Cls.to_go(package_name="...")` | `builder.write_go("p.go")` | `.go` |
+| Target Language | Single Struct Method | Builder Method | Writer Method | File Extension |
+|---|---|---|---|---|
+| **C (C99 / C11)** | `Cls.to_c()` | `builder.write_c_header("p.h")` | `writer.write_c_header("p.h")` | `.h`, `.c` |
+| **Rust (2021+)** | `Cls.to_rust()` | `builder.write_rust("p.rs")` | `writer.write_rust("p.rs")` | `.rs` |
+| **Modern C++ (C++17/20)** | `Cls.to_cpp()` | `builder.write_cpp("p.hpp")` | `writer.write_cpp("p.hpp")` | `.hpp`, `.cpp` |
+| **C# (.NET 8+)** | `Cls.to_csharp(namespace="...")` | `builder.write_csharp("p.cs")` | `writer.write_csharp("p.cs")` | `.cs` |
+| **Go (1.20+)** | `Cls.to_go(package_name="...")` | `builder.write_go("p.go")` | `writer.write_go("p.go")` | `.go` |
 
-Unified caller: `write_code(builder, "output.rs")` auto-detects language from extension.
+Unified caller: `write_code(builder_or_writer, "output.rs")` auto-detects language from extension.
 
 ---
 
@@ -508,7 +547,14 @@ print(diff_text)
 ```python
 from binary_master import generate_manual
 
-# Direct manual generation from writer entries:
+# 1. Direct from BinaryWriter (Preferred for data-driven pipelines):
+writer.write_markdown("protocol_spec.md")
+md_str = writer.to_markdown()
+
+# 2. From Builder (For static schemas without dummy data):
+builder.write("protocol_spec.md")
+
+# 3. Direct low-level generation from writer entries:
 md = generate_manual(
     writer.entries,
     title="Protocol Specification",
@@ -524,9 +570,10 @@ md = generate_manual(
 
 ## 9. Critical Rules, Constraints & Anti-Patterns (MUST READ FOR AI)
 
-### ⚠️ RULE 1: `write_manual` is REMOVED
-- **DO NOT** call `writer.write_manual(...)` or `builder.write_manual(...)` or `binary_master.write_manual(...)`. They have been permanently removed.
-- **DO** call `builder.write("path.md")` for schema specifications, or `generate_manual(writer.entries)` for procedural writer entries.
+### ⚠️ RULE 1: `write_manual` is Replaced by `write_markdown` / `builder.write`
+- **DO NOT** call `writer.write_manual(...)` or `builder.write_manual(...)` (deprecated / removed).
+- **DO** call `writer.write_markdown("path.md")` (or `writer.to_markdown()`) for procedural writers.
+- **DO** call `builder.write("path.md")` for schema-first builders.
 
 ### ⚠️ RULE 2: `Variant` Tag Field Placement
 - In `@binary_struct`, the field referenced by `Variant["tag_name", ...]` **MUST be declared before** the `Variant` field itself in the class definition. Deserialization relies on previously unpacked kwargs.
@@ -552,6 +599,10 @@ md = generate_manual(
 - In `@binary_struct`, `Array[T]` (such as `Array[UInt8]`) has no explicit length prefix and consumes **all remaining bytes until EOF** during `read_struct` / `from_bytes`.
 - Therefore, `Array[T]` **MUST be the last field** in a `@binary_struct`. Placing another field after `Array[T]` will trigger an `EOFError` on deserialization.
 - For fixed-length slices, ALWAYS use `FixedArray[T, N]`. For dynamic payloads with trailing fields, use `Offset[Target]` or `Variant`.
+
+### ⚠️ RULE 8: Choosing Between `Writer` and `Builder`
+- **Use `BinaryWriter` (Code-First / Data-Driven)**: When writing real binaries or when structure depends on dynamic execution logic (loops, header branches). `writer.write_markdown()` and `writer.write_c_header()` produce specifications and headers directly from written data, with automatic repeat deduplication (`repeat=-1`, `repeat="expr"`).
+- **Use `Builder` (Schema-First / Specification-Driven)**: When modeling protocols ahead of implementation, generating code definitions without real data, or using automated schema-driven deserialization (`builder.read(bytes)`). `Builder` also serves as the internal Intermediate Representation (IR) across all code generators.
 
 ---
 

@@ -66,17 +66,25 @@ class SectionElement:
     title: str
     desc: str = ""
     is_end: bool = False
+    repeat: Optional[Union[int, str, bool]] = None
 
 
 class _SectionContext:
     """Context manager and chaining proxy for section and caption grouping."""
 
-    def __init__(self, builder: Any, title: str, desc: str = "") -> None:
+    def __init__(
+        self,
+        builder: Any,
+        title: str,
+        desc: str = "",
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> None:
         self._builder = builder
         self._title = title
         self._desc = desc
+        self._repeat = repeat
         self._in_context = False
-        self._elem = SectionElement(title=title, desc=desc)
+        self._elem = SectionElement(title=title, desc=desc, repeat=repeat)
         self._builder.elements.append(self._elem)
 
     def __enter__(self) -> Any:
@@ -86,7 +94,12 @@ class _SectionContext:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         if self._in_context:
             self._builder.elements.append(
-                SectionElement(title=self._title, desc=self._desc, is_end=True)
+                SectionElement(
+                    title=self._title,
+                    desc=self._desc,
+                    is_end=True,
+                    repeat=self._repeat,
+                )
             )
 
     def __getattr__(self, name: str) -> Any:
@@ -337,54 +350,78 @@ class BinaryBuilder:
         )
         return self
 
-    def add_section(self, title: str, desc: str = "") -> BinaryBuilder:
+    def add_section(
+        self,
+        title: str,
+        desc: str = "",
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> BinaryBuilder:
         """Add a section divider grouping subsequent elements.
 
         Args:
             title: Section title.
             desc: Section description.
+            repeat: Optional repetition count or specifier.
 
         Returns:
             self for method chaining.
         """
-        self.elements.append(SectionElement(title=title, desc=desc))
+        self.elements.append(SectionElement(title=title, desc=desc, repeat=repeat))
         return self
 
-    def add_caption(self, title: str, desc: str = "") -> BinaryBuilder:
+    def add_caption(
+        self,
+        title: str,
+        desc: str = "",
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> BinaryBuilder:
         """Alias for add_section, consistent with BinaryWriter.caption.
 
         Args:
             title: Section/caption title.
             desc: Section/caption description.
+            repeat: Optional repetition count or specifier.
 
         Returns:
             self for method chaining.
         """
-        return self.add_section(title=title, desc=desc)
+        return self.add_section(title=title, desc=desc, repeat=repeat)
 
-    def section(self, title: str, desc: str = "") -> _SectionContext:
+    def section(
+        self,
+        title: str,
+        desc: str = "",
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> _SectionContext:
         """Create a section grouping subsequent elements, supporting 'with builder.section(...):' syntax.
 
         Args:
             title: Section title.
             desc: Optional section description.
+            repeat: Optional repetition count or specifier.
 
         Returns:
             _SectionContext context manager and proxy.
         """
-        return _SectionContext(self, title=title, desc=desc)
+        return _SectionContext(self, title=title, desc=desc, repeat=repeat)
 
-    def caption(self, title: str, desc: str = "") -> _SectionContext:
+    def caption(
+        self,
+        title: str,
+        desc: str = "",
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> _SectionContext:
         """Alias for section(), supporting 'with builder.caption(...):' syntax.
 
         Args:
             title: Section/caption title.
             desc: Optional section/caption description.
+            repeat: Optional repetition count or specifier.
 
         Returns:
             _SectionContext context manager and proxy.
         """
-        return self.section(title=title, desc=desc)
+        return self.section(title=title, desc=desc, repeat=repeat)
 
     def add_field(
         self,
@@ -508,6 +545,14 @@ class BinaryBuilder:
         Returns:
             A new BinaryBuilder configured with sections and fields from writer.
         """
+        if hasattr(writer, "to_builder"):
+            return writer.to_builder(
+                title=title,
+                default_endian=default_endian,
+                version=version,
+                description=description,
+            )
+
         w_endian = getattr(writer, "default_endian", None)
         norm_endian = str(w_endian).lower() if w_endian else "little"
         if "big" in norm_endian:

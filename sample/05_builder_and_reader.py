@@ -1,13 +1,19 @@
 """Sample 05: Schema-First Builder and Automated Reader.
 
 Demonstrates:
-- Constructing specification schemas upfront with Builder
+- Schema-First Protocol Modeling: Designing protocol specs before writing binary data
 - Narrative documentation chapters with builder.add_document()
 - Declarative polymorphic choices with builder.add_choice()
 - Conditional structures with condition expressions
 - Writing the Markdown manual to file with builder.write("path.md")
 - Exporting multi-language definitions (C, Rust, C++, C#, Go)
 - Automated schema-driven binary deserialization with builder.read(data)
+- Correlated schema-driven debug dumps (builder.hexdump, builder.dump)
+
+Note on Builder vs Writer:
+- Use BinaryWriter (Sample 04) for everyday code-driven serialization and on-the-fly specs.
+- Use Builder (Sample 05) when designing formal specs ahead of implementation, or when
+  building an automated parser (builder.read) that auto-evaluates headers and tags.
 """
 
 from pathlib import Path

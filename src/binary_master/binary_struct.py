@@ -990,6 +990,8 @@ def write_struct(
     parent_field_name: str = "",
     parent_struct_name: Optional[str] = None,
     desc: str = "",
+    section: str = "",
+    repeat: Optional[Union[int, str, bool]] = None,
 ) -> Any:
     """Serialize a @binary_struct instance to a BinaryWriter stream."""
     import struct
@@ -1004,6 +1006,29 @@ def write_struct(
 
     if writer is None:
         writer = BinaryWriter(default_endian=active_endian)
+        if section:
+            writer.caption(title=section, desc=desc, repeat=repeat)
+        elif repeat is not None:
+            writer.caption(title=instance.__class__.__name__, desc=desc, repeat=repeat)
+    else:
+        if section:
+            if (
+                getattr(writer, "_current_caption", None) != section
+                or getattr(writer, "_current_caption_repeat", None) != repeat
+            ):
+                if hasattr(writer, "caption"):
+                    writer.caption(title=section, desc=desc, repeat=repeat)
+        elif repeat is not None:
+            if getattr(writer, "_current_caption", None) is None:
+                if hasattr(writer, "caption"):
+                    writer.caption(title=instance.__class__.__name__, desc=desc, repeat=repeat)
+            elif hasattr(writer, "_current_caption_repeat"):
+                writer._current_caption_repeat = repeat
+
+    if hasattr(writer, "_struct_classes") and instance.__class__ not in writer._struct_classes:
+        writer._struct_classes.append(instance.__class__)
+    if hasattr(writer, "_elements_log"):
+        writer._elements_log.append(("struct", instance.__class__))
 
     struct_start_pos = writer.tell()
     current_struct_name = parent_struct_name or instance.__class__.__name__
@@ -1174,8 +1199,23 @@ def write_struct(
         if is_variant:
             _tag_field = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
             mapping = ftype[2] if isinstance(ftype, tuple) else get_args(ftype)[1]
+            var_list = [(k, v, getattr(v, "__doc__", "") or "") for k, v in mapping.items()]
             if hasattr(writer, "_current_caption_variants") and writer._current_caption_variants is None:
-                writer._current_caption_variants = [(k, v, getattr(v, "__doc__", "") or "") for k, v in mapping.items()]
+                writer._current_caption_variants = var_list
+            if hasattr(writer, "_variants"):
+                v_entry = {
+                    "name": name,
+                    "tag_field": _tag_field,
+                    "variants": var_list,
+                    "desc": f_desc,
+                }
+                if v_entry not in writer._variants:
+                    writer._variants.append(v_entry)
+                if hasattr(writer, "_elements_log"):
+                    writer._elements_log.append(("choice", v_entry))
+            for v in mapping.values():
+                if hasattr(writer, "_struct_classes") and v not in writer._struct_classes:
+                    writer._struct_classes.append(v)
             target_obj = val.value if isinstance(val, Variant) else val
             if hasattr(target_obj, "__binary__"):
                 write_struct(
@@ -1617,6 +1657,36 @@ def read_struct(
             reader.align(struct_boundary)
 
     return cls(**kwargs)
+
+
+def write_variant(
+    data: Any,
+    candidates: Union[list, dict, tuple],
+    writer: Optional[Any] = None,
+    tag_field: Optional[str] = None,
+    name: str = "",
+    desc: str = "",
+    condition: Optional[str] = None,
+    endian: EndianType = None,
+    section: str = "",
+    repeat: Optional[Union[int, str, bool]] = None,
+) -> Any:
+    """Serialize a polymorphic variant struct with candidate validation into a BinaryWriter."""
+    from binary_master.writer import BinaryWriter
+    if writer is None:
+        writer = BinaryWriter(default_endian=endian or Endian.LITTLE)
+    writer.write_variant(
+        data,
+        candidates=candidates,
+        tag_field=tag_field,
+        name=name,
+        desc=desc,
+        condition=condition,
+        endian=endian,
+        section=section,
+        repeat=repeat,
+    )
+    return writer
 
 
 #

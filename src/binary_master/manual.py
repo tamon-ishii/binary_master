@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 
 @dataclass
@@ -27,6 +27,7 @@ class LayoutEntry:
     subcaption: Optional[str] = None
     subcaption_desc: Optional[str] = None
     caption_variants: Optional[list] = None
+    caption_repeat: Optional[Union[int, str, bool]] = None
 
 
 def create_dummy_instance(struct_cls: type) -> Any:
@@ -119,6 +120,90 @@ def format_value_preview(val: Any) -> str:
     return f"`{val!r}`"
 
 
+def _detect_repetition(
+    c_entries: List[LayoutEntry],
+) -> tuple[bool, Any, List[LayoutEntry], int]:
+    """Detect if c_entries represent repeated items.
+
+    Returns:
+        (is_repeated, repeat_spec, unit_entries, sample_count)
+    """
+    if not c_entries:
+        return False, None, [], 0
+
+    explicit_repeat = None
+    for e in c_entries:
+        if e.caption_repeat is not None:
+            explicit_repeat = e.caption_repeat
+            break
+
+    n = len(c_entries)
+
+    # Search for smallest repeating period L (1 <= L <= n // 2)
+    best_l = None
+    for l in range(1, n // 2 + 1):
+        if n % l == 0:
+            matches = True
+            for i in range(l, n):
+                e_curr = c_entries[i]
+                e_base = c_entries[i % l]
+                if (
+                    e_curr.name != e_base.name
+                    or e_curr.type_name != e_base.type_name
+                    or e_curr.size != e_base.size
+                    or e_curr.struct_name != e_base.struct_name
+                ):
+                    matches = False
+                    break
+            if matches:
+                best_l = l
+                break
+
+    if explicit_repeat is not None:
+        if best_l is not None:
+            unit_entries = c_entries[:best_l]
+            sample_count = n // best_l
+        else:
+            unit_entries = c_entries
+            sample_count = 1
+        return True, explicit_repeat, unit_entries, sample_count
+
+    if best_l is not None and (n // best_l) >= 2:
+        unit_entries = c_entries[:best_l]
+        sample_count = n // best_l
+        return True, sample_count, unit_entries, sample_count
+
+    return False, None, c_entries, 1
+
+
+def _format_repeat_label(rep_spec: Any) -> str:
+    """Format the human-readable repetition string for the manual."""
+    if rep_spec == -1 or (isinstance(rep_spec, int) and rep_spec < 0):
+        return "不定回数 (0回以上 / 可変)"
+    if rep_spec is True:
+        return "可変 (Variable)"
+    if isinstance(rep_spec, str):
+        if rep_spec.lower() in ("*", "indefinite", "variable", "不定", "不定回数"):
+            return "不定回数 (0回以上 / 可変)"
+        return f"`{rep_spec}` 回"
+    return f"{rep_spec} 回"
+
+
+def _format_repeat_tag(rep_spec: Any) -> str:
+    """Format the compact repeat tag for Mermaid diagram subgraph labels."""
+    if rep_spec == -1 or (isinstance(rep_spec, int) and rep_spec < 0):
+        return " 🔁 (不定回数)"
+    if rep_spec is True:
+        return " 🔁 (可変)"
+    if isinstance(rep_spec, str):
+        if rep_spec.lower() in ("*", "indefinite", "variable", "不定", "不定回数"):
+            return " 🔁 (不定回数)"
+        return f" 🔁 x{rep_spec}"
+    if rep_spec is not None:
+        return f" 🔁 x{rep_spec}"
+    return " 🔁"
+
+
 def generate_mermaid_diagram(
     entries: List[LayoutEntry],
     direction: str = "TD",
@@ -147,6 +232,10 @@ def generate_mermaid_diagram(
     used_subgraph_ids: set[str] = set()
 
     for group_idx, (group_key, s_entries) in enumerate(groups):
+        raw_entries = [e for _, e in s_entries]
+        is_rep, rep_spec, u_entries, s_cnt = _detect_repetition(raw_entries)
+        unit_len = len(u_entries) if is_rep else len(s_entries)
+
         if group_key is not None:
             min_off = s_entries[0][1].offset
             max_off = s_entries[-1][1].offset + s_entries[-1][1].size
@@ -160,22 +249,47 @@ def generate_mermaid_diagram(
                 sg_id = f"{sg_id}_{group_idx}"
             used_subgraph_ids.add(sg_id)
 
-            label = f"{group_key} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)"
+            if is_rep:
+                rep_tag = _format_repeat_tag(rep_spec)
+                label = f"{group_key}{rep_tag} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)"
+            else:
+                label = f"{group_key} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)"
             lines.append(f'    subgraph {sg_id} ["{label}"]')
-            for idx, entry in s_entries:
-                nid = f"N{idx}"
-                node_ids.append(nid)
-                name_label = entry.name or entry.type_name
-                node_label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
-                lines.append(f'        {nid}["{node_label}"]')
+
+            if is_rep:
+                base_off = u_entries[0].offset
+                for idx, entry in s_entries[:unit_len]:
+                    nid = f"N{idx}"
+                    node_ids.append(nid)
+                    rel = entry.offset - base_off
+                    name_label = entry.name or entry.type_name
+                    node_label = f"+0x{rel:02X}: {name_label} ({entry.type_name}, {entry.size}B)"
+                    lines.append(f'        {nid}["{node_label}"]')
+            else:
+                for idx, entry in s_entries:
+                    nid = f"N{idx}"
+                    node_ids.append(nid)
+                    name_label = entry.name or entry.type_name
+                    node_label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
+                    lines.append(f'        {nid}["{node_label}"]')
             lines.append("    end")
         else:
-            for idx, entry in s_entries:
-                nid = f"N{idx}"
-                node_ids.append(nid)
-                name_label = entry.name or entry.type_name
-                node_label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
-                lines.append(f'    {nid}["{node_label}"]')
+            if is_rep:
+                base_off = u_entries[0].offset
+                for idx, entry in s_entries[:unit_len]:
+                    nid = f"N{idx}"
+                    node_ids.append(nid)
+                    rel = entry.offset - base_off
+                    name_label = entry.name or entry.type_name
+                    node_label = f"+0x{rel:02X}: {name_label} ({entry.type_name}, {entry.size}B)"
+                    lines.append(f'    {nid}["{node_label}"]')
+            else:
+                for idx, entry in s_entries:
+                    nid = f"N{idx}"
+                    node_ids.append(nid)
+                    name_label = entry.name or entry.type_name
+                    node_label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
+                    lines.append(f'    {nid}["{node_label}"]')
 
     # Sequential connections between adjacent blocks
     for i in range(len(node_ids) - 1):
@@ -186,9 +300,10 @@ def generate_mermaid_diagram(
         if entry.target_offset is not None:
             for t_idx, t_entry in enumerate(entries):
                 if t_entry.offset == entry.target_offset:
-                    lines.append(
-                        f'    N{idx} -.->|"offset: 0x{entry.target_offset:04X}"| N{t_idx}'
-                    )
+                    if f"N{idx}" in node_ids and f"N{t_idx}" in node_ids:
+                        lines.append(
+                            f'    N{idx} -.->|"offset: 0x{entry.target_offset:04X}"| N{t_idx}'
+                        )
                     break
 
     lines.append("```")
@@ -524,23 +639,87 @@ def generate_manual(
                 )
         sections.append("")
 
-    if not has_captions:
-        if section_packet_diagrams and diagram_type not in ("packet", "both"):
-            diag = generate_packet_diagram(
-                entries,
-                title=f"{title} Layout",
-                bits_per_row=bits_per_row,
-                expand_bitfields=expand_bitfields,
-                font_size=font_size,
-                bit_width=bit_width,
-                relative_offset=True,
-                include_values=include_values,
+    def _render_relative_table_rows(entry_list: List[LayoutEntry], base_offset: int) -> None:
+        if include_values:
+            sections.append(
+                "| Relative Offset | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
             )
-            if diag:
-                sections.append(diag)
-                sections.append("")
+            sections.append("|---|---|---|---|---|---|---|")
+        else:
+            sections.append(
+                "| Relative Offset | Size (B) | Field Name | Type | Endian | Description |"
+            )
+            sections.append("|---|---|---|---|---|---|")
 
-        _render_table_rows(entries)
+        for entry in entry_list:
+            rel_bytes = entry.offset - base_offset
+            off_hex = f"`+0x{rel_bytes:02X}`" if rel_bytes < 256 else f"`+0x{rel_bytes:04X}`"
+            size_str = str(entry.size)
+            name_str = f"`{entry.name}`" if entry.name else "-"
+            type_str = f"`{entry.type_name}`"
+            endian_str = entry.endian or "-"
+            desc_str = entry.description or "-"
+            if entry.target_offset is not None:
+                target_marker = f"`-> 0x{entry.target_offset:04X}`"
+                if desc_str != "-":
+                    desc_str = f"{desc_str} ({target_marker})"
+                else:
+                    desc_str = target_marker
+            if include_values:
+                val_str = format_value_preview(entry.value)
+                sections.append(
+                    f"| {off_hex} | {size_str} | {name_str} | {type_str} | {endian_str} | {val_str} | {desc_str} |"
+                )
+            else:
+                sections.append(
+                    f"| {off_hex} | {size_str} | {name_str} | {type_str} | {endian_str} | {desc_str} |"
+                )
+        sections.append("")
+
+    if not has_captions:
+        is_rep, rep_spec, unit_entries, sample_count = _detect_repetition(entries)
+        if is_rep:
+            unit_size = sum(e.size for e in unit_entries)
+            repeat_label = _format_repeat_label(rep_spec)
+            meta_lines = [
+                f"- 🔁 **繰り返し**: {repeat_label}",
+                f"- **1要素サイズ**: `{unit_size}` bytes (0x{unit_size:X})",
+            ]
+            if sample_count > 1:
+                meta_lines.append(f"- **サンプルデータ**: {sample_count} 件 (合計 `{total_bytes}` bytes)")
+            sections.append("\n".join(meta_lines) + "\n")
+            if section_packet_diagrams:
+                sec_diag = generate_packet_diagram(
+                    unit_entries,
+                    title=f"{title} (1要素の構造)",
+                    bits_per_row=bits_per_row,
+                    expand_bitfields=expand_bitfields,
+                    font_size=font_size,
+                    bit_width=bit_width,
+                    relative_offset=True,
+                    include_values=False,
+                )
+                if sec_diag:
+                    sections.append(sec_diag)
+                    sections.append("")
+            _render_relative_table_rows(unit_entries, base_offset=unit_entries[0].offset)
+        else:
+            if section_packet_diagrams and diagram_type not in ("packet", "both"):
+                diag = generate_packet_diagram(
+                    entries,
+                    title=f"{title} Layout",
+                    bits_per_row=bits_per_row,
+                    expand_bitfields=expand_bitfields,
+                    font_size=font_size,
+                    bit_width=bit_width,
+                    relative_offset=True,
+                    include_values=include_values,
+                )
+                if diag:
+                    sections.append(diag)
+                    sections.append("")
+
+            _render_table_rows(entries)
     else:
         # Group by consecutive caption
         caption_groups: List[tuple[Optional[str], List[LayoutEntry]]] = []
@@ -564,73 +743,140 @@ def generate_manual(
             max_off = c_entries[-1].offset + c_entries[-1].size
             total_size = max_off - min_off
             cap_desc = c_entries[0].caption_desc or c_entries[0].struct_doc
-            if cap:
-                sections.append(f"### {cap} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+            is_rep, rep_spec, unit_entries, sample_count = _detect_repetition(c_entries)
+
+            if is_rep:
+                unit_size = sum(e.size for e in unit_entries)
+                if cap:
+                    sections.append(f"### {cap} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+                else:
+                    sections.append(f"### (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+
+                if cap_desc:
+                    sections.append(f"{cap_desc}\n")
+
+                repeat_label = _format_repeat_label(rep_spec)
+                meta_lines = [
+                    f"- 🔁 **繰り返し**: {repeat_label}",
+                    f"- **1要素サイズ**: `{unit_size}` bytes (0x{unit_size:X})",
+                ]
+                if sample_count > 1:
+                    meta_lines.append(f"- **サンプルデータ**: {sample_count} 件 (合計 `{total_size}` bytes)")
+                else:
+                    meta_lines.append(f"- **サンプルデータ**: 1 件 (`{total_size}` bytes)")
+                sections.append("\n".join(meta_lines) + "\n")
+
+                if section_packet_diagrams:
+                    sec_diag = generate_packet_diagram(
+                        unit_entries,
+                        title=f"{cap} (1要素の構造)" if cap else "要素構造",
+                        bits_per_row=bits_per_row,
+                        expand_bitfields=expand_bitfields,
+                        font_size=font_size,
+                        bit_width=bit_width,
+                        relative_offset=True,
+                        include_values=False,
+                    )
+                    if sec_diag:
+                        sections.append(sec_diag)
+                        sections.append("")
+
+                has_subcaptions = any(e.subcaption for e in unit_entries)
+                if has_subcaptions:
+                    sub_groups: List[tuple[Optional[str], Optional[str], List[LayoutEntry]]] = []
+                    curr_sub: Optional[str] = None
+                    curr_sub_desc: Optional[str] = None
+                    curr_sub_entries: List[LayoutEntry] = []
+                    for entry in unit_entries:
+                        if entry.subcaption != curr_sub:
+                            if curr_sub_entries:
+                                sub_groups.append((curr_sub, curr_sub_desc, curr_sub_entries))
+                            curr_sub = entry.subcaption
+                            curr_sub_desc = entry.subcaption_desc
+                            curr_sub_entries = [entry]
+                        else:
+                            curr_sub_entries.append(entry)
+                    if curr_sub_entries:
+                        sub_groups.append((curr_sub, curr_sub_desc, curr_sub_entries))
+
+                    for sub_title, s_desc, s_entries in sub_groups:
+                        if sub_title:
+                            s_size = sum(e.size for e in s_entries)
+                            sections.append(f"#### {sub_title} ({s_size}B)\n")
+                            if s_desc:
+                                sections.append(f"{s_desc}\n")
+                        _render_relative_table_rows(s_entries, base_offset=unit_entries[0].offset)
+                else:
+                    _render_relative_table_rows(unit_entries, base_offset=unit_entries[0].offset)
+
             else:
-                sections.append(f"### (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+                if cap:
+                    sections.append(f"### {cap} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+                else:
+                    sections.append(f"### (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
 
-            if cap_desc:
-                sections.append(f"{cap_desc}\n")
+                if cap_desc:
+                    sections.append(f"{cap_desc}\n")
 
-            if section_packet_diagrams:
-                sec_diag = generate_packet_diagram(
-                    c_entries,
-                    title=f"{cap} Layout" if cap else "",
-                    bits_per_row=bits_per_row,
-                    expand_bitfields=expand_bitfields,
-                    font_size=font_size,
-                    bit_width=bit_width,
-                    relative_offset=True,
-                    include_values=include_values,
-                )
-                if sec_diag:
-                    sections.append(sec_diag)
-                    sections.append("")
+                if section_packet_diagrams:
+                    sec_diag = generate_packet_diagram(
+                        c_entries,
+                        title=f"{cap} Layout" if cap else "",
+                        bits_per_row=bits_per_row,
+                        expand_bitfields=expand_bitfields,
+                        font_size=font_size,
+                        bit_width=bit_width,
+                        relative_offset=True,
+                        include_values=include_values,
+                    )
+                    if sec_diag:
+                        sections.append(sec_diag)
+                        sections.append("")
 
-            # Check if subcaptions exist
-            has_subcaptions = any(e.subcaption for e in c_entries)
-            if has_subcaptions:
-                sub_groups: List[tuple[Optional[str], Optional[str], List[LayoutEntry]]] = []
-                curr_sub: Optional[str] = None
-                curr_sub_desc: Optional[str] = None
-                curr_sub_entries: List[LayoutEntry] = []
-                for entry in c_entries:
-                    if entry.subcaption != curr_sub:
-                        if curr_sub_entries:
-                            sub_groups.append((curr_sub, curr_sub_desc, curr_sub_entries))
-                        curr_sub = entry.subcaption
-                        curr_sub_desc = entry.subcaption_desc
-                        curr_sub_entries = [entry]
-                    else:
-                        curr_sub_entries.append(entry)
-                if curr_sub_entries:
-                    sub_groups.append((curr_sub, curr_sub_desc, curr_sub_entries))
+                # Check if subcaptions exist
+                has_subcaptions = any(e.subcaption for e in c_entries)
+                if has_subcaptions:
+                    sub_groups = []
+                    curr_sub = None
+                    curr_sub_desc = None
+                    curr_sub_entries = []
+                    for entry in c_entries:
+                        if entry.subcaption != curr_sub:
+                            if curr_sub_entries:
+                                sub_groups.append((curr_sub, curr_sub_desc, curr_sub_entries))
+                            curr_sub = entry.subcaption
+                            curr_sub_desc = entry.subcaption_desc
+                            curr_sub_entries = [entry]
+                        else:
+                            curr_sub_entries.append(entry)
+                    if curr_sub_entries:
+                        sub_groups.append((curr_sub, curr_sub_desc, curr_sub_entries))
 
-                for sub_title, s_desc, s_entries in sub_groups:
-                    if sub_title:
-                        s_min = s_entries[0].offset
-                        s_max = s_entries[-1].offset + s_entries[-1].size
-                        s_size = s_max - s_min
-                        sections.append(f"#### {sub_title} (0x{s_min:04X} - 0x{s_max:04X}, {s_size}B)\n")
-                        if s_desc:
-                            sections.append(f"{s_desc}\n")
-                        if section_packet_diagrams:
-                            s_diag = generate_packet_diagram(
-                                s_entries,
-                                title=f"{sub_title} Layout",
-                                bits_per_row=bits_per_row,
-                                expand_bitfields=expand_bitfields,
-                                font_size=font_size,
-                                bit_width=bit_width,
-                                relative_offset=True,
-                                include_values=include_values,
-                            )
-                            if s_diag:
-                                sections.append(s_diag)
-                                sections.append("")
-                    _render_table_rows(s_entries)
-            else:
-                _render_table_rows(c_entries)
+                    for sub_title, s_desc, s_entries in sub_groups:
+                        if sub_title:
+                            s_min = s_entries[0].offset
+                            s_max = s_entries[-1].offset + s_entries[-1].size
+                            s_size = s_max - s_min
+                            sections.append(f"#### {sub_title} (0x{s_min:04X} - 0x{s_max:04X}, {s_size}B)\n")
+                            if s_desc:
+                                sections.append(f"{s_desc}\n")
+                            if section_packet_diagrams:
+                                s_diag = generate_packet_diagram(
+                                    s_entries,
+                                    title=f"{sub_title} Layout",
+                                    bits_per_row=bits_per_row,
+                                    expand_bitfields=expand_bitfields,
+                                    font_size=font_size,
+                                    bit_width=bit_width,
+                                    relative_offset=True,
+                                    include_values=include_values,
+                                )
+                                if s_diag:
+                                    sections.append(s_diag)
+                                    sections.append("")
+                        _render_table_rows(s_entries)
+                else:
+                    _render_table_rows(c_entries)
 
             # Check if variants are registered on this caption
             variants = None
@@ -683,7 +929,14 @@ def generate_manual(
                         _render_variant_table_rows(v_entries, sections, include_values)
 
     # 4. Bitfield breakdowns if any
-    bitfields = [e for e in entries if e.subfields]
+    bitfields = []
+    seen_bf: set[tuple] = set()
+    for e in entries:
+        if e.subfields:
+            key = (e.struct_name, e.name, e.type_name)
+            if key not in seen_bf:
+                seen_bf.add(key)
+                bitfields.append(e)
     if bitfields:
         sections.append("## Bitfield Details\n")
         for bf in bitfields:

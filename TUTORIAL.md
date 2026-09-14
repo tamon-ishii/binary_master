@@ -30,6 +30,8 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
   - 4.3 `BinaryReader` によるストリーム読み込み
   - 4.4 充実したデバッグダンプ（注釈付き Hexdump / テーブル出力 / 差分比較）
+  - 4.5 `BinaryWriter` による仕様書・多言語ヘッダーの直接出力 (`write_markdown`, `write_c_header`)
+  - 4.6 多態バリアント (`write_variant`) とチャンクの繰り返し集約 (`repeat`)
 - [Step 5: スキーマ駆動設計・仕様書自動生成・多言語出力（統合編）](#step-5-スキーマ駆動設計仕様書自動生成多言語出力統合編)
   - 5.1 `Builder` によるプロトコルスキーマ定義
   - 5.2 多態パケットの分岐 (`add_choice`)
@@ -348,10 +350,10 @@ print(bytes(loaded.primary_offset.target.raw_pixels))  # => b'MAIN_TEX'
 
 > 対応サンプルコード: [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py)
 
-> [!IMPORTANT]
-> **「プロトコル仕様書（Markdown / Mermaid図）の設計・出力」が目的の場合は、本ステップではなく次の [Step 5 (`Builder`)](#step-5-スキーマ駆動設計仕様書自動生成多言語出力統合編) を使用してください。**  
-> ここで解説する `BinaryWriter` / `BinaryReader` は、Python スクリプトから直接ストリームを逐次読み書きするための手続き的（低レベル）ツールです。  
-> `writer.caption()` などの機能は、**仕様書を作るためではなく、主にデバッグダンプ（`writer.dump("table")` や `writer.hexdump()`）でバイナリ内の各領域を視覚的にわかりやすくグループ分け・整理するために使用します**。
+> [!TIP]
+> **Writer から直接仕様書や C/Rust ヘッダーを出力可能になりました！**  
+> `BinaryWriter` で実際にバイナリを書き進めながら、ワンライナーで `writer.write_markdown("spec.md")` や `writer.write_c_header("spec.h")` を出力できます。  
+> 実際の書き込みコードが存在する場合は `BinaryWriter` をそのまま使うのが最も手軽で直感的です。一方、事前にダミーデータなしでプロトコル仕様を設計したい場合や、受信パケットを自動デシリアライズ（`builder.read()`）したい場合は、[Step 5 (`Builder`)](#step-5-スキーマ駆動設計仕様書自動生成多言語出力統合編) を活用します。
 
 構造体を定義するまでもない小さなスクラッチ処理や、ストリームを逐次読み書きしたい場合は `BinaryWriter` と `BinaryReader` を直接使用します。
 
@@ -458,14 +460,96 @@ reader.read_uint32()
 print(reader.hexdump())  # --> CURSOR @ 0x0004 と表示される
 ```
 
+### 4.5 `BinaryWriter` による仕様書・多言語ヘッダーの直接出力 (`write_markdown`, `write_c_header`)
+
+`BinaryWriter` でバイナリを書き進めた後、その書き込み履歴（エントリ）をもとに仕様書や多言語コードを直接生成できます。
+
+```python
+# 仕様書（Markdown）の出力
+writer.write_markdown("packet_spec.md")
+
+# 各種言語のコード・ヘッダー出力
+writer.write_c_header("packet_spec.h")
+writer.write_rust("packet_spec.rs")
+writer.write_cpp("packet_spec.hpp")
+writer.write_csharp("packet_spec.cs", namespace="MyProtocol")
+writer.write_go("packet_spec.go", package_name="protocol")
+
+# 拡張子からの自動判別出力
+writer.write_code("packet_spec.rs")
+```
+
+### 4.6 多態バリアント (`write_variant`) とチャンクの繰り返し集約 (`repeat`)
+
+#### ① 多態バリアント (`write_variant`)
+「同じ領域に条件によって異なる構造体が書き込まれる」ケースでは、`candidates`（候補型辞書またはリスト）を指定して書き込みます。
+
+```python
+# 候補辞書: {ID: 構造体クラス}
+candidates = {1: HeaderChunk, 2: TextChunk}
+
+# タグフィールドと一致しているか検証しながら安全に書き込み
+writer.write_uint16(1, name="chunk_type")
+writer.write_variant(
+    HeaderChunk(version=1, flags=0),
+    candidates=candidates,
+    tag_field="chunk_type",
+    name="payload",
+)
+```
+許可されていない型のインスタンスを渡した場合や、直前に書かれたタグ値と型が不一致の場合は即座にエラーとなります。また、仕様書や C ヘッダーにも候補構造体が自動的に登録されます。
+
+#### ② チャンクの繰り返し集約 (`repeat`)
+ループで何十個も同じチャンク構造体を書き込む場合、仕様書テーブルに全チャンクを展開するとドキュメントが肥大化してしまいます。  
+`repeat` オプションを指定すると、仕様書上では **「1要素のテンプレート（相対オフセット `+0x00`, `+0x04`...）」** として美しく自動集約されます。
+
+```python
+# パターンA: write_struct で直接指定（section は省略可能、クラス名で自動グループ化）
+for chunk in chunks:
+    writer.write_struct(chunk, repeat="chunk_count")  # 変数名・式を指定可能
+    # または不定回数:
+    # writer.write_struct(chunk, repeat=-1)
+
+# パターンB: コンテキストマネージャでスコープ化
+with writer.repeat("DataChunks", count=-1, desc="可変個のデータチャンク"):
+    for chunk in chunks:
+        writer.write_struct(chunk)
+
+# パターンC: リストを一括書き込み
+writer.write_repeated(chunks, count="num_chunks")
+```
+- `repeat=-1` や負の数を指定すると、仕様書上には `不定回数 (0回以上 / 可変)`、Mermaid 図には `🔁 (不定回数)` と表記されます。
+- `section=""`（デフォルト）のときは、構造体クラス名（例: `Chunk`）が自動的にセクション見出しとして使用されるため、セクション名を手動で書く必要もありません。
+
 ---
 
 ## Step 5: スキーマ駆動設計・仕様書自動生成・多言語出力（統合編）
 
 > 対応サンプルコード: [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py)
 
-`Builder`（`BinaryBuilder`）は、Binary Master の最上位機能です。  
-スキーマを事前定義することで、**「仕様書生成」「多言語ヘッダー出力」「自動パーサー」** をすべて1本の定義から完結させることができます。
+### 💡 Writer と Builder の使い分け：Builder の役割と存在理由
+
+Step 4 で見たように、`BinaryWriter` でも仕様書（Markdown）や C/Rust ヘッダーの直接出力、多態バリアント、繰り返しチャンクの集約ができるようになりました。では、`Builder`（`BinaryBuilder`）はどのような場面で必要なのでしょうか？
+
+1. **実データ不要の「スキーマ事前設計」**:
+   バイナリデータを実際に書き出すコードやダミーデータを用意しなくても、構造体クラスの登録とプロトコルの章立て（`add_document`）だけで **仕様書や C/Rust ヘッダーを作成** できます。仕様策定フェーズに最適です。
+2. **スキーマ駆動の「自動デシリアライズ」(`builder.read`)**:
+   受信した生のバイナリ列を渡すだけで、ヘッダーのタグ値や条件分岐をスキーマに従って自動評価し、対応する構造体インスタンスとして一括復元できます（`Reader` で手動で `if/elif` を書く必要がありません）。
+3. **コードジェネレータの「内部中間表現 (IR)」**:
+   実は `writer.to_c_header()` や各種コード生成機能も、内部では `writer.to_builder()` を介して Builder 構造に変換されて動作しています。Builder はシステム全体の核となるスキーマ表現です。
+
+| 観点 | `BinaryWriter` (コード駆動 / データ駆動) | `Builder` (スキーマ駆動 / 仕様・パーサー駆動) |
+|---|---|---|
+| **主な用途** | バイナリの生成・出力、書き込み実行ログからの仕様書/ヘッダー自動生成 | プロトコル仕様の先行策定、受信バイナリの自動デシリアライズ |
+| **動的な条件分岐** | Python の自然な `if/elif` や `for` ループで柔軟に処理可能 | メタ定義（`add_choice`, `condition`）による静的スキーマ宣言 |
+| **実データの要否** | 必要（実際に書き込まれたバイト列から仕様を抽出） | **不要**（クラス定義と章立てドキュメントのみで仕様書/コード出力可） |
+| **読み込み (パース)** | 読み込み不可（別途 `BinaryReader` で手動実装） | **自動パース可能** (`builder.read(data)` で一括復元) |
+
+**結論・使い分けの指針**:
+- **「バイナリを出力する処理」がある場合（日常使いの 8〜9 割）**: `BinaryWriter` を使うのが最も直感的でコード量も少なくなります。
+- **「仕様策定先行」または「受信バイナリの自動パース」を行う場合**: `Builder` が威力を発揮します。
+
+`Builder`（`BinaryBuilder`）を使用することで、事前スキーマ定義から **「仕様書生成」「多言語ヘッダー出力」「自動パーサー」** を1本の定義で完結できます。
 
 ### 5.1 `Builder` によるプロトコルスキーマ定義
 

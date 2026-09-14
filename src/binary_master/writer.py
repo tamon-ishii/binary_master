@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 import struct
-from typing import Any, IO, Optional, Union
+from typing import Any, IO, Iterable, Optional, Union
 
 from binary_master.enums import Endian, EndianType, normalize_endian
 
@@ -43,6 +43,41 @@ def _check_int_bounds(name: str, value: int, min_val: int, max_val: int) -> None
         )
 
 
+class _RepeatContext:
+    """Context manager for scoping a repeated section in BinaryWriter."""
+
+    def __init__(
+        self,
+        writer: BinaryWriter,
+        section: str = "",
+        count: Optional[Union[int, str, bool]] = None,
+        desc: str = "",
+    ) -> None:
+        self.writer = writer
+        self.section = section
+        self.count = count
+        self.desc = desc
+        self._prev_caption: Optional[str] = None
+        self._prev_desc: str = ""
+        self._prev_repeat: Optional[Union[int, str, bool]] = None
+        self._prev_variants: Optional[list] = None
+
+    def __enter__(self) -> BinaryWriter:
+        self._prev_caption = self.writer._current_caption
+        self._prev_desc = self.writer._current_caption_desc
+        self._prev_repeat = self.writer._current_caption_repeat
+        self._prev_variants = self.writer._current_caption_variants
+        title = self.section or self._prev_caption or "Repeat"
+        self.writer.caption(title=title, desc=self.desc, repeat=self.count)
+        return self.writer
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.writer._current_caption = self._prev_caption
+        self.writer._current_caption_desc = self._prev_desc
+        self.writer._current_caption_repeat = self._prev_repeat
+        self.writer._current_caption_variants = self._prev_variants
+
+
 class BinaryWriter:
     """A sequential binary writer supporting in-memory buffers and stream/file targets."""
 
@@ -63,9 +98,14 @@ class BinaryWriter:
         """
         self._default_endian = normalize_endian(default_endian)
         self._entries: list[Any] = []
+        self._struct_classes: list[type] = []
+        self._variants: list[dict[str, Any]] = []
+        self._expected_variant: Optional[dict[str, Any]] = None
+        self._elements_log: list[tuple[str, Any]] = []
         self._current_caption: Optional[str] = None
         self._current_caption_desc: str = ""
         self._current_caption_variants: Optional[list] = None
+        self._current_caption_repeat: Optional[Union[int, str, bool]] = None
         self._current_subcaption: Optional[str] = None
         self._current_subcaption_desc: str = ""
         if stream is None:
@@ -77,11 +117,22 @@ class BinaryWriter:
             self._close_stream = auto_close if auto_close is not None else False
             self._is_memory = isinstance(stream, io.BytesIO)
 
+    @property
+    def struct_classes(self) -> list[type]:
+        """Get the struct classes recorded during serialization."""
+        return self._struct_classes
+
+    @property
+    def variants(self) -> list[dict[str, Any]]:
+        """Get the variant choice definitions recorded on this writer."""
+        return self._variants
+
     def caption(
         self,
         title: Optional[str] = None,
         desc: str = "",
         variants: Optional[list] = None,
+        repeat: Optional[Union[int, str, bool]] = None,
     ) -> BinaryWriter:
         """Set the active section caption/title for subsequent binary writes.
 
@@ -93,6 +144,8 @@ class BinaryWriter:
             desc: Optional description for this section/caption.
             variants: Optional list of candidate variant structures for this section,
                       e.g. [(tag, StructCls, desc), ...] or [StructCls, ...].
+            repeat: Optional repetition metadata, e.g. integer count (5), variable name
+                    ('chunk_count'), or True.
 
         Returns:
             self for method chaining.
@@ -100,8 +153,11 @@ class BinaryWriter:
         self._current_caption = title if title else None
         self._current_caption_desc = desc
         self._current_caption_variants = variants
+        self._current_caption_repeat = repeat
         self._current_subcaption = None
         self._current_subcaption_desc = ""
+        if title:
+            self._elements_log.append(("section", title, desc, repeat))
         return self
 
     def subcaption(self, title: Optional[str] = None, desc: str = "") -> BinaryWriter:
@@ -118,6 +174,58 @@ class BinaryWriter:
         self._current_subcaption_desc = desc
         return self
 
+    def repeat(
+        self,
+        section: str = "",
+        count: Optional[Union[int, str, bool]] = None,
+        desc: str = "",
+    ) -> _RepeatContext:
+        """Context manager to write a repeating section of binary data.
+
+        Example:
+            with writer.repeat("DataChunks", count="chunk_count"):
+                for chunk in chunks:
+                    writer.write_struct(chunk)
+
+        Args:
+            section: Section name / title for the repeating block (default: "").
+            count: Repetition count, loop variable name (e.g. 'chunk_count'), or True.
+            desc: Optional description of this repeating section.
+        """
+        return _RepeatContext(self, section=section, count=count, desc=desc)
+
+    def write_repeated(
+        self,
+        items: Iterable[Any],
+        section: str = "",
+        count: Optional[Union[int, str, bool]] = None,
+        desc: str = "",
+        endian: EndianType = None,
+    ) -> BinaryWriter:
+        """Write an iterable of items (e.g. structs) as a repeated section.
+
+        Args:
+            items: Iterable of @binary_struct instances or items to write.
+            section: Section name (default: "").
+            count: Repetition count or variable name (defaults to len(items) if items has len).
+            desc: Optional description for the section.
+            endian: Optional endianness override.
+
+        Returns:
+            self for method chaining.
+        """
+        item_list = list(items) if not isinstance(items, (list, tuple)) else items
+        effective_count = count if count is not None else len(item_list)
+        with self.repeat(section=section, count=effective_count, desc=desc):
+            for item in item_list:
+                if hasattr(item, "__binary__"):
+                    self.write_struct(item, endian=endian)
+                elif callable(item):
+                    item(self)
+                else:
+                    raise TypeError(f"Cannot write repeated item of type {type(item).__name__}")
+        return self
+
     @property
     def current_caption(self) -> Optional[str]:
         """Get the currently active section caption."""
@@ -127,6 +235,11 @@ class BinaryWriter:
     def current_caption_desc(self) -> str:
         """Get the description of the currently active section caption."""
         return self._current_caption_desc
+
+    @property
+    def current_caption_repeat(self) -> Optional[Union[int, str, bool]]:
+        """Get the repetition metadata of the currently active section caption."""
+        return self._current_caption_repeat
 
     @property
     def current_caption_variants(self) -> Optional[list]:
@@ -289,6 +402,7 @@ class BinaryWriter:
         subcaption: Optional[str] = None,
         subcaption_desc: Optional[str] = None,
         caption_variants: Optional[list] = None,
+        caption_repeat: Optional[Union[int, str, bool]] = None,
     ) -> None:
         from binary_master.manual import LayoutEntry
 
@@ -297,6 +411,7 @@ class BinaryWriter:
         active_subcaption = subcaption if subcaption is not None else self._current_subcaption
         active_subcaption_desc = subcaption_desc if subcaption_desc is not None else self._current_subcaption_desc
         active_variants = caption_variants if caption_variants is not None else self._current_caption_variants
+        active_repeat = caption_repeat if caption_repeat is not None else self._current_caption_repeat
         self._entries.append(
             LayoutEntry(
                 offset=offset,
@@ -315,6 +430,7 @@ class BinaryWriter:
                 subcaption=active_subcaption,
                 subcaption_desc=active_subcaption_desc,
                 caption_variants=active_variants,
+                caption_repeat=active_repeat,
             )
         )
 
@@ -737,16 +853,393 @@ class BinaryWriter:
             base_offset=base_offset,
         )
 
-    def write_struct(self, instance: object, endian: EndianType = None) -> BinaryWriter:
+    def _normalize_candidates(self, candidates: Union[list, dict, tuple]) -> list[tuple[Any, type, str]]:
+        """Normalize candidate structs into [(tag, struct_cls, description), ...]."""
+        norm_variants: list[tuple[Any, type, str]] = []
+        if isinstance(candidates, dict):
+            for k, v in candidates.items():
+                if isinstance(v, tuple) and len(v) >= 2:
+                    norm_variants.append((k, v[0], str(v[1])))
+                elif isinstance(v, type):
+                    norm_variants.append((k, v, getattr(v, "__doc__", "") or ""))
+                else:
+                    raise TypeError(f"Invalid candidate type in candidates dict: {v!r}")
+        elif isinstance(candidates, (list, tuple)):
+            for i, item in enumerate(candidates):
+                if isinstance(item, tuple) and len(item) == 3:
+                    norm_variants.append(item)
+                elif isinstance(item, tuple) and len(item) == 2:
+                    norm_variants.append((item[0], item[1], getattr(item[1], "__doc__", "") or ""))
+                elif isinstance(item, type):
+                    norm_variants.append((i, item, getattr(item, "__doc__", "") or ""))
+                else:
+                    raise TypeError(f"Invalid candidate entry in candidates: {item!r}")
+        else:
+            raise TypeError(f"candidates must be a list, dict, or tuple, got {type(candidates).__name__}")
+        return norm_variants
+
+    def write_struct(
+        self,
+        instance: object,
+        endian: EndianType = None,
+        section: str = "",
+        repeat: Optional[Union[int, str, bool]] = None,
+        desc: str = "",
+    ) -> BinaryWriter:
         """Write a @binary_struct instance to this writer's stream.
 
         Args:
             instance: An instance of a class decorated with @binary_struct.
             endian: Optional endianness override for this struct write.
+            section: Optional section name (default: "").
+            repeat: Optional repetition count or specifier (e.g. 5, "chunk_count", True).
+            desc: Optional section description if section is provided.
         """
+        if section:
+            if (
+                self._current_caption != section
+                or self._current_caption_repeat != repeat
+                or (desc and self._current_caption_desc != desc)
+            ):
+                self.caption(title=section, desc=desc, repeat=repeat)
+        elif repeat is not None:
+            if self._current_caption is None:
+                self.caption(title=instance.__class__.__name__, desc=desc, repeat=repeat)
+            else:
+                self._current_caption_repeat = repeat
+
+        if self._expected_variant is not None:
+            expected = self._expected_variant
+            allowed_classes = tuple(c[1] for c in expected["variants"])
+            target_obj = getattr(instance, "value", instance) if hasattr(instance, "value") and type(instance).__name__ == "Variant" else instance
+            if not isinstance(target_obj, allowed_classes):
+                names = [c.__name__ for c in allowed_classes]
+                raise TypeError(
+                    f"Value '{target_obj}' of type '{type(target_obj).__name__}' is not in expected variant candidates: {names}"
+                )
+            tag_field = expected.get("tag_field")
+            orig_candidates = expected.get("candidates_input")
+            if tag_field and (isinstance(orig_candidates, dict) or (isinstance(orig_candidates, (list, tuple)) and orig_candidates and isinstance(orig_candidates[0], tuple))):
+                matching_tag = None
+                for tag, cls, _ in expected["variants"]:
+                    if isinstance(target_obj, cls):
+                        matching_tag = tag
+                        break
+                if matching_tag is not None:
+                    for entry in reversed(self._entries):
+                        if getattr(entry, "name", None) == tag_field:
+                            if entry.value != matching_tag:
+                                raise ValueError(
+                                    f"Tag mismatch for variant '{expected.get('name')}': "
+                                    f"field '{tag_field}' has value {entry.value}, but candidate "
+                                    f"'{type(target_obj).__name__}' expects tag {matching_tag}"
+                                    )
+                            break
+            self._expected_variant = None
+
+        s_cls = instance.__class__
+        if s_cls not in self._struct_classes:
+            self._struct_classes.append(s_cls)
+        self._elements_log.append(("struct", s_cls))
+
         from binary_master.binary_struct import write_struct
         write_struct(instance, writer=self, endian=endian)
         return self
+
+    def write_variant(
+        self,
+        data: Any,
+        candidates: Union[list, dict, tuple],
+        tag_field: Optional[str] = None,
+        name: str = "",
+        desc: str = "",
+        condition: Optional[str] = None,
+        endian: EndianType = None,
+        section: str = "",
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> BinaryWriter:
+        """Write a polymorphic variant struct to the stream while validating against candidate types.
+
+        Registers the complete set of candidate variant structures for specification
+        documentation and multi-language C/C++/C#/Go/Rust code export.
+
+        Args:
+            data: The struct instance to write.
+            candidates: Allowed candidate struct types. Supported formats:
+                        - list of struct classes: [StatusPayload, SensorPayload]
+                        - dict of {tag: struct_class}: {0x01: StatusPayload, 0x02: SensorPayload}
+                        - dict of {tag: (struct_class, desc)}
+                        - list of tuples: [(0x01, StatusPayload, "desc"), ...]
+            tag_field: Optional name of the tag/discriminator field preceding this variant.
+            name: Logical name of this variant field/slot (e.g. 'payload').
+            desc: Optional description for this variant field.
+            condition: Optional condition string for the variant branch.
+            endian: Optional endianness override.
+            section: Optional section name (default: "").
+            repeat: Optional repetition count or specifier (e.g. 5, "chunk_count", True).
+
+        Returns:
+            self for method chaining.
+
+        Raises:
+            TypeError: If data is not an instance of one of the allowed candidate classes.
+            ValueError: If tag_field is provided, candidates specifies tags, and a previously
+                        written field with name tag_field does not match data's expected tag.
+        """
+        if section:
+            if (
+                self._current_caption != section
+                or self._current_caption_repeat != repeat
+                or (desc and self._current_caption_desc != desc)
+            ):
+                self.caption(title=section, desc=desc, repeat=repeat)
+        elif repeat is not None:
+            target_cls = getattr(data, "__class__", None)
+            c_name = target_cls.__name__ if target_cls else "Variant"
+            if self._current_caption is None:
+                self.caption(title=c_name, desc=desc, repeat=repeat)
+            else:
+                self._current_caption_repeat = repeat
+
+        norm_variants = self._normalize_candidates(candidates)
+        allowed_classes = tuple(c[1] for c in norm_variants)
+        target_obj = getattr(data, "value", data) if hasattr(data, "value") and type(data).__name__ == "Variant" else data
+
+        if not isinstance(target_obj, allowed_classes):
+            names = [c.__name__ for c in allowed_classes]
+            raise TypeError(
+                f"Value '{target_obj}' of type '{type(target_obj).__name__}' is not in variant candidates: {names}"
+            )
+
+        if tag_field and (isinstance(candidates, dict) or (isinstance(candidates, (list, tuple)) and candidates and isinstance(candidates[0], tuple))):
+            matching_tag = None
+            for tag, cls, _ in norm_variants:
+                if isinstance(target_obj, cls):
+                    matching_tag = tag
+                    break
+            if matching_tag is not None:
+                for entry in reversed(self._entries):
+                    if getattr(entry, "name", None) == tag_field:
+                        if entry.value != matching_tag:
+                            raise ValueError(
+                                f"Tag mismatch for variant '{name or type(target_obj).__name__}': "
+                                f"field '{tag_field}' has value {entry.value}, but candidate "
+                                f"'{type(target_obj).__name__}' expects tag {matching_tag}"
+                            )
+                        break
+
+        variant_name = name or f"{type(target_obj).__name__}Variant"
+        if self._current_caption is None:
+            self.caption(variant_name, desc=desc, variants=norm_variants, repeat=repeat)
+        else:
+            self._current_caption_variants = norm_variants
+            if repeat is not None:
+                self._current_caption_repeat = repeat
+
+        v_info = {
+            "name": variant_name,
+            "tag_field": tag_field or "tag",
+            "variants": norm_variants,
+            "desc": desc,
+            "condition": condition,
+        }
+        self._variants.append(v_info)
+        self._elements_log.append(("choice", v_info))
+        for _, cls, _ in norm_variants:
+            if cls not in self._struct_classes:
+                self._struct_classes.append(cls)
+
+        from binary_master.binary_struct import write_struct
+        write_struct(target_obj, writer=self, endian=endian, desc=desc, parent_field_name=name)
+        return self
+
+    def variant(
+        self,
+        candidates: Union[list, dict, tuple],
+        tag_field: Optional[str] = None,
+        name: str = "",
+        desc: str = "",
+        condition: Optional[str] = None,
+    ) -> BinaryWriter:
+        """Register expected candidate variant structures for upcoming writes and documentation.
+
+        If set, the next call to write_struct will validate that the struct is one of the candidates.
+
+        Args:
+            candidates: Allowed candidate struct types (list, dict, or list of tuples).
+            tag_field: Optional name of the tag/discriminator field preceding this variant.
+            name: Logical name of this variant field/slot (e.g. 'payload').
+            desc: Optional description for this variant field.
+            condition: Optional condition string.
+
+        Returns:
+            self for method chaining.
+        """
+        norm_variants = self._normalize_candidates(candidates)
+        variant_name = name or "VariantChoice"
+        if self._current_caption is None:
+            self.caption(variant_name, desc=desc, variants=norm_variants)
+        else:
+            self._current_caption_variants = norm_variants
+
+        self._expected_variant = {
+            "name": variant_name,
+            "tag_field": tag_field or "tag",
+            "variants": norm_variants,
+            "desc": desc,
+            "condition": condition,
+            "candidates_input": candidates,
+        }
+        self._variants.append(self._expected_variant)
+        self._elements_log.append(("choice", self._expected_variant))
+        for _, cls, _ in norm_variants:
+            if cls not in self._struct_classes:
+                self._struct_classes.append(cls)
+        return self
+
+    expect = variant
+
+    def to_builder(
+        self,
+        title: str = "Binary Protocol",
+        default_endian: Optional[str] = None,
+        version: Optional[str] = None,
+        description: str = "",
+    ) -> Any:
+        """Convert this BinaryWriter and its recorded layout/variants into a BinaryBuilder schema."""
+        from binary_master.builder import Builder
+        resolved_endian = default_endian or (
+            "little" if self.default_endian == Endian.LITTLE else "big"
+        )
+        builder = Builder(
+            title=title,
+            default_endian=resolved_endian,
+            version=version,
+            description=description,
+        )
+
+        if not self._struct_classes and not self._variants:
+            builder.import_writer(self, include_fields=True)
+            return builder
+
+        seen_sections: set[str] = set()
+        seen_structs: set[type] = set()
+        seen_choices: set[str] = set()
+
+        choice_variants: set[type] = set()
+        for v in self._variants:
+            for _, v_cls, _ in v.get("variants", []):
+                choice_variants.add(v_cls)
+
+        for item in self._elements_log:
+            kind = item[0]
+            if kind == "section":
+                sec_title, s_desc = item[1], item[2]
+                sec_repeat = item[3] if len(item) > 3 else None
+                if sec_title not in seen_sections:
+                    seen_sections.add(sec_title)
+                    builder.add_section(sec_title, desc=s_desc, repeat=sec_repeat)
+            elif kind == "struct":
+                s_cls = item[1]
+                if s_cls not in seen_structs and s_cls not in choice_variants:
+                    seen_structs.add(s_cls)
+                    builder.add_struct(s_cls)
+            elif kind == "choice":
+                v_info = item[1]
+                v_name = v_info.get("name") or "PayloadChoice"
+                if v_name not in seen_choices:
+                    seen_choices.add(v_name)
+                    builder.add_choice(
+                        name=v_name,
+                        tag_field=v_info.get("tag_field") or "tag",
+                        variants=v_info.get("variants", []),
+                        desc=v_info.get("desc", ""),
+                        condition=v_info.get("condition"),
+                    )
+
+        return builder
+
+    def to_markdown(self, **kwargs: Any) -> str:
+        """Generate a complete Markdown specification manual from this writer."""
+        from binary_master.manual import generate_manual
+        return generate_manual(self, **kwargs)
+
+    def write_markdown(self, path_or_file: Union[str, Path, IO[str]], **kwargs: Any) -> str:
+        """Generate specification markdown and write it to a file or stream."""
+        content = self.to_markdown(**kwargs)
+        if isinstance(path_or_file, (str, Path)):
+            Path(path_or_file).write_text(content, encoding="utf-8")
+        elif hasattr(path_or_file, "write"):
+            path_or_file.write(content)
+        else:
+            raise TypeError(f"Invalid path_or_file: {type(path_or_file).__name__}")
+        return content
+
+    def to_c_header(self, guard: Optional[str] = None, pack: bool = True) -> str:
+        """Generate a C99/C11 header file from this writer's recorded structures and variants."""
+        return self.to_builder().to_c_header(guard=guard, pack=pack)
+
+    def write_c_header(
+        self,
+        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+        guard: Optional[str] = None,
+        pack: bool = True,
+    ) -> str:
+        """Generate C header and write it to a file or stream."""
+        return self.to_builder().write_c_header(path_or_file=path_or_file, guard=guard, pack=pack)
+
+    def to_rust(self) -> str:
+        """Generate Rust code from this writer's recorded structures and variants."""
+        return self.to_builder().to_rust()
+
+    def write_rust(self, path_or_file: Optional[Union[str, Path, IO[str]]] = None) -> str:
+        """Generate Rust code and write to file."""
+        return self.to_builder().write_rust(path_or_file=path_or_file)
+
+    def to_cpp(self) -> str:
+        """Generate C++ code from this writer's recorded structures and variants."""
+        return self.to_builder().to_cpp()
+
+    def write_cpp(self, path_or_file: Optional[Union[str, Path, IO[str]]] = None) -> str:
+        """Generate C++ code and write to file."""
+        return self.to_builder().write_cpp(path_or_file=path_or_file)
+
+    def to_csharp(self, namespace: str = "BinaryProtocol") -> str:
+        """Generate C# code from this writer's recorded structures and variants."""
+        return self.to_builder().to_csharp(namespace=namespace)
+
+    def write_csharp(
+        self,
+        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+        namespace: str = "BinaryProtocol",
+    ) -> str:
+        """Generate C# code and write to file."""
+        return self.to_builder().write_csharp(path_or_file=path_or_file, namespace=namespace)
+
+    def to_go(self, package_name: str = "protocol") -> str:
+        """Generate Go code from this writer's recorded structures and variants."""
+        return self.to_builder().to_go(package_name=package_name)
+
+    def write_go(
+        self,
+        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+        package_name: str = "protocol",
+    ) -> str:
+        """Generate Go code and write to file."""
+        return self.to_builder().write_go(path_or_file=path_or_file, package_name=package_name)
+
+    def to_code(self, lang: str, **kwargs: Any) -> str:
+        """Generate code in the specified language ('c', 'rust', 'cpp', 'csharp', 'go')."""
+        return self.to_builder().to_code(lang=lang, **kwargs)
+
+    def write_code(
+        self,
+        path_or_file: Union[str, Path, IO[str]],
+        lang: Optional[str] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Generate code in the target language and write to file."""
+        return self.to_builder().write_code(path_or_file=path_or_file, lang=lang, **kwargs)
 
 
 class OffsetTableHandle:

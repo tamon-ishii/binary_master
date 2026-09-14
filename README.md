@@ -26,25 +26,29 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
 - 🧩 **高度な型サポート**  
   - 符号付き / 符号なし整数（8, 16, 32, 64-bit）
   - 浮動小数点数（Float32, Float64）
+  - **論理値 (`Bool` / `bool`)**: サイズ設定可能（`Bool[1]`, `Bool[2]`, `Bool[4]` 等、デフォルト1バイト）
   - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング・アンパッキング
   - **オフセット自動計算 & 解決 (`Offset[T, Size, BaseOffset]`)**: ヘッダーのオフセット値の自動バックパッチ（1, 2, 4, 8バイト指定可、`Base.SELF + 0x20` などの構造体先頭相対指定対応）および読み込み時の参照先自動インスタンス化
   - **オフセットテーブル (`OffsetTable[Count, Type, BaseOffset]`)**: 複数エントリのオフセット配列の予約・自動バックパッチ（`Base.SELF` などの相対指定対応）
   - **多態チャンク & タグ付き共用体 (`Variant[TagField, Mapping]`)**: 種別IDに応じて切り替わる多態構造体の自動ディスパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
   - 構造体のネスト
-- 📐 **事前設計型プロトコルビルダー & 自動リーダー (`Builder` / `BinaryBuilder`)**  
-  - バイナリデータを実際に書き出すことなく、構造体クラス（`@binary_struct`）、説明文（`add_document`）、条件分岐（`condition`）、多態バリアント（`add_choice`）を事前定義して仕様書を生成（`builder.write("spec.md")`）。
-  - 事前に定義したスキーマ情報をもとに、バイナリバイト列から各構造体・バリアントを自動判別して復元する **スキーマ駆動自動リーダー (`builder.read(data)`)** を提供。
 - ✍️ **柔軟な手続き的ライター & リーダー (`BinaryWriter` / `BinaryReader`)**  
+  - **ワンストップ仕様書・多言語出力**: Builder 不要で `writer.to_markdown()` や `writer.to_c_header()`, `writer.to_rust()`, `writer.to_cpp()`, `writer.to_csharp()`, `writer.to_go()` を直接出力可能
+  - **チャンクの繰り返し (`repeat`, `writer.repeat()`, `writer.write_repeated()`)**: 変数名（`repeat="chunk_count"`）、固定回数（`repeat=5`）、不定回数（`repeat=-1`）を指定可能。仕様書上では重複テーブルを出さず1要素のテンプレート（相対オフセット `+0x00`）として美しく自動集約
+  - **多態バリアントの書き込み (`write_variant`, `writer.write_variant`)**: 候補構造体リスト（`candidates`）に対する厳格な型バリデーションおよび先行タグの一致チェック
   - インメモリ（`BytesIO` / `bytes`）またはファイル/ストリームへの直接読み書き
   - 厳格な境界・EOFチェック（オーバーフローや切り捨ての即時エラー検知）
   - 各種文字列形式（C言語スタイルの Null 終端、Pascal スタイルの長さプレフィックス、固定長パディング）
   - バイト境界アライメント（`align`）およびパディング（`pad`）
   - メソッドチェーン対応ライター、カーソル操作（`seek`, `tell`, `skip`, `remaining`）
   - **キャプション & サブキャプション (`caption`, `subcaption`)**: セクションとサブセクションの階層化、多態バリアント候補の指定
-- 📊 **仕様書 & Mermaid 図の自動生成 (`Builder` / `builder.write`)**  
+- 📐 **事前設計型プロトコルビルダー & 自動リーダー (`Builder` / `BinaryBuilder`)**  
+  - バイナリデータを実際に書き出すことなく、構造体クラス（`@binary_struct`）、説明文（`add_document`）、条件分岐（`condition`）、多態バリアント（`add_choice`）を事前定義して仕様書を生成（`builder.write("spec.md")`）。
+  - 事前に定義したスキーマ情報をもとに、バイナリバイト列から各構造体・バリアントを自動判別して復元する **スキーマ駆動自動リーダー (`builder.read(data)`)** を提供。
+- 📊 **仕様書 & Mermaid 図の自動生成 (`writer.to_markdown` / `builder.write`)**  
   - シリアライズされた全フィールドのオフセット（16進/10進）、サイズ、エンディアン、参照先ターゲット（`-> 0xXXXX`）を記録した Markdown ドキュメントを出力
-  - **Mermaid Flowchart**: 条件分岐ひし形ノード、バリアント選択ノード、サブグラフとオフセット参照矢印の描画
+  - **Mermaid Flowchart**: 条件分岐ひし形ノード、バリアント選択ノード、サブグラフとオフセット参照矢印の描画（繰り返し領域は `🔁 xCount` で集約）
   - **Mermaid packet-beta**: ネットワークパケット形式のビット/バイト配置図およびビットフィールド詳細図の生成
   - **多態チャンク・バリアント仕様の自動展開**: 条件に応じて格納される候補構造体のレイアウト表と相対パケット図の自動生成
 - 🔍 **専用デバッグダンプ & ストリーム検査 (`hexdump` / `dump` / `diff`)**  
@@ -167,17 +171,29 @@ print(len(header))          # len(instance) でも取得可能 -> 19 バイト
 
 ### 2. 仕様書（Markdown & Mermaid）の自動生成
 
-プロトコルスキーマを定義して、フォーマット仕様書（マニュアル）を自動生成できます。
+書き込み実行後の `BinaryWriter`、または事前定義用 `Builder` から、フォーマット仕様書（マニュアル）をワンライナーで自動生成できます。
 
 ```python
-from binary_master import Builder
+# 方法1: BinaryWriter から直接出力（推奨・データ駆動）
+from binary_master import BinaryWriter
 
-builder = Builder(title="Sample Image File Specification")
-builder.add_struct(Header)
-builder.add_struct(Image)
+writer = BinaryWriter()
+writer.write_struct(header)
+writer.write_struct(image)
 
 # 仕様書を Markdown ファイルに出力
-builder.write("image_spec.md")
+writer.write_markdown("image_spec.md")
+
+# C言語ヘッダーや Rust コードも同様に出力可能
+# writer.write_c_header("image_spec.h")
+# writer.write_rust("image_spec.rs")
+
+# 方法2: Builder による静的スキーマ設計（実バイナリデータがない場合）
+# from binary_master import Builder
+# builder = Builder(title="Sample Image File Specification")
+# builder.add_struct(Header)
+# builder.add_struct(Image)
+# builder.write("image_spec.md")
 ```
 
 #### 生成される仕様書のイメージ
@@ -476,6 +492,57 @@ writer.subcaption("テキスト種別 (Type=2)", "Type 2 の文字列パラメ�
 writer.write_uint32(42, name="length")
 ```
 
+**4. 多態バリアントの書き込みと候補型バリデーション (`write_variant`)**  
+多態構造体をストリームに書き出す際、許可された候補構造体リスト（`candidates`）を指定することで、実行時の型安全性を担保しながら、仕様書や C/Rust 等のヘッダーファイルへ候補構造体を自動登録できます。
+
+```python
+candidates = {0x01: HeaderChunk, 0x02: TextChunk}
+
+# tag_field を指定すると、先行して書かれたタグフィールド値とインスタンスの型の一致も自動検証
+writer.write_uint16(0x01, name="type")
+writer.write_variant(
+    HeaderChunk(version=1, flags=0),
+    candidates=candidates,
+    tag_field="type",
+    name="payload",
+    desc="動的ペイロード",
+)
+```
+
+#### チャンク構造の繰り返しと仕様書上の自動集約 (`repeat`)
+バイナリファイル内で同一構造のチャンクが複数回繰り返される場合、仕様書テーブルが何十行も重複して肥大化するのを防ぎ、**1要素のテンプレート仕様（相対オフセット `+0x00`, `+0x04`...）** として美しく自動集約されます。
+
+繰り返しの回数は、固定件数（`repeat=5`）のほか、**仕様書上の変数名（`repeat="chunk_count"`）** や **不定回数（`repeat=-1`）** を自然に指定できます。
+
+```python
+@binary_struct
+class Chunk:
+    chunk_id: UInt32
+    data_size: UInt32
+
+writer = BinaryWriter()
+
+# パターン1: write_struct で直接指定
+# ※ section は省略可能（デフォルト=""）。省略時は構造体クラス名「### Chunk」として自動集約されます
+for chunk in chunks:
+    writer.write_struct(chunk, repeat="chunk_count")  # 不定回数の場合は repeat=-1
+
+# パターン2: コンテキストマネージャでスコープ化
+with writer.repeat("Chunks", count=-1, desc="データチャンク群（不定回数）"):
+    for chunk in chunks:
+        writer.write_struct(chunk)
+
+# パターン3: リストを一括繰り返し書き込み
+writer.write_repeated(chunks, count="num_chunks")
+```
+
+- **仕様書上の表示例**:
+  - `🔁 **繰り返し**: chunk_count 回` または `不定回数 (0回以上 / 可変)`
+  - `**1要素サイズ**: 8 bytes (0x8)`
+  - `**サンプルデータ**: 3 件 (合計 24 bytes)`
+- **Mermaid ダイアグラム**:
+  重複ノードが排除され、`subgraph SG_Chunk ["Chunk 🔁 xchunk_count (...)"]` として1つのサブグラフに集約可視化されます。
+
 #### Docstring の仕様書反映
 構造体やビットフィールドに記述した Python 標準の docstring（`"""..."""`）は、自動的に仕様書（マニュアル）の見出し下や概要欄にドキュメントとして反映されます。
 
@@ -605,9 +672,28 @@ print(diff_text)
 
 ### 6. プロトコル全体の事前スキーマ定義・仕様書・多言語・リーダー統合 (`Builder` / `BinaryBuilder`)
 
-実行時のダミーインスタンスを作成することなく、プロトコルの構造定義（ヘッダー、条件分岐、多態バリアント、説明文）を事前に宣言して仕様書を生成し、多言語コードのエクスポートや直接のバイナリ自動パースが可能です。
+#### 💡 なぜ `Builder` が必要なのか？（`Writer` との使い分け・存在理由）
 
-`binary_master` では、バイナリを「書く」`Writer`、バイナリを「読む」`Reader` に対し、プロトコル全体を「建てる」**`Builder`**（正式名: `BinaryBuilder`）を提供しています。
+`BinaryWriter` でも仕様書（Markdown）や C/Rust ヘッダーの直接出力、多態バリアント、繰り返しチャンクの集約ができるようになりました。それでもライブラリにおいて **`Builder` が不可欠な3つの理由** があります：
+
+1. **実データ不要の「事前仕様策定・ドキュメント作成」**:
+   バイナリを出力するプログラムやダミーデータがまだ存在しない企画・設計フェーズで、構造体クラスの定義と `add_document`（章立てテキスト）から **先行して仕様書（Mermaid図付き）や C/Rust ヘッダーを作成** できます。データを作らずにスキーマだけを純粋に宣言できる唯一の手段です。
+2. **スキーマ駆動の「自動デシリアライズ」(`builder.read`)**:
+   `Writer` は書き込み専用であり、バイナリを復元することはできません。`builder.read(data)` を使うと、事前定義したスキーマ情報に基づいて **受信した生のバイト列からヘッダのタグ値や条件フラグを自動評価し、対応する構造体インスタンスとして一括復元** できます（手動で `Reader` による `if/elif` パーサーを書く必要がありません）。
+3. **システム全体の「内部中間表現 (IR: Intermediate Representation)」**:
+   実は `writer.to_c_header()` や `writer.to_rust()` などの多言語コード生成機能も、内部では `writer.to_builder()` を介して Builder 構造に変換されて動作しています。Builder はシステム全体のスキーマ共通モデル（IR）として不可欠な土台です。
+
+| 観点 | `BinaryWriter` (コード駆動 / データ駆動) | `Builder` (スキーマ駆動 / 仕様・パーサー駆動) |
+|---|---|---|
+| **主な用途** | バイナリの生成・出力、書き込み実行ログからの仕様書/ヘッダー自動生成 | プロトコル仕様の先行策定、受信バイナリの自動デシリアライズ |
+| **動的な条件分岐** | Python の自然な `if/elif` や `for` ループで柔軟に処理可能 | メタ定義（`add_choice`, `condition`）による静的スキーマ宣言 |
+| **実データの要否** | 必要（実際に書き込まれたバイト列から仕様を抽出） | **不要**（クラス定義と章立てドキュメントのみで仕様書/コード出力可） |
+| **読み込み (パース)** | 読み込み不可（別途 `BinaryReader` で手動実装） | **自動パース可能** (`builder.read(data)` で一括復元) |
+
+> [!TIP]
+> **推奨される使い分け**:
+> - **バイナリを書き出す処理がある場合（日常使いの 8〜9 割）**: `BinaryWriter` を使うのが最も直感的でコード量も少なくなります。
+> - **仕様策定が先行する場合 / 受信パケットの自動パースを行う場合**: `Builder` が威力を発揮します。
 
 ```python
 from binary_master import Builder, binary_struct, UInt8, UInt16, UInt32, Float32, FixedArray
@@ -755,7 +841,12 @@ if "footer" in result:
 - **論理値 / バイト**: `write_bool`, `write_bytes`
 - **文字列**: `write_cstring`, `write_prefixed_string`, `write_fixed_string`, `write_string`
 - **オフセットテーブル**: `write_offset_table(count, offset_size=4, endian=None, name="offsets", desc="Offset Table", base_offset=0)`（戻り値 `OffsetTableHandle` で `set_offset`, `write_offset`, `write_target`, `base_offset`, `get_target_offset`, `get_stored_offset` 等が可能）
-- **構造体**: `write_struct(instance, endian=None)`
+- **構造体**: `write_struct(instance, endian=None, section="", repeat=None)`（`repeat` で繰り返し回数、変数名、または `-1` 不定回数を指定可能）
+- **多態バリアント**: `write_variant(instance, candidates, tag_field=None, ...)`（候補型辞書・リストによる型バリデーションおよび先行タグ整合性検証付き書き込み）
+- **チャンク繰り返し**: `repeat(name, count=..., desc=...)`（コンテキストマネージャ）、`write_repeated(items, count=..., section=...)`
+- **仕様書直接出力**: `to_markdown(...)`（Markdown 文字列生成）、`write_markdown(path_or_file, ...)`（Markdown ファイル出力）
+- **多言語ヘッダー直接出力**: `to_c_header()`, `write_c_header(path)`, `to_rust()`, `write_rust(path)`, `to_cpp()`, `write_cpp(path)`, `to_csharp()`, `write_csharp(path)`, `to_go()`, `write_go(path)`, `write_code(path)`
+- **Builder 変換**: `to_builder(title=...)`（書き込み履歴から静的 `Builder` インスタンスを自動生成）
 - **位置制御**: `tell()`, `seek(offset, whence)`
 - **セクションタイトル**: `caption(title=None, desc="", variants=None)`（マニュアル・図のグループ化見出し、説明、候補バリアントを設定）
 - **サブセクションタイトル**: `subcaption(title=None, desc="")`（大見出し内の階層的サブグループを設定）

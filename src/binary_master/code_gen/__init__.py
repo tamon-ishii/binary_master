@@ -67,7 +67,9 @@ def normalize_lang(lang: str) -> str:
 
 
 def generate_code(builder: Any, lang: str, **kwargs) -> str:
-    """Generate source code in the requested language from a BinaryBuilder."""
+    """Generate source code in the requested language from a BinaryBuilder or BinaryWriter."""
+    if hasattr(builder, "to_builder"):
+        builder = builder.to_builder()
     norm = normalize_lang(lang)
     if norm == "c":
         return generate_c_header(builder, **kwargs)
@@ -89,6 +91,8 @@ def write_code(
     **kwargs,
 ) -> str:
     """Generate source code in the target language and write to file."""
+    if hasattr(builder, "to_builder"):
+        builder = builder.to_builder()
     if lang is None:
         p_str = str(path_or_file) if not hasattr(path_or_file, "name") else str(getattr(path_or_file, "name"))
         ext = Path(p_str).suffix.lower()

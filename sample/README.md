@@ -8,11 +8,11 @@ Systematic and educational sample scripts demonstrating `binary_master` capabili
 
 | Script | Topic | Key Features Demonstrated |
 |---|---|---|
-| [`01_basic_struct.py`](./01_basic_struct.py) | Basic Declarative Structs | `@binary_struct`, primitive types (`UInt8`, `UInt16`, `UInt32`, `Float32`), `FixedArray`, `sizeof()`, `read_struct()`, endianness overrides |
+| [`01_basic_struct.py`](./01_basic_struct.py) | Basic Declarative Structs | `@binary_struct`, primitive types (`UInt8`, `UInt16`, `UInt32`, `Float32`, `Bool`), `FixedArray`, `offsetof()` byte offsets, `sizeof()`, `read_struct()`, endianness overrides |
 | [`02_bitfields_and_alignment.py`](./02_bitfields_and_alignment.py) | Bitfields & Memory Alignment | `Bits[N]` with packed container `bits=16`, struct alignment `align=4`, and automatic natural alignment `auto_align=True` |
 | [`03_offsets_and_tables.py`](./03_offsets_and_tables.py) | Relative Pointers & Tables | `Offset[T, Base.SELF]`, offset arithmetic (`Base.SELF + 0x20`), `OffsetTable`, and deferred pointer patching |
-| [`04_procedural_writer.py`](./04_procedural_writer.py) | Procedural Writer & Reader | Low-level stream writing, null-terminated/length-prefixed strings, alignment padding, captions, and debug dumps (`hexdump`, `dump`) |
-| [`05_builder_and_reader.py`](./05_builder_and_reader.py) | Builder, Multi-Lang & Automated Reader | Schema-first protocol design, sections & captions, Mermaid subgraphs, multi-language code export (C, Rust, C++, C#, Go), `builder.write("spec.md")`, automated `builder.read(data)`, and debug inspection (`hexdump`, `dump`) |
+| [`04_procedural_writer.py`](./04_procedural_writer.py) | Procedural Writer, Variants & Repeats | Stream writing, string strategies, candidate-validated polymorphic variants (`write_variant`), repeating chunk aggregation (`repeat`), one-stop Markdown spec and C header export directly from Writer, debug dumps |
+| [`05_builder_and_reader.py`](./05_builder_and_reader.py) | Schema-First Builder & Automated Reader | Schema-first protocol design (no dummy data needed), sections & captions, Mermaid subgraphs, multi-language code export (C, Rust, C++, C#, Go), `builder.write("spec.md")`, automated `builder.read(data)`, and debug inspection (`hexdump`, `dump`) |
 | [`main.py`](./main.py) | Sample Runner | Orchestrates and verifies all samples in sequence |
 
 ## Running the Samples

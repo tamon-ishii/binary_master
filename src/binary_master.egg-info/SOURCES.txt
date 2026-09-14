@@ -30,5 +30,7 @@ tests/test_debug.py
 tests/test_manual.py
 tests/test_multi_lang.py
 tests/test_reader.py
+tests/test_repeated_sections.py
 tests/test_variants.py
 tests/test_writer.py
+tests/test_writer_variants.py

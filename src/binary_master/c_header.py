@@ -318,7 +318,10 @@ def generate_c_header(
     guard: Optional[str] = None,
     pack: bool = True,
 ) -> str:
-    """Generate a complete C99/C11 header file from a BinaryBuilder instance."""
+    """Generate a complete C99/C11 header file from a BinaryBuilder or BinaryWriter instance."""
+    if hasattr(builder, "to_builder"):
+        builder = builder.to_builder()
+
     from binary_master.builder import (
         ChoiceElement,
         DocumentElement,
