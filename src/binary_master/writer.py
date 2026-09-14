@@ -793,6 +793,8 @@ class BinaryWriter:
         name: str = "offsets",
         desc: str = "Offset Table",
         base_offset: Union[int, Any] = 0,
+        repeat: Optional[Union[int, str, bool]] = None,
+        spec_count: Optional[Union[int, str, bool]] = None,
     ) -> OffsetTableHandle:
         """Reserve an offset table for `count` entries of `offset_size` bytes each.
 
@@ -807,6 +809,9 @@ class BinaryWriter:
             desc: Description of the offset table.
             base_offset: The base origin (in bytes) subtracted from recorded target offsets
                          (default: 0, file/stream beginning).
+            repeat: Backward-compatible alias for `spec_count`.
+            spec_count: Optional specification count metadata, e.g. 'num_chunk', count, or -1.
+                        When specified, manual generation aggregates the table slots into a template.
 
         Returns:
             OffsetTableHandle for recording/writing target offsets.
@@ -820,6 +825,8 @@ class BinaryWriter:
             base_offset = resolve_fn(self.tell(), self.tell())
         if base_offset < 0:
             raise ValueError(f"base_offset must be non-negative, got {base_offset}")
+
+        spec_rep = spec_count if spec_count is not None else repeat
 
         order = normalize_endian(endian, self._default_endian)
         start_pos = self.tell()
@@ -840,6 +847,11 @@ class BinaryWriter:
                 endian=order.name.capitalize(),
                 description=f"{desc} [#{i}]" if desc else f"Offset entry {i}",
             )
+            if spec_rep is not None:
+                self._entries[idx].caption_repeat = spec_rep
+                if not self._entries[idx].caption:
+                    self._entries[idx].caption = name
+                    self._entries[idx].caption_desc = desc
             entry_indices.append(idx)
 
         return OffsetTableHandle(
@@ -885,6 +897,7 @@ class BinaryWriter:
         section: str = "",
         repeat: Optional[Union[int, str, bool]] = None,
         desc: str = "",
+        spec_count: Optional[Union[int, str, bool]] = None,
     ) -> BinaryWriter:
         """Write a @binary_struct instance to this writer's stream.
 
@@ -894,19 +907,21 @@ class BinaryWriter:
             section: Optional section name (default: "").
             repeat: Optional repetition count or specifier (e.g. 5, "chunk_count", True).
             desc: Optional section description if section is provided.
+            spec_count: Optional specification count metadata (alias for repeat).
         """
+        rep_val = spec_count if spec_count is not None else repeat
         if section:
             if (
                 self._current_caption != section
-                or self._current_caption_repeat != repeat
+                or self._current_caption_repeat != rep_val
                 or (desc and self._current_caption_desc != desc)
             ):
-                self.caption(title=section, desc=desc, repeat=repeat)
-        elif repeat is not None:
+                self.caption(title=section, desc=desc, repeat=rep_val)
+        elif rep_val is not None:
             if self._current_caption is None:
-                self.caption(title=instance.__class__.__name__, desc=desc, repeat=repeat)
+                self.caption(title=instance.__class__.__name__, desc=desc, repeat=rep_val)
             else:
-                self._current_caption_repeat = repeat
+                self._current_caption_repeat = rep_val
 
         if self._expected_variant is not None:
             expected = self._expected_variant

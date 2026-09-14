@@ -295,9 +295,9 @@ class AssetContainer:
     primary_offset: Offset[TextureData, Base.SELF, UInt32]
     # オフセット基準位置にバイアスを付与 (Base.SELF + 0x20)
     aux_offset: Offset[TextureData, Base.SELF + 0x20, UInt32]
-    # 2要素のテクスチャオフセット配列テーブル
+    # 先行フィールド num_textures を要素数とするテクスチャオフセット配列テーブル
     num_textures: UInt16
-    texture_table: OffsetTable[2, UInt32, Base.SELF]
+    texture_table: OffsetTable["num_textures", UInt32, Base.SELF]
 ```
 
 ### 3.2 データの書き出しと自動バックパッチ
@@ -342,6 +342,30 @@ binary_package = writer.to_bytes()
 loaded = AssetContainer.from_bytes(binary_package)
 print(loaded.primary_offset.target.width)  # => 256
 print(bytes(loaded.primary_offset.target.raw_pixels))  # => b'MAIN_TEX'
+```
+
+### 3.4 手続き的ライターでのオフセットテーブル予約 (`write_offset_table`) と仕様書集約 (`spec_count`)
+
+構造体を使わず手続き的にバイナリを構築する場合も、`write_offset_table` でオフセット配列枠を予約し、後からオフセットをセットできます。
+`spec_count="num_chunks"` を渡すと、仕様書（Markdown / Mermaid）上では個別のスロット行が 1 つのテンプレート行（`offsets[i]`）と繰り返しバッジ（`🔁 xnum_chunks`）に自動集約されます。
+
+```python
+writer = BinaryWriter()
+writer.write_uint16(10, name="num_chunks", desc="Number of chunks")
+
+# 10個のオフセットスロットを予約（仕様書上は num_chunks 回繰り返しとして集約）
+table = writer.write_offset_table(
+    count=10,
+    offset_size=4,
+    name="chunk_offsets",
+    desc="Table of chunk offsets",
+    spec_count="num_chunks",
+)
+
+# 各チャンクの書き込みとオフセットの登録
+for i in range(10):
+    table[i] = writer.tell()
+    writer.write_cstring(f"Payload #{i}", name=f"chunk_{i}")
 ```
 
 ---

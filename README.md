@@ -360,6 +360,8 @@ class AlignedHeader:
 複数のブロックやセクションへのオフセットをテーブル（配列）形式で保持し、後からそのオフセットを書き込む（またはターゲットオブジェクトを直接シリアライズする）ことができます。
 
 **1. `@binary_struct` での利用 (`OffsetTable[Count, Type]`)**
+要素数には固定値（例: `2`）のほか、先行するフィールド名（例: `"num_chunk"`）を文字列で指定できます。動的指定時は仕様書・C言語ヘッダ（`uint32_t offsets[num_chunk];`）に反映され、デシリアライズ時も該当フィールドの値をもとに自動復元されます。
+
 ```python
 from binary_master import OffsetTable, binary_struct, UInt32, UInt16
 
@@ -370,17 +372,19 @@ class ChunkHeader:
 @binary_struct
 class Container:
     magic: UInt32
-    # 2エントリのUInt32オフセットテーブル
-    chunk_offsets: OffsetTable[2, UInt32]
+    num_chunk: UInt16
+    # 先行フィールド 'num_chunk' の個数分だけオフセット配列を展開
+    chunk_offsets: OffsetTable["num_chunk", UInt32]
 
 c1 = ChunkHeader(chunk_id=10)
 c2 = ChunkHeader(chunk_id=20)
 # 対象構造体を渡すと、自動的にオフセットが計算されてテーブルに書き込まれます
-container = Container(magic=0x12345678, chunk_offsets=[c1, c2])
+container = Container(magic=0x12345678, num_chunk=2, chunk_offsets=[c1, c2])
 ```
 
 **2. `BinaryWriter` 手続き的利用 (`write_offset_table`)**
 オフセットサイズ（1, 2, 4, 8バイト）とテーブル数を指定して領域を予約し、返り値の `OffsetTableHandle` を使ってオフセット値をセットできます。
+また、`spec_count="num_chunk"` を渡すことで、仕様書（Markdown / Mermaid）生成時に個別のスロットを1つのテンプレート行（`offsets[i]`）と繰り返し情報（`🔁 xnum_chunk`）に自動集約してスマートに出力できます。
 
 ```python
 writer = BinaryWriter()
@@ -840,7 +844,7 @@ if "footer" in result:
 - **浮動小数点数**: `write_float32`, `write_float64`
 - **論理値 / バイト**: `write_bool`, `write_bytes`
 - **文字列**: `write_cstring`, `write_prefixed_string`, `write_fixed_string`, `write_string`
-- **オフセットテーブル**: `write_offset_table(count, offset_size=4, endian=None, name="offsets", desc="Offset Table", base_offset=0)`（戻り値 `OffsetTableHandle` で `set_offset`, `write_offset`, `write_target`, `base_offset`, `get_target_offset`, `get_stored_offset` 等が可能）
+- **オフセットテーブル**: `write_offset_table(count, offset_size=4, endian=None, name="offsets", desc="Offset Table", base_offset=0, spec_count=None)`（戻り値 `OffsetTableHandle` で `set_offset`, `write_offset`, `write_target`, `base_offset`, `get_target_offset`, `get_stored_offset` 等が可能。`spec_count` で仕様書の集約表示が可能）
 - **構造体**: `write_struct(instance, endian=None, section="", repeat=None)`（`repeat` で繰り返し回数、変数名、または `-1` 不定回数を指定可能）
 - **多態バリアント**: `write_variant(instance, candidates, tag_field=None, ...)`（候補型辞書・リストによる型バリデーションおよび先行タグ整合性検証付き書き込み）
 - **チャンク繰り返し**: `repeat(name, count=..., desc=...)`（コンテキストマネージャ）、`write_repeated(items, count=..., section=...)`

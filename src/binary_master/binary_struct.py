@@ -503,11 +503,11 @@ def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool =
         return size
     elif (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is OffsetTable) or get_origin(ftype) is OffsetTable:
         if isinstance(ftype, tuple):
-            count = ftype[1]
+            count = ftype[1] if len(ftype) >= 2 else 0
             offset_t = ftype[2] if len(ftype) >= 3 else UInt32
         else:
             args = get_args(ftype)
-            count = args[0]
+            count = args[0] if len(args) >= 1 else 0
             if len(args) == 2 and (isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field")))):
                 offset_t = UInt32
             elif len(args) >= 2:
@@ -515,6 +515,21 @@ def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool =
             else:
                 offset_t = UInt32
         _, size, _ = _normalize_offset_type(offset_t)
+        if isinstance(count, str):
+            if is_cls:
+                raise ValueError(f"Cannot determine static binary size for variable-length OffsetTable with count '{count}'")
+            if hasattr(instance, name):
+                v = getattr(instance, name)
+                if isinstance(v, (list, tuple)):
+                    count = len(v)
+                elif hasattr(instance, count) and isinstance(getattr(instance, count), int):
+                    count = getattr(instance, count)
+                else:
+                    count = 0
+            elif hasattr(instance, count) and isinstance(getattr(instance, count), int):
+                count = getattr(instance, count)
+            else:
+                count = 0
         return count * size
     elif (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is FixedArray) or get_origin(ftype) is FixedArray:
         elem_t = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
@@ -1165,21 +1180,34 @@ def write_struct(
                     offset_t = args[1]
                     base_offset = args[2]
 
+            repeat_spec = count if isinstance(count, str) else None
+            actual_count = count
+            if isinstance(count, str):
+                if isinstance(val, (list, tuple)) and len(val) > 0:
+                    actual_count = len(val)
+                elif hasattr(val, "_targets") and isinstance(val._targets, (list, tuple)) and len(val._targets) > 0:
+                    actual_count = len(val._targets)
+                elif hasattr(instance, count) and isinstance(getattr(instance, count), int) and getattr(instance, count) > 0:
+                    actual_count = getattr(instance, count)
+                else:
+                    actual_count = 1
+
             offset_size = offset_t._size if hasattr(offset_t, "_size") else 4
             placeholder_pos = writer.tell()
             actual_base = _resolve_base_offset(base_offset, struct_start_pos, placeholder_pos)
             table_handle = writer.write_offset_table(
-                count=count,
+                count=actual_count,
                 offset_size=offset_size,
                 endian=active_endian,
                 name=name,
                 desc=f_desc,
                 base_offset=actual_base,
+                spec_count=repeat_spec,
             )
             target_list = val if isinstance(val, (list, tuple)) else getattr(val, "_targets", None)
             if target_list is not None:
                 for i, target_item in enumerate(target_list):
-                    if i < count:
+                    if i < actual_count:
                         if hasattr(target_item, "__binary__"):
                             deferred_offsets.append(("table_entry", table_handle, i, target_item, active_endian))
                         elif isinstance(target_item, int):
@@ -1522,9 +1550,14 @@ def read_struct(
                     base_offset = args[2]
 
             fmt_char, offset_size, _ = _normalize_offset_type(offset_t)
+            actual_count = kwargs.get(count) if isinstance(count, str) else count
+            if actual_count is None:
+                raise ValueError(
+                    f"Count field '{count}' must precede OffsetTable field '{name}' in struct definition"
+                )
             offs = [
                 reader._unpack_read(fmt_char, offset_size, endian=active_endian)
-                for _ in range(count)
+                for _ in range(actual_count)
             ]
             kwargs[name] = offs
             continue

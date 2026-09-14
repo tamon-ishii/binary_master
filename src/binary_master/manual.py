@@ -77,7 +77,17 @@ def create_dummy_instance(struct_cls: type) -> Any:
         elif is_offset:
             dummy_kwargs[fn] = 0
         elif is_offset_tbl:
-            dummy_kwargs[fn] = []
+            if isinstance(ft, tuple):
+                count_arg = ft[1] if len(ft) >= 2 else 1
+            else:
+                args = get_args(ft)
+                count_arg = args[0] if len(args) >= 1 else 1
+            if isinstance(count_arg, int):
+                dummy_kwargs[fn] = [0] * count_arg
+            else:
+                dummy_kwargs[fn] = [0]
+                if isinstance(count_arg, str) and count_arg in dummy_kwargs:
+                    dummy_kwargs[count_arg] = 1
         elif hasattr(ft, "__binary__"):
             dummy_kwargs[fn] = create_dummy_instance(ft)
         else:
@@ -147,8 +157,10 @@ def _detect_repetition(
             for i in range(l, n):
                 e_curr = c_entries[i]
                 e_base = c_entries[i % l]
+                curr_name = re.sub(r"\[\d+\]$", "", e_curr.name) if (explicit_repeat is not None and e_curr.name) else e_curr.name
+                base_name = re.sub(r"\[\d+\]$", "", e_base.name) if (explicit_repeat is not None and e_base.name) else e_base.name
                 if (
-                    e_curr.name != e_base.name
+                    curr_name != base_name
                     or e_curr.type_name != e_base.type_name
                     or e_curr.size != e_base.size
                     or e_curr.struct_name != e_base.struct_name
@@ -166,7 +178,32 @@ def _detect_repetition(
         else:
             unit_entries = c_entries
             sample_count = 1
-        return True, explicit_repeat, unit_entries, sample_count
+
+        fixed_units = []
+        for u in unit_entries:
+            if u.name and re.search(r"\[\d+\]$", u.name):
+                u_copy = LayoutEntry(
+                    name=re.sub(r"\[\d+\]$", "[i]", u.name),
+                    offset=u.offset,
+                    size=u.size,
+                    type_name=u.type_name,
+                    endian=u.endian,
+                    value=u.value,
+                    description=re.sub(r"\[#\d+\]", "[#i]", u.description) if u.description else u.description,
+                    struct_name=u.struct_name,
+                    struct_doc=u.struct_doc,
+                    subfields=u.subfields,
+                    caption=u.caption,
+                    caption_desc=u.caption_desc,
+                    caption_repeat=u.caption_repeat,
+                    subcaption=u.subcaption,
+                    subcaption_desc=u.subcaption_desc,
+                    target_offset=u.target_offset,
+                )
+                fixed_units.append(u_copy)
+            else:
+                fixed_units.append(u)
+        return True, explicit_repeat, fixed_units, sample_count
 
     if best_l is not None and (n // best_l) >= 2:
         unit_entries = c_entries[:best_l]
@@ -258,7 +295,7 @@ def generate_mermaid_diagram(
 
             if is_rep:
                 base_off = u_entries[0].offset
-                for idx, entry in s_entries[:unit_len]:
+                for (idx, _), entry in zip(s_entries[:unit_len], u_entries):
                     nid = f"N{idx}"
                     node_ids.append(nid)
                     rel = entry.offset - base_off
@@ -276,7 +313,7 @@ def generate_mermaid_diagram(
         else:
             if is_rep:
                 base_off = u_entries[0].offset
-                for idx, entry in s_entries[:unit_len]:
+                for (idx, _), entry in zip(s_entries[:unit_len], u_entries):
                     nid = f"N{idx}"
                     node_ids.append(nid)
                     rel = entry.offset - base_off
