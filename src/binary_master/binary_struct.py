@@ -218,6 +218,48 @@ def _resolve_base_offset(base: Any, struct_start: int, field_pos: int = 0) -> in
     return 0
 
 
+def _is_base_offset_arg(arg: Any) -> bool:
+    """Returns True if arg represents a relative base offset origin."""
+    if isinstance(arg, RelativeBase):
+        return True
+    if isinstance(arg, str) and any(arg.lower().strip().startswith(p) for p in ("self", "struct", "field")):
+        return True
+    return False
+
+
+def _is_offset_type_arg(arg: Any) -> bool:
+    """Returns True if arg represents an offset data type."""
+    if isinstance(arg, type) and issubclass(arg, BinaryType):
+        return True
+    if hasattr(arg, "_fmt") and hasattr(arg, "_size"):
+        return True
+    return False
+
+
+def _parse_offset_spec_args(args: tuple[Any, ...]) -> tuple[Any, Any]:
+    """Parses optional (offset_type, base_offset) in any order from generic arguments.
+
+    Returns:
+        tuple (offset_type, base_offset), defaulting to (UInt32, 0).
+    """
+    if not args:
+        return UInt32, 0
+    if len(args) == 1:
+        arg = args[0]
+        if _is_base_offset_arg(arg):
+            return UInt32, arg
+        if _is_offset_type_arg(arg):
+            return arg, 0
+        if isinstance(arg, int) and arg not in (1, 2, 4, 8):
+            return UInt32, arg
+        return arg, 0
+
+    first, second = args[0], args[1]
+    if _is_base_offset_arg(first) or (_is_offset_type_arg(second) and not _is_offset_type_arg(first)):
+        return second, first
+    return first, second
+
+
 class Offset(Generic[T]):
     """シリアライズ時に自動計算されるオフセット: Offset[Target, OffsetType=UInt32, BaseOffset=0]"""
 
@@ -228,19 +270,7 @@ class Offset(Generic[T]):
     def __class_getitem__(cls, args):
         if isinstance(args, tuple):
             target_t = args[0]
-            if len(args) == 2:
-                if isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field"))):
-                    offset_t = UInt32
-                    base_offset = args[1]
-                else:
-                    offset_t = args[1]
-                    base_offset = 0
-            elif len(args) > 2:
-                offset_t = args[1]
-                base_offset = args[2]
-            else:
-                offset_t = UInt32
-                base_offset = 0
+            offset_t, base_offset = _parse_offset_spec_args(args[1:])
         else:
             target_t = args
             offset_t = UInt32
@@ -278,19 +308,7 @@ class OffsetTable(Generic[T]):
     def __class_getitem__(cls, args):
         if isinstance(args, tuple):
             count = args[0]
-            if len(args) == 2:
-                if isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field"))):
-                    offset_t = UInt32
-                    base_offset = args[1]
-                else:
-                    offset_t = args[1]
-                    base_offset = 0
-            elif len(args) > 2:
-                offset_t = args[1]
-                base_offset = args[2]
-            else:
-                offset_t = UInt32
-                base_offset = 0
+            offset_t, base_offset = _parse_offset_spec_args(args[1:])
         else:
             count = args
             offset_t = UInt32
@@ -493,12 +511,7 @@ def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool =
             offset_t = ftype[2] if len(ftype) >= 3 else UInt32
         else:
             args = get_args(ftype)
-            if len(args) == 2 and (isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field")))):
-                offset_t = UInt32
-            elif len(args) >= 2:
-                offset_t = args[1]
-            else:
-                offset_t = UInt32
+            offset_t, _ = _parse_offset_spec_args(args[1:])
         _, size, _ = _normalize_offset_type(offset_t)
         return size
     elif (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is OffsetTable) or get_origin(ftype) is OffsetTable:
@@ -508,12 +521,7 @@ def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool =
         else:
             args = get_args(ftype)
             count = args[0] if len(args) >= 1 else 0
-            if len(args) == 2 and (isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field")))):
-                offset_t = UInt32
-            elif len(args) >= 2:
-                offset_t = args[1]
-            else:
-                offset_t = UInt32
+            offset_t, _ = _parse_offset_spec_args(args[1:])
         _, size, _ = _normalize_offset_type(offset_t)
         if isinstance(count, str):
             if is_cls:
@@ -961,12 +969,7 @@ def _get_field_alignment(ftype: Any, val: Any = None) -> int:
             offset_t = ftype[2] if len(ftype) >= 3 else UInt32
         else:
             args = get_args(ftype)
-            if len(args) == 2 and (isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field")))):
-                offset_t = UInt32
-            elif len(args) >= 2:
-                offset_t = args[1]
-            else:
-                offset_t = UInt32
+            offset_t, _ = _parse_offset_spec_args(args[1:])
         _, size, _ = _normalize_offset_type(offset_t)
         return size
     if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is OffsetTable) or get_origin(ftype) is OffsetTable:
@@ -974,12 +977,7 @@ def _get_field_alignment(ftype: Any, val: Any = None) -> int:
             offset_t = ftype[2] if len(ftype) >= 3 else UInt32
         else:
             args = get_args(ftype)
-            if len(args) == 2 and (isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field")))):
-                offset_t = UInt32
-            elif len(args) >= 2:
-                offset_t = args[1]
-            else:
-                offset_t = UInt32
+            offset_t, _ = _parse_offset_spec_args(args[1:])
         _, size, _ = _normalize_offset_type(offset_t)
         return size
     is_variant = (
@@ -1108,24 +1106,12 @@ def write_struct(
                 if len(ftype) >= 2:
                     t_arg = ftype[1]
                     target_name = t_arg.__name__ if hasattr(t_arg, "__name__") else str(t_arg)
-                if len(ftype) >= 3:
-                    offset_t = ftype[2]
-                if len(ftype) >= 4:
-                    base_offset = ftype[3]
+                offset_t, base_offset = _parse_offset_spec_args(ftype[2:])
             elif get_args(ftype):
                 args = get_args(ftype)
                 t_arg = args[0]
                 target_name = t_arg.__name__ if hasattr(t_arg, "__name__") else str(t_arg)
-                if len(args) == 2:
-                    if isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field"))):
-                        offset_t = UInt32
-                        base_offset = args[1]
-                    else:
-                        offset_t = args[1]
-                        base_offset = 0
-                elif len(args) > 2:
-                    offset_t = args[1]
-                    base_offset = args[2]
+                offset_t, base_offset = _parse_offset_spec_args(args[1:])
 
             fmt_char, offset_size, offset_label = _normalize_offset_type(offset_t)
             if offset_label != "UInt32":
@@ -1164,21 +1150,11 @@ def write_struct(
         if is_offset_table:
             if isinstance(ftype, tuple):
                 count = ftype[1]
-                offset_t = ftype[2] if len(ftype) >= 3 else UInt32
-                base_offset = ftype[3] if len(ftype) >= 4 else 0
+                offset_t, base_offset = _parse_offset_spec_args(ftype[2:])
             else:
                 args = get_args(ftype)
                 count = args[0]
-                if len(args) == 2:
-                    if isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field"))):
-                        offset_t = UInt32
-                        base_offset = args[1]
-                    else:
-                        offset_t = args[1]
-                        base_offset = 0
-                elif len(args) > 2:
-                    offset_t = args[1]
-                    base_offset = args[2]
+                offset_t, base_offset = _parse_offset_spec_args(args[1:])
 
             repeat_spec = count if isinstance(count, str) else None
             actual_count = count
@@ -1485,23 +1461,11 @@ def read_struct(
             if isinstance(ftype, tuple):
                 if len(ftype) >= 2:
                     target_type = ftype[1]
-                if len(ftype) >= 3:
-                    offset_t = ftype[2]
-                if len(ftype) >= 4:
-                    base_offset = ftype[3]
+                offset_t, base_offset = _parse_offset_spec_args(ftype[2:])
             elif get_args(ftype):
                 args = get_args(ftype)
                 target_type = args[0]
-                if len(args) == 2:
-                    if isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field"))):
-                        offset_t = UInt32
-                        base_offset = args[1]
-                    else:
-                        offset_t = args[1]
-                        base_offset = 0
-                elif len(args) > 2:
-                    offset_t = args[1]
-                    base_offset = args[2]
+                offset_t, base_offset = _parse_offset_spec_args(args[1:])
 
             field_pos = reader.tell()
             actual_base = _resolve_base_offset(base_offset, struct_start_pos, field_pos)
@@ -1533,21 +1497,11 @@ def read_struct(
         if is_offset_table:
             if isinstance(ftype, tuple):
                 count = ftype[1]
-                offset_t = ftype[2] if len(ftype) >= 3 else UInt32
-                base_offset = ftype[3] if len(ftype) >= 4 else 0
+                offset_t, base_offset = _parse_offset_spec_args(ftype[2:])
             else:
                 args = get_args(ftype)
                 count = args[0]
-                if len(args) == 2:
-                    if isinstance(args[1], RelativeBase) or (isinstance(args[1], str) and args[1].lower().startswith(("self", "struct", "field"))):
-                        offset_t = UInt32
-                        base_offset = args[1]
-                    else:
-                        offset_t = args[1]
-                        base_offset = 0
-                elif len(args) > 2:
-                    offset_t = args[1]
-                    base_offset = args[2]
+                offset_t, base_offset = _parse_offset_spec_args(args[1:])
 
             fmt_char, offset_size, _ = _normalize_offset_type(offset_t)
             actual_count = kwargs.get(count) if isinstance(count, str) else count

@@ -645,4 +645,52 @@ def test_relative_base_negative_offset_raises():
         c.to_bytes()
 
 
+def test_offset_and_offset_table_parameter_order_invariance():
+    """Verify that Offset and OffsetTable accept (type, base) and (base, type) identically."""
+    @binary_struct(endian="little")
+    class OrderTypeFirst:
+        magic: UInt16
+        # UInt16 first, Base.SELF second
+        off: Offset[InnerPayload, UInt16, Base.SELF]
+        tbl: OffsetTable[2, UInt16, Base.SELF]
+
+    @binary_struct(endian="little")
+    class OrderBaseFirst:
+        magic: UInt16
+        # Base.SELF first, UInt16 second
+        off: Offset[InnerPayload, Base.SELF, UInt16]
+        tbl: OffsetTable[2, Base.SELF, UInt16]
+
+    # Both structs must have identical binary layout and size:
+    # magic(2) + off(2) + tbl(2*2=4) = 8 bytes
+    assert sizeof(OrderTypeFirst) == 8
+    assert sizeof(OrderBaseFirst) == 8
+
+    p_off = InnerPayload(val=0x1111)
+    p_t0 = InnerPayload(val=0x2222)
+    p_t1 = InnerPayload(val=0x3333)
+
+    c1 = OrderTypeFirst(magic=0x55, off=p_off, tbl=[p_t0, p_t1])
+    c2 = OrderBaseFirst(magic=0x55, off=p_off, tbl=[p_t0, p_t1])
+
+    b1 = c1.to_bytes()
+    b2 = c2.to_bytes()
+
+    # Exact same byte sequences must be generated!
+    assert b1 == b2
+
+    # Verify deserialization
+    r1 = OrderTypeFirst.from_bytes(b1)
+    r2 = OrderBaseFirst.from_bytes(b2)
+
+    assert r1.off.val == 0x1111
+    assert r2.off.val == 0x1111
+    # Check stored offsets in table: targets at 8, 12, 16 -> stored as 8, 12, 16
+    off_val, tbl0, tbl1 = struct.unpack("<HHH", b1[2:8])
+    assert off_val == 8
+    assert tbl0 == 12
+    assert tbl1 == 16
+
+
+
 

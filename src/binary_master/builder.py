@@ -358,7 +358,11 @@ class BinaryBuilder:
         repeat: Optional[Union[int, str, bool]] = None,
         spec_count: Optional[Union[int, str, bool]] = None,
     ) -> BinaryBuilder:
-        """Add a section break to visually and structurally group fields.
+        """Add a section break (convenience alias for set_caption).
+
+        Note:
+            `builder.set_caption(...)` or `with builder.set_caption(...):` is the
+            recommended unified API.
 
         Args:
             title: Section title.
@@ -380,17 +384,7 @@ class BinaryBuilder:
         repeat: Optional[Union[int, str, bool]] = None,
         spec_count: Optional[Union[int, str, bool]] = None,
     ) -> BinaryBuilder:
-        """Alias for add_section, consistent with BinaryWriter.caption.
-
-        Args:
-            title: Section/caption title.
-            desc: Section/caption description.
-            repeat: Optional repetition count or specifier.
-            spec_count: Optional specification count metadata.
-
-        Returns:
-            self for method chaining.
-        """
+        """Alias for add_section / set_caption."""
         return self.add_section(title=title, desc=desc, repeat=repeat, spec_count=spec_count)
 
     def section(
@@ -400,16 +394,10 @@ class BinaryBuilder:
         repeat: Optional[Union[int, str, bool]] = None,
         spec_count: Optional[Union[int, str, bool]] = None,
     ) -> _SectionContext:
-        """Create a section grouping subsequent elements, supporting 'with builder.section(...):' syntax.
+        """Create a section grouping (alias for set_caption).
 
-        Args:
-            title: Section title.
-            desc: Optional section description.
-            repeat: Optional repetition count or specifier.
-            spec_count: Optional specification count metadata (alias for repeat).
-
-        Returns:
-            _SectionContext context manager and proxy.
+        Note:
+            `with builder.set_caption(...):` is the recommended unified API.
         """
         rep_val = spec_count if spec_count is not None else repeat
         return _SectionContext(self, title=title, desc=desc, repeat=rep_val)
@@ -421,17 +409,7 @@ class BinaryBuilder:
         repeat: Optional[Union[int, str, bool]] = None,
         spec_count: Optional[Union[int, str, bool]] = None,
     ) -> _SectionContext:
-        """Alias for set_caption() / section(), supporting 'with builder.caption(...):' syntax.
-
-        Args:
-            title: Section/caption title.
-            desc: Section/caption description.
-            repeat: Optional repetition count or specifier.
-            spec_count: Optional specification count metadata.
-
-        Returns:
-            _SectionContext context manager and proxy.
-        """
+        """Alias for set_caption()."""
         return self.section(title=title, desc=desc, repeat=repeat, spec_count=spec_count)
 
     def set_caption(

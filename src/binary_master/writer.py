@@ -276,10 +276,14 @@ class BinaryWriter:
         desc: str = "",
         spec_count: Optional[Union[int, str, bool]] = None,
     ) -> _CaptionContext:
-        """Context manager to write a repeating section of binary data (convenience alias for set_caption).
+        """Context manager to write a repeating section (convenience alias for set_caption).
+
+        Note:
+            `with writer.set_caption("title", spec_count=count)` is the recommended unified API.
+            `repeat(...)` is provided for backward compatibility.
 
         Example:
-            with writer.repeat("DataChunks", count="chunk_count"):
+            with writer.set_caption("DataChunks", spec_count="chunk_count"):
                 for chunk in chunks:
                     writer.write_struct(chunk)
 
@@ -287,7 +291,7 @@ class BinaryWriter:
             section: Section name / title for the repeating block (default: "").
             count: Repetition count, loop variable name (e.g. 'chunk_count'), or True.
             desc: Optional description of this repeating section.
-            spec_count: Optional specification count metadata (alias for count).
+            spec_count: Specification count metadata (alias for count).
         """
         rep_val = spec_count if spec_count is not None else count
         return self.set_caption(title=section, desc=desc, spec_count=rep_val)
@@ -816,7 +820,14 @@ class BinaryWriter:
         name: str = "",
         desc: str = "",
     ) -> BinaryWriter:
-        """Convenience method to write strings with various strategies."""
+        """Write strings with dynamic strategy selection.
+
+        Note:
+            For type safety and IDE autocompletion, prefer using the explicit methods:
+            - `write_cstring(text)` for null-terminated strings
+            - `write_prefixed_string(text, prefix_bytes=...)` for length-prefixed strings
+            - `write_fixed_string(text, length=...)` for fixed-width padded strings
+        """
         norm_strategy = strategy.lower().replace("-", "_")
         if norm_strategy in ("null_terminated", "cstring", "c_string"):
             return self.write_cstring(text, encoding=encoding, name=name, desc=desc)
@@ -1009,13 +1020,19 @@ class BinaryWriter:
     ) -> BinaryWriter:
         """Write a @binary_struct instance to this writer's stream.
 
+        Note:
+            For structuring and grouping sections in manuals, prefer using
+            `with writer.set_caption("SectionName", ...): writer.write_struct(instance)`.
+            Passing `section`, `repeat`, `desc`, or `spec_count` directly to `write_struct`
+            is supported for backward compatibility.
+
         Args:
             instance: An instance of a class decorated with @binary_struct.
             endian: Optional endianness override for this struct write.
-            section: Optional section name (default: "").
-            repeat: Optional repetition count or specifier (e.g. 5, "chunk_count", True).
+            section: Optional section name (legacy).
+            repeat: Optional repetition count or specifier (legacy alias for spec_count).
             desc: Optional section description if section is provided.
-            spec_count: Optional specification count metadata (alias for repeat).
+            spec_count: Optional specification count metadata (legacy).
         """
         rep_val = spec_count if spec_count is not None else repeat
         if section:
