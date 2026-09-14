@@ -278,7 +278,7 @@ While `BinaryWriter` can generate specs and C headers directly from serialized d
 | `add_struct` | `struct_cls: type, name: str = None, desc: str = "", condition: str = None, condition_func: Callable = None, count: int\|str\|Callable = None` | Register sequential struct (supports conditions and repeated counts) |
 | `add_choice` | `name: str, tag_field: str\|Callable, variants: dict\|list, desc: str = "", condition: str = None, condition_func: Callable = None` | Register polymorphic branch dispatched by `tag_field` |
 | `add_field` | `name: str, type_name: str, size: int, desc: str = "", endian: str = None, condition: str = None` | Register ad-hoc primitive field without dedicated struct class |
-| `section`, `caption` | `title: str, desc: str = ""` | Context manager to group elements: `with builder.section(...):` |
+| `set_caption`, `section`, `caption` | `title: str, desc: str = "", spec_count: int\|str = None` | Context manager to group elements: `with builder.set_caption(...):` |
 | `write` | `path_or_file: str\|Path\|IO, diagram_direction: str = "TD", ...` | Generate and save complete Markdown specification with Mermaid diagrams |
 | `read` | `data: bytes\|bytearray\|Reader, trace: bool = False` | Automatically parse binary into a `BuilderReadResult` |
 | `hexdump` | `data: bytes\|bytearray, width: int = 16, color: bool = False` | Output annotated hexdump correlated with schema fields |
@@ -422,15 +422,17 @@ writer.write_variant(
     desc="Dynamic payload",
 )
 
-# Repetition Scopes
-with writer.repeat("Chunks", count=-1, desc="Indefinite stream of chunks"):
+# Specification Metadata & Scoped Captions (Centralized with set_caption)
+with writer.set_caption("Chunks", desc="Indefinite stream of chunks", spec_count=-1):
     for c in chunks:
         writer.write_struct(c)
-writer.write_repeated(chunks, count="num_chunks")
 
-# Captions (for Manual & Trace Table)
-writer.caption("Body Section", "Payload contents")
-writer.subcaption("Sub Section", "Details")
+with writer.set_caption("offsets", desc="Table of chunk offsets", spec_count="num_chunks"):
+    table_handle = writer.write_offset_table(count=2, offset_size=4, base_offset=0)
+
+# Direct caption setup:
+writer.set_caption("Body Section", desc="Payload contents")
+writer.subcaption("Sub Section", desc="Details")
 
 # Offset Tables with delayed patching
 table_handle = writer.write_offset_table(count=2, offset_size=4, base_offset=0)

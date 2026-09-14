@@ -26,13 +26,13 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 3.1 自動オフセット計算 (`Offset[T, Base.SELF]`)
   - 3.2 オフセット演算とポインタテーブル (`OffsetTable`)
 - [Step 4: 手続き的ライター & リーダーとデバッグ機能（低レベル制御）](#step-4-手続き的ライター--リーダーとデバッグ機能低レベル制御)
-  - 4.1 `BinaryWriter` によるストリーム書き込みとセクションキャプション (`caption`)
+  - 4.1 `BinaryWriter` によるストリーム書き込みとセクションキャプション (`set_caption`)
   - 4.2 文字列戦略（Null終端 / 長さプレフィックス / 固定長）
   - 4.3 `BinaryReader` によるストリーム読み込み
   - 4.4 充実したデバッグダンプ（注釈付き Hexdump / テーブル出力）
   - 4.5 バイナリ検証・ベリファイ (`writer.verify()`, `writer.diff()`)
   - 4.6 `BinaryWriter` による仕様書・多言語ヘッダーの直接出力 (`write_markdown`, `write_c_header`)
-  - 4.7 多態バリアント (`write_variant`) とチャンクの繰り返し集約 (`repeat`)
+  - 4.7 多態バリアント (`write_variant`) とチャンク・オフセットテーブルの繰り返し集約 (`set_caption`)
 - [Step 5: スキーマ駆動設計・仕様書自動生成・多言語出力（統合編）](#step-5-スキーマ駆動設計仕様書自動生成多言語出力統合編)
   - 5.1 `Builder` によるプロトコルスキーマ定義
   - 5.2 多態パケットの分岐 (`add_choice`)
@@ -382,17 +382,19 @@ for i in range(10):
 
 構造体を定義するまでもない小さなスクラッチ処理や、ストリームを逐次読み書きしたい場合は `BinaryWriter` と `BinaryReader` を直接使用します。
 
-### 4.1 `BinaryWriter` によるストリーム書き込みとセクションキャプション (`caption`)
+### 4.1 仕様書メタデータとセクションキャプション (`set_caption`)
 
-`writer.caption("セクション名", "説明")` は、**デバッグ表示やログ出力において、どのバイト群がどの論理ブロック（ファイルヘッダー、メタデータ、ペイロード等）に属しているかをグループ分けして可視化するためのラベル付け機能** です（出力されるバイナリバイト列そのものには一切影響を与えません）。
+`writer.set_caption(title, desc="", spec_count=None, variants=None)` は、**仕様書生成やデバッグ表示において、どのバイト群がどの論理ブロック（ファイルヘッダー、メタデータ、ペイロード等）に属しているかをグループ分けし、説明文や繰り返し情報を付与するための統合メタデータ設定機能** です（出力されるバイナリバイト列そのものには影響を与えません）。
+
+直接呼び出しに加えて、**`with writer.set_caption(...):` 構文によるスコープ管理** にも対応しており、ブロックを抜けると自動的に以前のキャプション状態へリセットされます。
 
 ```python
 from binary_master import BinaryWriter
 
 writer = BinaryWriter(default_endian="little")
 
-# デバッグ表示用のセクション名（キャプション）を設定
-writer.caption("File Header", "ファイル種別とバージョン情報")
+# 仕様書セクション名（キャプション）と説明文を設定
+writer.set_caption("File Header", desc="ファイル種別とバージョン情報")
 writer.write_uint32(0x46494C45, name="magic", desc="Magic 'FILE'")
 writer.write_uint16(2, name="ver_maj", desc="Major version")
 writer.write_uint16(0, name="ver_min", desc="Minor version")
@@ -572,26 +574,30 @@ writer.write_variant(
 ```
 許可されていない型のインスタンスを渡した場合や、直前に書かれたタグ値と型が不一致の場合は即座にエラーとなります。また、仕様書や C ヘッダーにも候補構造体が自動的に登録されます。
 
-#### ② チャンクの繰り返し集約 (`repeat`)
-ループで何十個も同じチャンク構造体を書き込む場合、仕様書テーブルに全チャンクを展開するとドキュメントが肥大化してしまいます。  
-`repeat` オプションを指定すると、仕様書上では **「1要素のテンプレート（相対オフセット `+0x00`, `+0x04`...）」** として美しく自動集約されます。
+#### ② チャンク・オフセットテーブルの繰り返し集約 (`set_caption` / `spec_count`)
+ループで何十個も同じチャンク構造体やオフセットテーブルを書き込む場合、仕様書テーブルに全行を展開するとドキュメントが肥大化してしまいます。  
+`with writer.set_caption(...)` で `spec_count`（または `write_struct` の `spec_count` 引数）を指定すると、仕様書上では **「1要素のテンプレート（相対オフセット `+0x00`, `+0x04`...）」** として美しく自動集約されます。
 
 ```python
-# パターンA: write_struct で直接指定（section は省略可能、クラス名で自動グループ化）
-for chunk in chunks:
-    writer.write_struct(chunk, repeat="chunk_count")  # 変数名・式を指定可能
-    # または不定回数:
-    # writer.write_struct(chunk, repeat=-1)
-
-# パターンB: コンテキストマネージャでスコープ化
-with writer.repeat("DataChunks", count=-1, desc="可変個のデータチャンク"):
+# パターンA: with writer.set_caption(...) によるスコープ化（推奨）
+# タイトル、説明文、繰り返し回数・変数名を1箇所でスッキリ定義！
+with writer.set_caption("DataChunks", desc="可変個のデータチャンク", spec_count="chunk_count"):
     for chunk in chunks:
         writer.write_struct(chunk)
 
-# パターンC: リストを一括書き込み
-writer.write_repeated(chunks, count="num_chunks")
+# パターンB: オフセットテーブルでの活用
+# テーブル定義が 'offsets[i]' として仕様書に自動集約されます
+with writer.set_caption("offsets", desc="各チャンクへのオフセット配列", spec_count="num_chunk"):
+    table = writer.write_offset_table(count=len(chunks))
+
+# パターンC: write_struct で直接指定
+for chunk in chunks:
+    writer.write_struct(chunk, spec_count="chunk_count")  # 不定回数の場合は spec_count=-1
+
+# パターンD: リストを一括書き込み
+writer.write_repeated(chunks, spec_count="num_chunks")
 ```
-- `repeat=-1` や負の数を指定すると、仕様書上には `不定回数 (0回以上 / 可変)`、Mermaid 図には `🔁 (不定回数)` と表記されます。
+- `spec_count=-1` や負の数を指定すると、仕様書上には `不定回数 (0回以上 / 可変)`、Mermaid 図には `🔁 (不定回数)` と表記されます。
 - `section=""`（デフォルト）のときは、構造体クラス名（例: `Chunk`）が自動的にセクション見出しとして使用されるため、セクション名を手動で書く必要もありません。
 
 ---

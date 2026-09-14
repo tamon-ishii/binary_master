@@ -42,7 +42,7 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - 各種文字列形式（C言語スタイルの Null 終端、Pascal スタイルの長さプレフィックス、固定長パディング）
   - バイト境界アライメント（`align`）およびパディング（`pad`）
   - メソッドチェーン対応ライター、カーソル操作（`seek`, `tell`, `skip`, `remaining`）
-  - **キャプション & サブキャプション (`caption`, `subcaption`)**: セクションとサブセクションの階層化、多態バリアント候補の指定
+  - **仕様書メタデータ統合管理 (`set_caption` / `subcaption`)**: セクションタイトル、詳細説明文（`desc`）、繰り返し回数・変数名（`spec_count="num_chunk"`）、多態バリアント候補（`variants`）を統合指定。`with` ブロックによるスコープ管理にも対応
 - 📐 **事前設計型プロトコルビルダー & 自動リーダー (`Builder` / `BinaryBuilder`)**  
   - バイナリデータを実際に書き出すことなく、構造体クラス（`@binary_struct`）、説明文（`add_document`）、条件分岐（`condition`）、多態バリアント（`add_choice`）を事前定義して仕様書を生成（`builder.write("spec.md")`）。
   - 事前に定義したスキーマ情報をもとに、バイナリバイト列から各構造体・バリアントを自動判別して復元する **スキーマ駆動自動リーダー (`builder.read(data)`)** を提供。
@@ -272,14 +272,14 @@ from binary_master import BinaryWriter, Endian
 
 writer = BinaryWriter(default_endian=Endian.LITTLE)
 
-# セクションタイトル（キャプション）の設定
-# これを呼ぶと、それ以降のバイナリがこのキャプションの内容としてマニュアルにグループ化されます
-writer.caption("File Header")
+# 仕様書セクション（キャプション）の設定
+# 直接呼び出し、または 'with writer.set_caption(...):' によるスコープ管理が可能
+writer.set_caption("File Header", desc="コンテナヘッダ情報")
 writer.write_uint32(0xDEADBEEF, name="magic", desc="マジックナンバー")
 writer.write_uint16(1, name="version")
 
-# 新しいキャプションを設定すると、以降は新しいグループに属します
-writer.caption("Payload Data")
+# 新しいキャプションを設定すると、以降のフィールドは新しいグループに属します
+writer.set_caption("Payload Data", desc="ペイロードデータ領域")
 writer.write_cstring("Hello", name="c_str")                         # Null終端 (b"Hello\x00")
 writer.write_prefixed_string("World", prefix_bytes=2, name="p_str")  # 2バイト長さプレフィックス
 writer.write_fixed_string("Fixed", length=10, pad_byte=b"\x00")    # 10バイト固定長パディング
@@ -514,10 +514,10 @@ writer.write_variant(
 )
 ```
 
-#### チャンク構造の繰り返しと仕様書上の自動集約 (`repeat`)
-バイナリファイル内で同一構造のチャンクが複数回繰り返される場合、仕様書テーブルが何十行も重複して肥大化するのを防ぎ、**1要素のテンプレート仕様（相対オフセット `+0x00`, `+0x04`...）** として美しく自動集約されます。
+#### 仕様書メタデータの統合設定と繰り返し集約 (`set_caption` / `spec_count`)
+セクションタイトル、説明文（`desc`）、繰り返し回数や変数名（`spec_count="chunk_count"`）、多態バリアント（`variants`）など、**仕様書生成に必要なすべての説明メタデータを `set_caption` に統合** して指定できます。
 
-繰り返しの回数は、固定件数（`repeat=5`）のほか、**仕様書上の変数名（`repeat="chunk_count"`）** や **不定回数（`repeat=-1`）** を自然に指定できます。
+コンテキストマネージャ（`with writer.set_caption(...)`）を使うことで、ブロック内の一連の書き込み（構造体ループやオフセットテーブル）に対してメタデータが自動適用され、ブロックを抜けると自動的にリセットされます。
 
 ```python
 @binary_struct
@@ -527,18 +527,23 @@ class Chunk:
 
 writer = BinaryWriter()
 
-# パターン1: write_struct で直接指定
-# ※ section は省略可能（デフォルト=""）。省略時は構造体クラス名「### Chunk」として自動集約されます
-for chunk in chunks:
-    writer.write_struct(chunk, repeat="chunk_count")  # 不定回数の場合は repeat=-1
-
-# パターン2: コンテキストマネージャでスコープ化
-with writer.repeat("Chunks", count=-1, desc="データチャンク群（不定回数）"):
+# パターン1: with writer.set_caption(...) によるスコープ化（推奨）
+# セクションタイトル、説明文、繰り返し回数・変数名を1箇所でスッキリ定義！
+with writer.set_caption("Chunks", desc="データチャンク群（不定回数）", spec_count=-1):
     for chunk in chunks:
         writer.write_struct(chunk)
 
-# パターン3: リストを一括繰り返し書き込み
-writer.write_repeated(chunks, count="num_chunks")
+# パターン2: オフセットテーブルでの活用
+# テーブル定義が 'offsets[i]' として仕様書に自動集約されます
+with writer.set_caption("offsets", desc="各チャンクへのオフセット配列", spec_count="num_chunk"):
+    table = writer.write_offset_table(count=len(chunks))
+
+# パターン3: write_struct で直接指定
+for chunk in chunks:
+    writer.write_struct(chunk, spec_count="chunk_count")
+
+# パターン4: リストを一括繰り返し書き込み
+writer.write_repeated(chunks, spec_count="num_chunks")
 ```
 
 - **仕様書上の表示例**:
@@ -862,7 +867,7 @@ if "footer" in result:
 - **章・説明文の追加**: `add_document(title, content)`（Markdown 形式の説明文・章を追加）
 - **構造体の登録**: `add_struct(cls, name=None, desc="", condition=None, condition_func=None, count=None)`（`@binary_struct` クラスを登録。条件分岐やリピート件数に対応）
 - **多態バリアント分岐の登録**: `add_choice(name, tag_field, variants, desc="", condition=None, condition_func=None)`（タグフィールドに基づくバリアント選択点を登録）
-- **セクション・キャプション区切り**: `section(title, desc="")` / `caption(title, desc="")`（`with` 構文による論理グループ化に対応。Mermaid に `subgraph` を自動生成）、`add_section(title, desc="")` / `add_caption(title, desc="")`
+- **セクション・仕様書メタデータ統合設定**: `set_caption(title, desc="", spec_count=None)` / `section(...)` / `caption(...)`（`with` 構文による論理グループ化に対応。Mermaid に `subgraph` を自動生成）、`add_section` / `add_caption`
 - **アドホックフィールド**: `add_field(name, type_name, size, desc="", endian=None, condition=None)`
 - **仕様書テキスト生成**: `build(...)` / `to_markdown(...)`（Markdown 文字列を返却）
 - **仕様書ファイル書き出し**: `write(path_or_file, ...)`（ファイルまたはストリームへ出力して Markdown 文字列を返却）
@@ -883,15 +888,15 @@ if "footer" in result:
 - **論理値 / バイト**: `write_bool`, `write_bytes`
 - **文字列**: `write_cstring`, `write_prefixed_string`, `write_fixed_string`, `write_string`
 - **オフセットテーブル**: `write_offset_table(count, offset_size=4, endian=None, name="offsets", desc="Offset Table", base_offset=0, spec_count=None)`（戻り値 `OffsetTableHandle` で `set_offset`, `write_offset`, `write_target`, `base_offset`, `get_target_offset`, `get_stored_offset` 等が可能。`spec_count` で仕様書の集約表示が可能）
-- **構造体**: `write_struct(instance, endian=None, section="", repeat=None)`（`repeat` で繰り返し回数、変数名、または `-1` 不定回数を指定可能）
+- **構造体**: `write_struct(instance, endian=None, section="", spec_count=None)`（`spec_count` で繰り返し回数、変数名、または `-1` 不定回数を指定可能）
 - **多態バリアント**: `write_variant(instance, candidates, tag_field=None, ...)`（候補型辞書・リストによる型バリデーションおよび先行タグ整合性検証付き書き込み）
+- **仕様書メタデータ統合管理**: `set_caption(title=None, desc="", spec_count=None, variants=None)`（セクションタイトル、説明文、繰り返し回数・変数名、候補バリアントを統合指定。`with writer.set_caption(...):` によるスコープ化に対応。`caption` もエイリアスとして完全対応）
+- **サブセクションタイトル**: `subcaption(title=None, desc="")`（大見出し内の階層的サブグループを設定）
 - **チャンク繰り返し**: `repeat(name, count=..., desc=...)`（コンテキストマネージャ）、`write_repeated(items, count=..., section=...)`
 - **仕様書直接出力**: `to_markdown(...)`（Markdown 文字列生成）、`write_markdown(path_or_file, ...)`（Markdown ファイル出力）
 - **多言語ヘッダー直接出力**: `to_c_header()`, `write_c_header(path)`, `to_rust()`, `write_rust(path)`, `to_cpp()`, `write_cpp(path)`, `to_csharp()`, `write_csharp(path)`, `to_go()`, `write_go(path)`, `write_code(path)`
 - **Builder 変換**: `to_builder(title=...)`（書き込み履歴から静的 `Builder` インスタンスを自動生成）
 - **位置制御**: `tell()`, `seek(offset, whence)`
-- **セクションタイトル**: `caption(title=None, desc="", variants=None)`（マニュアル・図のグループ化見出し、説明、候補バリアントを設定）
-- **サブセクションタイトル**: `subcaption(title=None, desc="")`（大見出し内の階層的サブグループを設定）
 - **パディング & アライメント**: `pad(count, pad_byte)`, `align(boundary, pad_byte)`
 - **デバッグ・検証**: `verify(expected, raise_error=True)`（期待値との完全一致検証・不一致時 diff 表示）、`diff(other, color=False)`（他バッファとの差分比較）、`hexdump(width=16, color=False, annotate=True)`（注釈付き Hexdump）、`dump(format="hexdump"|"table"|"json"|"dict")`
 - **データ取り出し**: `to_bytes()`, `to_bytearray()`

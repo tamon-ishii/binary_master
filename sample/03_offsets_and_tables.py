@@ -105,14 +105,10 @@ def main():
     pw.write_cstring("ARCHIVE", name="magic", desc="Archive magic")
     pw.write_uint16(3, name="num_chunks", desc="Number of chunks")
 
-    # Reserve offset table for 3 chunks, labeling count as "num_chunks" in the manual
-    table = pw.write_offset_table(
-        count=3,
-        offset_size=4,
-        name="chunk_offsets",
-        desc="Offset table pointing to chunks",
-        spec_count="num_chunks",  # Specification count label
-    )
+    # Reserve offset table inside a set_caption context block
+    # Section title, description, and spec_count metadata are cleanly centralized!
+    with pw.set_caption("chunk_offsets", desc="Offset table pointing to chunks", spec_count="num_chunks"):
+        table = pw.write_offset_table(count=3, offset_size=4)
 
     # Write each chunk payload and record its start offset in the table
     for i in range(3):

@@ -78,13 +78,14 @@ class _SectionContext:
         title: str,
         desc: str = "",
         repeat: Optional[Union[int, str, bool]] = None,
+        spec_count: Optional[Union[int, str, bool]] = None,
     ) -> None:
         self._builder = builder
         self._title = title
         self._desc = desc
-        self._repeat = repeat
+        self._repeat = spec_count if spec_count is not None else repeat
         self._in_context = False
-        self._elem = SectionElement(title=title, desc=desc, repeat=repeat)
+        self._elem = SectionElement(title=title, desc=desc, repeat=self._repeat)
         self._builder.elements.append(self._elem)
 
     def __enter__(self) -> Any:
@@ -355,18 +356,21 @@ class BinaryBuilder:
         title: str,
         desc: str = "",
         repeat: Optional[Union[int, str, bool]] = None,
+        spec_count: Optional[Union[int, str, bool]] = None,
     ) -> BinaryBuilder:
-        """Add a section divider grouping subsequent elements.
+        """Add a section break to visually and structurally group fields.
 
         Args:
             title: Section title.
             desc: Section description.
             repeat: Optional repetition count or specifier.
+            spec_count: Optional specification count metadata (alias for repeat).
 
         Returns:
             self for method chaining.
         """
-        self.elements.append(SectionElement(title=title, desc=desc, repeat=repeat))
+        rep_val = spec_count if spec_count is not None else repeat
+        self.elements.append(SectionElement(title=title, desc=desc, repeat=rep_val))
         return self
 
     def add_caption(
@@ -374,6 +378,7 @@ class BinaryBuilder:
         title: str,
         desc: str = "",
         repeat: Optional[Union[int, str, bool]] = None,
+        spec_count: Optional[Union[int, str, bool]] = None,
     ) -> BinaryBuilder:
         """Alias for add_section, consistent with BinaryWriter.caption.
 
@@ -381,17 +386,19 @@ class BinaryBuilder:
             title: Section/caption title.
             desc: Section/caption description.
             repeat: Optional repetition count or specifier.
+            spec_count: Optional specification count metadata.
 
         Returns:
             self for method chaining.
         """
-        return self.add_section(title=title, desc=desc, repeat=repeat)
+        return self.add_section(title=title, desc=desc, repeat=repeat, spec_count=spec_count)
 
     def section(
         self,
         title: str,
         desc: str = "",
         repeat: Optional[Union[int, str, bool]] = None,
+        spec_count: Optional[Union[int, str, bool]] = None,
     ) -> _SectionContext:
         """Create a section grouping subsequent elements, supporting 'with builder.section(...):' syntax.
 
@@ -399,29 +406,57 @@ class BinaryBuilder:
             title: Section title.
             desc: Optional section description.
             repeat: Optional repetition count or specifier.
+            spec_count: Optional specification count metadata (alias for repeat).
 
         Returns:
             _SectionContext context manager and proxy.
         """
-        return _SectionContext(self, title=title, desc=desc, repeat=repeat)
+        rep_val = spec_count if spec_count is not None else repeat
+        return _SectionContext(self, title=title, desc=desc, repeat=rep_val)
 
     def caption(
         self,
         title: str,
         desc: str = "",
         repeat: Optional[Union[int, str, bool]] = None,
+        spec_count: Optional[Union[int, str, bool]] = None,
     ) -> _SectionContext:
-        """Alias for section(), supporting 'with builder.caption(...):' syntax.
+        """Alias for set_caption() / section(), supporting 'with builder.caption(...):' syntax.
 
         Args:
             title: Section/caption title.
-            desc: Optional section/caption description.
+            desc: Section/caption description.
             repeat: Optional repetition count or specifier.
+            spec_count: Optional specification count metadata.
 
         Returns:
             _SectionContext context manager and proxy.
         """
-        return self.section(title=title, desc=desc, repeat=repeat)
+        return self.section(title=title, desc=desc, repeat=repeat, spec_count=spec_count)
+
+    def set_caption(
+        self,
+        title: str,
+        desc: str = "",
+        spec_count: Optional[Union[int, str, bool]] = None,
+        repeat: Optional[Union[int, str, bool]] = None,
+    ) -> _SectionContext:
+        """Set active section caption/description/spec_count for subsequent builder elements.
+
+        Can be called directly or used as a context manager:
+            with builder.set_caption("offsets", desc="Table of chunk offsets", spec_count="num_chunk"):
+                ...
+
+        Args:
+            title: Section/caption title.
+            desc: Optional section/caption description.
+            spec_count: Optional specification count metadata (e.g. 'num_chunk', 5, -1).
+            repeat: Backward-compatible alias for spec_count.
+
+        Returns:
+            _SectionContext context manager and proxy.
+        """
+        return self.section(title=title, desc=desc, repeat=repeat, spec_count=spec_count)
 
     def add_field(
         self,

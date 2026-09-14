@@ -22,12 +22,12 @@ flowchart TD
         N4["0x0017: doc_title (PrefixedString[2], 23B)"]
         N5["0x002E: author_tag (FixedString[8], 8B)"]
     end
-    subgraph SG_Dynamic_Payload ["Dynamic Payload (0x0036 - 0x003C, 6B)"]
+    subgraph SG_Dynamic_Payload ["Dynamic Payload (0x0036 - 0x003E, 8B)"]
         N6["0x0036: chunk_type (UInt16, 2B)"]
         N7["0x0038: protocol_version (UInt16, 2B)"]
         N8["0x003A: flags (UInt16, 2B)"]
+        N9["0x003C: num_records (UInt16, 2B)"]
     end
-    N9["0x003C: num_records (UInt16, 2B)"]
     subgraph SG_DataRecord ["DataRecord 🔁 xnum_records (0x003E - 0x0062, 36B)"]
         N10["+0x00: record_id (UInt32, 4B)"]
         N11["+0x04: timestamp (UInt32, 4B)"]
@@ -69,7 +69,7 @@ Textual metadata and application properties
 | `0x0017` | 23 | 23 | `doc_title` | `PrefixedString[2]` | Little | Doc Title |
 | `0x002E` | 46 | 8 | `author_tag` | `FixedString[8]` | - | Author Tag |
 
-### Dynamic Payload (0x0036 - 0x003C, 6B)
+### Dynamic Payload (0x0036 - 0x003E, 8B)
 
 Dynamic payload dispatched by chunk_type
 
@@ -78,6 +78,7 @@ Dynamic payload dispatched by chunk_type
 | `0x0036` | 54 | 2 | `chunk_type` | `UInt16` | Little | 1=HeaderChunk, 2=TextChunk |
 | `0x0038` | 56 | 2 | `protocol_version` | `UInt16` | Little | - |
 | `0x003A` | 58 | 2 | `flags` | `UInt16` | Little | - |
+| `0x003C` | 60 | 2 | `num_records` | `UInt16` | Little | Number of following data records |
 
 この領域には、条件（種別タグ等）に応じて以下のいずれかの構造体が格納されます。
 
@@ -99,15 +100,9 @@ Text data chunk payload.
 | `+0x00` | 2 | `length` | `UInt16` | Little | - |
 | `+0x02` | 16 | `content` | `FixedArray[UInt8, 16]` | Little | - |
 
-### (0x003C - 0x003E, 2B)
-
-| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Description |
-|---|---|---|---|---|---|---|
-| `0x003C` | 60 | 2 | `num_records` | `UInt16` | Little | Number of following data records |
-
 ### DataRecord (0x003E - 0x0062, 36B)
 
-Repeating measurement data record.
+Repeating measurement data records
 
 - 🔁 **繰り返し**: `num_records` 回
 - **1要素サイズ**: `12` bytes (0xC)

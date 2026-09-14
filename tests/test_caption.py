@@ -115,3 +115,111 @@ def test_caption_with_binary_struct():
 
     md = generate_manual(writer.entries)
     assert "### Command Packet (0x0000 - 0x0003, 3B)" in md
+
+
+def test_set_caption_direct():
+    """Test set_caption directly sets caption, description and spec_count."""
+    writer = BinaryWriter()
+    writer.set_caption("DirectHeader", desc="Header section", spec_count=1)
+    assert writer.current_caption == "DirectHeader"
+    assert writer.current_caption_desc == "Header section"
+    assert writer.current_caption_spec_count == 1
+    assert writer.current_caption_repeat == 1
+
+    writer.write_uint32(0x12345678, name="magic", desc="Magic identifier")
+    assert writer.entries[0].caption == "DirectHeader"
+    assert writer.entries[0].caption_desc == "Header section"
+
+
+def test_set_caption_context_manager_offset_table():
+    """Test with writer.set_caption(...) scoping and offset_table inheritance."""
+    writer = BinaryWriter()
+    writer.write_uint32(0xCAFE, name="file_magic")
+
+    with writer.set_caption("offsets", desc="Table of chunk offsets", spec_count="num_chunk"):
+        assert writer.current_caption == "offsets"
+        assert writer.current_caption_desc == "Table of chunk offsets"
+        assert writer.current_caption_repeat == "num_chunk"
+        table = writer.write_offset_table(count=3)
+
+    # After exiting with block, caption and repeat are restored!
+    assert writer.current_caption is None
+    assert writer.current_caption_repeat is None
+
+    # Write payload outside offset table
+    for i in range(3):
+        pos = writer.tell()
+        table[i] = pos
+        writer.write_cstring(f"CHUNK_{i}", name=f"chunk_{i}")
+
+    # Entries in table have the offset caption and repeat
+    for i in range(1, 4):
+        assert writer.entries[i].caption == "offsets"
+        assert writer.entries[i].caption_repeat == "num_chunk"
+
+    # Entries outside table have None caption
+    assert writer.entries[4].caption is None
+
+    # Generate manual: check offsets are aggregated
+    md = generate_manual(writer.entries, title="Offset Archive")
+    assert "### offsets (0x0004 - 0x0010, 12B)" in md
+    assert "Table of chunk offsets" in md
+    assert "num_chunk" in md
+    assert "offsets[i]" in md
+    assert 'subgraph SG_offsets ["offsets 🔁 xnum_chunk' in md
+
+
+def test_set_caption_context_manager_struct_loop():
+    """Test with writer.set_caption(...) with repeated struct writes."""
+    writer = BinaryWriter()
+    items = [SimplePayload(cmd=i, value=100 + i) for i in range(4)]
+
+    with writer.set_caption("PayloadList", desc="List of commands", spec_count="cmd_count"):
+        for item in items:
+            writer.write_struct(item)
+
+    assert writer.current_caption is None
+    assert writer.current_caption_repeat is None
+
+    md = generate_manual(writer.entries, title="Struct Loop")
+    assert "### PayloadList (0x0000 - 0x000C, 12B)" in md
+    assert "List of commands" in md
+    assert "cmd_count" in md
+    assert 'subgraph SG_PayloadList ["PayloadList 🔁 xcmd_count' in md
+
+
+def test_set_caption_nested():
+    """Test nested set_caption context managers restore previous states correctly."""
+    writer = BinaryWriter()
+    writer.set_caption("Outer", desc="Outer desc", spec_count=5)
+
+    with writer.set_caption("Inner", desc="Inner desc", spec_count="inner_count"):
+        assert writer.current_caption == "Inner"
+        assert writer.current_caption_desc == "Inner desc"
+        assert writer.current_caption_repeat == "inner_count"
+        writer.write_uint16(0xAA, name="inner_field")
+
+    # Restored to Outer
+    assert writer.current_caption == "Outer"
+    assert writer.current_caption_desc == "Outer desc"
+    assert writer.current_caption_repeat == 5
+    writer.write_uint16(0xBB, name="outer_field")
+
+    assert writer.entries[0].caption == "Inner"
+    assert writer.entries[1].caption == "Outer"
+
+
+def test_builder_set_caption():
+    """Test BinaryBuilder.set_caption with context manager."""
+    from binary_master import BinaryBuilder
+
+    builder = BinaryBuilder(title="Builder Spec")
+    with builder.set_caption("HeaderSection", desc="Header details", spec_count=1):
+        builder.add_field("magic", "UInt32", 4, desc="Magic identifier")
+
+    with builder.set_caption("ChunkOffsets", desc="Table of offsets", spec_count="num_chunks"):
+        builder.add_field("offset", "UInt32", 4, desc="Chunk offset")
+
+    md = builder.to_markdown()
+    assert "HeaderSection" in md
+    assert "ChunkOffsets" in md

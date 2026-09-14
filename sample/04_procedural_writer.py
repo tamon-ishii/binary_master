@@ -56,20 +56,20 @@ def main():
 
     writer = BinaryWriter(default_endian="little")
 
-    # 1. Section: File Header
-    writer.caption("File Header", "Container header identifying format and version")
+    # 1. Section: File Header (direct set_caption)
+    writer.set_caption("File Header", desc="Container header identifying format and version")
     writer.write_uint32(0x46494C45, name="magic", desc="Magic 'FILE'")
     writer.write_uint16(2, name="version_major", desc="Major version")
     writer.write_uint16(0, name="version_minor", desc="Minor version")
 
     # 2. Section: Metadata and Strings
-    writer.caption("Metadata", "Textual metadata and application properties")
+    writer.set_caption("Metadata", desc="Textual metadata and application properties")
     writer.write_string("SampleApp v2.0", encoding="utf-8", strategy="null_terminated", name="app_name", desc="App Name")
     writer.write_string("Confidential Document", encoding="utf-8", strategy="prefixed", prefix_bytes=2, name="doc_title", desc="Doc Title")
     writer.write_string("AUTH", length=8, strategy="fixed", pad_byte=b" ", name="author_tag", desc="Author Tag")
 
     # 3. Section: Polymorphic Variant with candidate validation
-    writer.caption("Dynamic Payload", "Dynamic payload dispatched by chunk_type")
+    writer.set_caption("Dynamic Payload", desc="Dynamic payload dispatched by chunk_type")
     candidates = {
         1: HeaderChunk,
         2: TextChunk,
@@ -85,19 +85,18 @@ def main():
         desc="Configuration header variant",
     )
 
-    # 4. Section: Repeating Chunks (repeat="num_records")
-    # Clear the previous caption.
-    # When section="" is omitted on write_struct, it automatically creates a dedicated
-    # section named after the struct class: "DataRecord" and aggregates repeated chunks!
-    writer.caption(None)
+    # 4. Section: Repeating Chunks scoped with set_caption(..., spec_count="num_records")
+    # Using 'with writer.set_caption(...)': section title, description, and repetition count
+    # are cleanly centralized, and caption state is automatically scoped!
     records = [
         DataRecord(record_id=1, timestamp=1000, value=25.5),
         DataRecord(record_id=2, timestamp=1001, value=26.0),
         DataRecord(record_id=3, timestamp=1002, value=26.5),
     ]
     writer.write_uint16(len(records), name="num_records", desc="Number of following data records")
-    for record in records:
-        writer.write_struct(record, repeat="num_records")
+    with writer.set_caption("DataRecord", desc="Repeating measurement data records", spec_count="num_records"):
+        for record in records:
+            writer.write_struct(record)
 
     data = writer.to_bytes()
     print(f"Total procedural binary size: {len(data)} bytes")
