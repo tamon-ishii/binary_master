@@ -908,6 +908,176 @@ print(builder.dump(packet_bytes, format="table"))
 
 ---
 
+## Step 6: v2.0 高度機能（プロトコル & 実践ツール）
+
+### 6.1 CRC / チェックサム自動計算 & 検証
+
+通信プロトコルやバイナリファイルフォーマットでは、データ破損を検知するためのチェックサムや CRC が不可欠です。
+Binary Master では、フィールドに `CRC32` や `CRC16` などのチェックサム型を指定するだけで、手動計算を一切行うことなく自動計算・検証が行われます。
+
+```python
+from binary_master import binary_struct, UInt16, Bytes, CRC32, ChecksumMismatchError
+
+@binary_struct(endian="big")
+class PacketWithCRC:
+    msg_id: UInt16
+    payload: Bytes[16]
+    checksum: CRC32     # 先頭からこのフィールド直前までのバイト列から自動計算
+
+# 1. 書き込み: checksum は自動計算されて埋め込まれる
+pkt = PacketWithCRC(msg_id=1, payload=b"Hello CRC World!")
+raw = pkt.to_bytes()
+
+# 2. 読み込み: 自動的に整合性を検証
+restored = PacketWithCRC.from_bytes(raw)
+assert restored.msg_id == 1
+
+# 3. データ改ざん時のエラー検知
+corrupted = bytearray(raw)
+corrupted[2] ^= 0xFF
+try:
+    PacketWithCRC.from_bytes(corrupted)
+except ChecksumMismatchError as e:
+    print(f"破損検知: {e}")
+```
+
+また、手続き的ライターでもコンテキストマネージャを用いてブロック単位の CRC バックパッチが可能です：
+
+```python
+with writer.checksum("crc32"):
+    writer.write_bytes(payload)
+    # ブロックを抜けると CRC32 が自動的に計算され書き込まれます
+```
+
+### 6.2 型安全な列挙型 (`BinaryEnum`)
+
+Python の `enum.Enum` / `enum.IntEnum` を直接フィールド型として利用できます。  
+`BinaryEnum` を継承することで、バイナリ上の物理サイズ（1, 2, 4, 8 バイト）を型パラメータ `Status[UInt8]` のように明示的に指定可能です。
+
+```python
+from binary_master import binary_struct, BinaryEnum, UInt8, UInt16
+
+class StatusCode(BinaryEnum):
+    SUCCESS = 0x00
+    NOT_FOUND = 0x01
+    SERVER_ERROR = 0xFF
+
+@binary_struct
+class ApiResponse:
+    status: StatusCode[UInt8]   # 1 バイト整数として格納
+    code: UInt16
+
+resp = ApiResponse(status=StatusCode.SUCCESS, code=200)
+raw = resp.to_bytes()
+parsed = ApiResponse.from_bytes(raw)
+assert parsed.status is StatusCode.SUCCESS
+```
+
+### 6.3 マジックナンバー & 定数制約 (`Magic`, `Constant`)
+
+ファイルの識別シグネチャ（マジックナンバー）や固定バージョン番号を宣言的に定義できます。
+これらはインスタンス生成時の引数を省略しても自動的にデフォルト値が設定され、デシリアライズ時には期待値と異なる場合に即座に例外を送出します。
+
+```python
+from binary_master import binary_struct, Magic, Constant, UInt16, UInt32
+
+@binary_struct(endian="big")
+class FileHeader:
+    magic: Magic[b"FILE"]            # 自動補完 & デシリアライズ時検証
+    version: Constant[UInt16, 1]     # 固定値 1
+    file_size: UInt32
+
+# magic と version を渡さずに生成可能！
+header = FileHeader(file_size=2048)
+raw = header.to_bytes()
+assert raw[:4] == b"FILE"
+```
+
+### 6.4 JSON / 辞書相互変換 (`to_dict`, `from_dict`, `to_json`, `from_json`)
+
+バイナリデータを Web API（REST/JSON）や設定ファイルと連携するための相互変換メソッドが標準搭載されています。
+バイナリバイト列は `bytes_format="hex"`（例: `"0x0102"`）、`"base64"`、`"list"`（数値配列）のいずれでもシリアライズ・復元できます。
+
+```python
+# 辞書化 / JSON 化
+d = header.to_dict(bytes_format="hex")
+json_str = header.to_json(indent=2)
+
+# JSON / 辞書からの完全復元
+restored = FileHeader.from_json(json_str)
+assert restored.file_size == header.file_size
+```
+
+### 6.5 巨大ファイル & ストリーミング処理 (`iter_struct`, `from_mmap`)
+
+数 GB 超の巨大ログファイルやセンサー連続ストリームを扱う場合、全ファイルを一度にメモリへ読み込むとメモリが枯渇します。
+`BinaryReader` はイテレータによる順次読み出しと OS メモリマップ（mmap）によるゼロコピー読み込みに対応しています。
+
+```python
+from binary_master import BinaryReader
+
+# メモリマップファイルによる省メモリ・超高速ストリーミング
+with BinaryReader.from_mmap("huge_telemetry.bin") as reader:
+    for packet in reader.iter_struct(TelemetryRecord):
+        process_record(packet)
+```
+
+### 6.6 可変長整数（LEB128 VarInt / VarUInt）
+
+Protocol Buffers や WebAssembly 形式で採用されている **LEB128** 可変長整数をサポート。
+1 バイトから任意の巨大な整数まで、値の大きさに応じた最小バイト数で効率よく格納します。
+
+- **`VarUInt`**: 符号なし可変長整数
+- **`VarInt`**: 負数対応の符号付き可変長整数
+
+```python
+from binary_master import binary_struct, VarUInt, VarInt
+
+@binary_struct
+class CompactMessage:
+    user_id: VarUInt      # 100 -> 1バイト, 10000 -> 2バイト
+    temperature: VarInt   # -15 -> 1バイト
+```
+
+### 6.7 任意ビットストリーム操作 (`BitWriter`, `BitReader`)
+
+8ビット未満のビット単位パッキングや、バイト境界をまたぐビットストリームの読み書きに対応します。
+
+```python
+from binary_master import BitWriter, BitReader
+
+bw = BitWriter()
+bw.write_bits(0b101, 3)     # 3 ビット
+bw.write_bits(0b11, 2)      # 2 ビット
+bw.write_bits(0b001, 3)     # 3 ビット -> 計 8 ビット (1 バイト完成)
+data = bw.to_bytes()
+
+br = BitReader(data)
+assert br.read_bits(3) == 0b101
+assert br.read_bits(2) == 0b11
+assert br.read_bits(3) == 0b001
+```
+
+### 6.8 CLI バイナリインスペクター (`binary-master`)
+
+ターミナルから直接バイナリファイルの検査やコード出力を行えます：
+
+```bash
+# バイナリファイルの Hexdump & 注釈表示
+binary-master inspect data.bin
+
+# 2つのバイナリファイルの差分比較（ビジュアル diff）
+binary-master diff expected.bin actual.bin
+
+# 構造体クラスから仕様書 Markdown を生成
+binary-master spec my_module:MyPacket -o spec.md
+
+# 構造体クラスから各言語（Rust/C/C++/C#/Go）コードを出力
+binary-master export my_module:MyPacket --lang rust -o -
+```
+
+---
+
 ## まとめ & サンプルコードとの対応
 
 | ステップ | トピック | 主な機能・API | 対応サンプルコード |
@@ -917,6 +1087,7 @@ print(builder.dump(packet_bytes, format="table"))
 | **Step 3** | 相対オフセット & テーブル | `Offset`, `Base.SELF`, `OffsetTable`, 自動バックパッチ | [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) |
 | **Step 4** | 手続き的ライター & リーダー | `BinaryWriter`, `BinaryReader`, 文字列戦略, `hexdump()`, `dump("table")` | [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) |
 | **Step 5** | スキーマ駆動設計 & 多言語出力 | `Builder`, `section()`, `caption()`, `write()`, `builder.read()`, `builder.hexdump()`, `builder.dump()` | [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) |
+| **Step 6** | v2.0 高度機能総合 | CRC32, `BinaryEnum`, `Magic`, `Constant`, JSON連携, `iter_struct`, `VarInt`, `BitWriter` | [`sample/06_advanced_v2_features.py`](sample/06_advanced_v2_features.py) |
 
 すべてのサンプルは以下のコマンドでまとめて実行・検証できます：
 

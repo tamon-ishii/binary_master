@@ -71,8 +71,27 @@ def create_dummy_instance(struct_cls: type) -> Any:
             FixedString,
             CString,
             PrefixedString,
+            MagicBase,
+            ConstantBase,
         )
-        if ft is bool or (isinstance(ft, type) and issubclass(ft, Bool)):
+        from binary_master.checksum import ChecksumBase
+        from binary_master.varint import VarIntTypeMeta
+        import enum
+
+        if isinstance(ft, type) and issubclass(ft, MagicBase):
+            expected = getattr(ft, "_value", None)
+            dummy_kwargs[fn] = expected if expected is not None else getattr(ft, "_raw_val", 0)
+        elif isinstance(ft, type) and issubclass(ft, ConstantBase):
+            dummy_kwargs[fn] = getattr(ft, "_value", 0)
+        elif isinstance(ft, type) and issubclass(ft, ChecksumBase):
+            dummy_kwargs[fn] = 0
+        elif isinstance(ft, VarIntTypeMeta):
+            dummy_kwargs[fn] = 0
+        elif isinstance(ft, type) and issubclass(ft, enum.Enum):
+            dummy_kwargs[fn] = next(iter(ft)) if len(ft) > 0 else 0
+        elif isinstance(ft, tuple) and len(ft) >= 2 and isinstance(ft[0], type) and issubclass(ft[0], enum.Enum):
+            dummy_kwargs[fn] = next(iter(ft[0])) if len(ft[0]) > 0 else 0
+        elif ft is bool or (isinstance(ft, type) and issubclass(ft, Bool)):
             dummy_kwargs[fn] = False
         elif isinstance(ft, type) and issubclass(ft, (FixedString, CString, PrefixedString)):
             dummy_kwargs[fn] = ""

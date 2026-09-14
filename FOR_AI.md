@@ -51,6 +51,23 @@ from binary_master import (
     Base,                # Base.SELF, Base.STRUCT, Base.FIELD origin markers
     RelativeBase,        # Result of Base + delta arithmetic
 
+    # v2.0 Declarative Types & Constraints
+    BinaryEnum,          # IntEnum with explicit sizing: MyEnum[UInt8]
+    Magic,               # Magic[b"PNG..."] or Magic[0x1234]: signature constraint
+    Constant,            # Constant[Type, Value]: fixed-value constant field
+    CRC32, CRC16, CRC16_CCITT, CRC16_ARC, Checksum8, Checksum16, Fletcher16, Adler32,
+    compute_checksum,
+    VarUInt, VarInt, VarUInt32, VarInt32, VarUInt64, VarInt64,
+    encode_varuint, decode_varuint, encode_varint, decode_varint,
+    BitWriter, BitReader,
+
+    # Exceptions
+    BinaryMasterError,
+    ChecksumMismatchError,
+    InvalidMagicError,
+    InvalidConstantError,
+    InvalidEnumError,
+
     # Protocol Builder & Automated Deserialization
     Builder,             # Top-level protocol schema builder (alias: BinaryBuilder)
     BinaryBuilder,       # Alias for Builder
@@ -686,3 +703,58 @@ table.write_target(1, b"Second Payload Data")
 
 binary_data = writer.to_bytes()
 ```
+
+---
+
+## 11. v2.0 Advanced Features Reference (LLM Quick Reference)
+
+### 11.1 CRC & Checksum Declarative Types
+- **Types**: `CRC32` (4B, IEEE 802.3), `CRC16` / `CRC16_CCITT` (2B, poly 0x1021), `CRC16_ARC` (2B, poly 0xA001), `Checksum8` (1B, sum mod 256), `Checksum16` (2B, sum mod 65536), `Fletcher16` (2B), `Adler32` (4B).
+- **Slice Range**: By default, covers `0` to the field position. Custom slice: `CRC32[4:20]`.
+- **Automatic Behavior**:
+  - `to_bytes()` calculates checksum over preceding bytes and packs it into the stream.
+  - `from_bytes()` reads checksum and verifies against calculated value.
+  - On mismatch, raises `ChecksumMismatchError(expected=..., actual=...)`.
+- **Procedural**: `with writer.checksum("crc32"): ...`, `writer.write_checksum("crc32")`, `reader.verify_checksum("crc32")`.
+
+### 11.2 Enums (`BinaryEnum` & `IntEnum`)
+- **Base Class**: Subclass `BinaryEnum` (subclasses `enum.IntEnum`).
+- **Explicit Sizing**: `MyEnum[UInt8]`, `MyEnum[UInt16]`, `MyEnum[UInt32]`, `MyEnum[UInt64]`.
+- **Automatic Sizing**: Bare `MyEnum` or standard `enum.IntEnum` auto-selects 1 byte (<=255), 2 bytes (<=65535), or 4 bytes.
+- **Deserialization**: `from_bytes` instantiates the Python `Enum` member directly.
+- **Validation**: If stream integer is not in enum, raises `InvalidEnumError(enum_cls, raw_val)`.
+
+### 11.3 Magic Numbers & Constant Constraints
+- **Magic**: `Magic[b"PNG\r\n\x1a\n"]` or `Magic[0x12345678]`.
+- **Constant**: `Constant[UInt16, 20]`.
+- **Zero-Boilerplate Instantiation**: Fields typed as `Magic` or `Constant` do not require arguments in `__init__`.
+- **Validation on Read**: `from_bytes` verifies against expected value, raising `InvalidMagicError` or `InvalidConstantError`.
+
+### 11.4 JSON / Dict Interop
+- `instance.to_dict(bytes_format="hex"|"base64"|"list")` -> `dict`
+- `Cls.from_dict(d)` -> `Cls`
+- `instance.to_json(indent=None, bytes_format="hex"|"base64"|"list")` -> `str`
+- `Cls.from_json(json_str)` -> `Cls`
+- Hex format prefixes `"0x..."`. `from_dict` automatically parses both `"0x..."` and raw hex strings.
+
+### 11.5 Large File Streaming & Memory-Mapped Zero-Copy
+- `reader.iter_struct(Cls)`: Generator yielding instances of `Cls` until EOF.
+- `BinaryReader.from_mmap(path, default_endian="little")`: Context manager utilizing OS memory-mapping (`mmap`) for zero-copy slice reads without loading whole files into memory.
+
+### 11.6 Variable-Length Integers (LEB128)
+- **Types**: `VarUInt`, `VarInt`, `VarUInt32`, `VarInt32`, `VarUInt64`, `VarInt64`.
+- **Procedural Writer**: `writer.write_varuint(val)`, `writer.write_varint(val)`.
+- **Procedural Reader**: `reader.read_varuint()`, `reader.read_varint()`.
+- **Declarative Struct**: Can be used as field types in `@binary_struct`.
+
+### 11.7 Arbitrary Bitstream Manipulation
+- `BitWriter(stream=None, msb_first=True)`: `write_bits(value, bit_count)`, `flush_bits(pad_bit=0)`, `to_bytes()`.
+- `BitReader(data_or_stream, msb_first=True)`: `read_bits(bit_count)`, `peek_bits(bit_count)`, `align_to_byte()`.
+- `writer.write_bits(val, count)` & `reader.read_bits(count)`: Integrated directly into `BinaryWriter` and `BinaryReader`. Non-bit write methods automatically flush unaligned bits.
+
+### 11.8 CLI Binary Inspector
+`pyproject.toml` script entry point: `binary-master`.
+- `binary-master inspect <file>`: Formatted, annotated Hexdump.
+- `binary-master diff <file1> <file2>`: Visual byte diff.
+- `binary-master spec <module:Class> [-o output.md]`: Markdown protocol manual generation.
+- `binary-master export <module:Class> --lang <rust|c|cpp|csharp|go> [-o output]`: Multi-language code generation (pass `-o -` for stdout).

@@ -118,6 +118,68 @@ class _WriterPositionContext:
         self._writer.seek(self._pos)
 
 
+class _WriterChecksumContext:
+    """Context manager for automatically computing and writing checksums over a block."""
+
+    def __init__(
+        self,
+        writer: BinaryWriter,
+        algorithm: Union[str, Any] = "crc32",
+        name: str = "checksum",
+        desc: str = "",
+        auto_write: bool = True,
+        patch_offset: Optional[int] = None,
+        endian: Optional[EndianType] = None,
+    ) -> None:
+        self.writer = writer
+        self.algorithm = algorithm
+        self.name = name
+        self.desc = desc
+        self.auto_write = auto_write
+        self.patch_offset = patch_offset
+        self.endian = endian
+        self.start_offset = 0
+        self.checksum_value: Optional[int] = None
+
+    def __enter__(self) -> _WriterChecksumContext:
+        self.start_offset = self.writer.tell()
+        return self
+
+    def write(self) -> int:
+        """Explicitly compute and write the checksum value now."""
+        end_offset = self.writer.tell()
+        current_data = self.writer.to_bytes()
+        block_bytes = current_data[self.start_offset:end_offset]
+        from binary_master.checksum import compute_checksum, get_checksum_algorithm
+
+        self.checksum_value = compute_checksum(self.algorithm, block_bytes)
+        func, size = get_checksum_algorithm(self.algorithm)
+        if self.patch_offset is not None:
+            with self.writer.at_offset(self.patch_offset):
+                self._write_value(self.checksum_value, size)
+        else:
+            self._write_value(self.checksum_value, size)
+        self.auto_write = False
+        return self.checksum_value
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        if exc_type is not None:
+            return
+        if self.auto_write:
+            self.write()
+
+    def _write_value(self, val: int, size: int) -> None:
+        endian = self.endian or self.writer.default_endian
+        if size == 1:
+            self.writer.write_uint8(val, name=self.name, desc=self.desc)
+        elif size == 2:
+            self.writer.write_uint16(val, endian=endian, name=self.name, desc=self.desc)
+        elif size == 4:
+            self.writer.write_uint32(val, endian=endian, name=self.name, desc=self.desc)
+        elif size == 8:
+            self.writer.write_uint64(val, endian=endian, name=self.name, desc=self.desc)
+
+
 class BinaryWriter:
     """A sequential binary writer supporting in-memory buffers and stream/file targets."""
 
@@ -392,6 +454,8 @@ class BinaryWriter:
         Raises:
             TypeError: If the writer is not writing to an in-memory BytesIO buffer.
         """
+        if hasattr(self, "_bit_writer") and self._bit_writer is not None:
+            self.flush_bits()
         if isinstance(self._stream, io.BytesIO):
             return self._stream.getvalue()
         raise TypeError("to_bytes() is only available for in-memory buffer writers")
@@ -522,6 +586,8 @@ class BinaryWriter:
         struct_name: Optional[str] = None,
         struct_doc: Optional[str] = None,
     ) -> BinaryWriter:
+        if getattr(self, "_bit_writer", None) is not None and self._bit_writer.has_unaligned_bits:
+            self.flush_bits()
         order = normalize_endian(endian, self._default_endian)
         data = struct.pack(f"{order.value}{fmt_char}", value)
         offset = self.tell()
@@ -808,6 +874,109 @@ class BinaryWriter:
     def at_offset(self, offset: int) -> _WriterPositionContext:
         """Context manager that temporarily seeks to `offset` and restores position upon exit."""
         return _WriterPositionContext(self, target_offset=offset)
+
+    def checksum(
+        self,
+        algorithm: Union[str, Any] = "crc32",
+        name: str = "checksum",
+        desc: str = "",
+        auto_write: bool = True,
+        patch_offset: Optional[int] = None,
+        endian: Optional[EndianType] = None,
+    ) -> _WriterChecksumContext:
+        """Context manager that computes a checksum over the enclosed block and writes it."""
+        return _WriterChecksumContext(
+            self,
+            algorithm=algorithm,
+            name=name,
+            desc=desc,
+            auto_write=auto_write,
+            patch_offset=patch_offset,
+            endian=endian,
+        )
+
+    def write_checksum(
+        self,
+        algorithm: Union[str, Any] = "crc32",
+        start_offset: int = 0,
+        end_offset: Optional[int] = None,
+        endian: Optional[EndianType] = None,
+        name: str = "checksum",
+        desc: str = "",
+    ) -> BinaryWriter:
+        """Calculate and write a checksum over the specified byte range."""
+        current_bytes = self.to_bytes()
+        end = self.tell() if end_offset is None else end_offset
+        range_bytes = current_bytes[start_offset:end]
+        from binary_master.checksum import compute_checksum, get_checksum_algorithm
+
+        val = compute_checksum(algorithm, range_bytes)
+        func, size = get_checksum_algorithm(algorithm)
+        e = endian or self._default_endian
+        algo_name = algorithm if isinstance(algorithm, str) else "CustomChecksum"
+        full_desc = desc or f"{str(algo_name).upper()} covering 0x{start_offset:04X}..0x{end:04X}"
+        if size == 1:
+            return self.write_uint8(val, name=name, desc=full_desc)
+        elif size == 2:
+            return self.write_uint16(val, endian=e, name=name, desc=full_desc)
+        elif size == 4:
+            return self.write_uint32(val, endian=e, name=name, desc=full_desc)
+        elif size == 8:
+            return self.write_uint64(val, endian=e, name=name, desc=full_desc)
+        return self
+
+    def write_varuint(self, value: int, name: str = "", desc: str = "") -> BinaryWriter:
+        """Write an unsigned variable-length integer (LEB128)."""
+        from binary_master.varint import encode_varuint
+
+        data = encode_varuint(value)
+        offset = self.tell()
+        self._stream.write(data)
+        self._record_entry(
+            offset=offset,
+            size=len(data),
+            type_name="VarUInt",
+            value=value,
+            name=name,
+            endian="LEB128",
+            description=desc,
+        )
+        return self
+
+    def write_varint(self, value: int, name: str = "", desc: str = "") -> BinaryWriter:
+        """Write a signed variable-length integer (LEB128)."""
+        from binary_master.varint import encode_varint
+
+        data = encode_varint(value)
+        offset = self.tell()
+        self._stream.write(data)
+        self._record_entry(
+            offset=offset,
+            size=len(data),
+            type_name="VarInt",
+            value=value,
+            name=name,
+            endian="LEB128",
+            description=desc,
+        )
+        return self
+
+    def write_bits(self, value: int, bit_count: int) -> BinaryWriter:
+        """Write an arbitrary number of bits across byte boundaries (buffered)."""
+        if not hasattr(self, "_bit_writer") or self._bit_writer is None:
+            from binary_master.bitstream import BitWriter
+
+            self._bit_writer = BitWriter(stream=self._stream, msb_first=True)
+        self._bit_writer.write_bits(value, bit_count)
+        return self
+
+    def flush_bits(self, pad_bit: int = 0, name: str = "bits", desc: str = "") -> BinaryWriter:
+        """Flush any unaligned bits buffered by write_bits() into the stream."""
+        if hasattr(self, "_bit_writer") and self._bit_writer is not None:
+            if self._bit_writer.has_unaligned_bits:
+                self._bit_writer.flush_bits(pad_bit=pad_bit)
+            self._bit_writer = None
+        return self
 
     def pad(self, count: int, pad_byte: bytes = b"\x00", name: str = "padding", desc: str = "") -> BinaryWriter:
         """Write a number of padding bytes."""

@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-97%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-194%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・読み込み（シリアライズ／デシリアライズ）＆仕様書自動生成ライブラリです。
 
@@ -1058,6 +1058,164 @@ if "footer" in result:
 
 ---
 
+## v2.0 高度機能（プロトコル & 実践ツール）
+
+### 1. CRC / チェックサム自動計算 & 検証 (`CRC32`, `CRC16`, `Checksum8`, etc.)
+ヘッダーやパケット末尾の誤り検出符号（CRC32, CRC16-CCITT, CRC16-ARC, Checksum8, Checksum16, Fletcher16, Adler32）を、手動計算することなく宣言的に定義・検証できます。
+
+- **`@binary_struct` での自動計算 & 検証**: `to_bytes()` 時に先行するバイト列から自動計算して埋め込み、`from_bytes()` 時に自動検証（不一致時は `ChecksumMismatchError` を送出）。
+- **`BinaryWriter` コンテキストマネージャ**: `with writer.checksum("crc32"):` で囲んだブロックの CRC を自動算出して書き込み。
+- **`BinaryReader.verify_checksum("crc32")`**: ストリーム内のチェックサムを自動検証。
+
+```python
+from binary_master import binary_struct, UInt16, Bytes, CRC32, ChecksumMismatchError
+
+@binary_struct(endian="big")
+class NetworkPacket:
+    packet_id: UInt16
+    payload: Bytes[32]
+    checksum: CRC32     # 先頭から checksum 直前までの全バイト列から CRC32 を自動計算
+
+packet = NetworkPacket(packet_id=1, payload=b"A" * 32)
+raw = packet.to_bytes()  # checksum は自動計算されて埋め込まれる
+
+# 読み込み時に破損を即座に検知
+parsed = NetworkPacket.from_bytes(raw)
+assert parsed.checksum != 0
+```
+
+### 2. 型安全な Enum サポート (`BinaryEnum`, `enum.IntEnum`)
+Python の `enum.Enum` / `enum.IntEnum` を構造体メンバとして直接利用可能。
+`BinaryEnum` を継承することで、`Status[UInt8]` のようにバイナリ上の格納サイズ（1, 2, 4, 8 バイト）を型アノテーションで直接指定できます。
+
+```python
+from binary_master import binary_struct, BinaryEnum, UInt8, UInt16
+
+class Status(BinaryEnum):
+    OK = 0x00
+    WARNING = 0x01
+    ERROR = 0xFF
+
+@binary_struct
+class Response:
+    status: Status[UInt8]   # 1 バイト整数としてシリアライズ
+    code: UInt16
+
+resp = Response(status=Status.OK, code=200)
+raw = resp.to_bytes()
+parsed = Response.from_bytes(raw)
+assert parsed.status is Status.OK
+```
+
+### 3. マジックナンバー & 定数制約 (`Magic`, `Constant`)
+ファイル先頭のシグネチャ（例: `b"PNG\r\n\x1a\n"`, `b"PK\x03\x04"`, `0x504C4159`）や、プロトコルバージョン等の固定値を宣言できます。
+
+- **インスタンス化時の自動補完**: `Magic` や `Constant` フィールドは引数を省略しても自動的にデフォルト値が設定されます。
+- **デシリアライズ時の自動検証**: 異なるバイト列が渡された場合、`InvalidMagicError` や `InvalidConstantError` を即座に送出。
+
+```python
+from binary_master import binary_struct, Magic, Constant, UInt16, UInt32
+
+@binary_struct(endian="big")
+class ZipHeader:
+    magic: Magic[b"PK\x03\x04"]      # デフォルトで b'PK\x03\x04' が入る
+    version: Constant[UInt16, 20]    # 20 (2.0) の固定値
+    crc32: UInt32
+
+# 引数で magic や version を渡す必要はありません
+header = ZipHeader(crc32=0x12345678)
+raw = header.to_bytes()
+assert raw[:4] == b"PK\x03\x04"
+```
+
+### 4. JSON / 辞書相互変換 (`to_dict`, `from_dict`, `to_json`, `from_json`)
+バイナリ構造体と JSON / 辞書オブジェクトとの間でシームレスに相互変換できます。
+バイト列のエンコード形式は `bytes_format="hex"`（例: `"0x0102"`）、`"base64"`、`"list"`（整数配列）から選択可能。
+
+```python
+# 辞書 / JSON へのシリアライズ
+d = header.to_dict(bytes_format="hex")
+json_str = header.to_json(indent=2)
+
+# JSON / 辞書からの復元
+restored = ZipHeader.from_json(json_str)
+assert restored.crc32 == header.crc32
+```
+
+### 5. 巨大ファイル & ストリーミング処理 (`iter_struct`, `from_mmap`)
+数 GB を超える大容量バイナリファイルや、連続するパケットストリームを省メモリ・高速に処理できます。
+
+- **`reader.iter_struct(Cls)`**: 指定した構造体をジェネレータで 1 件ずつ順次読み出し。
+- **`BinaryReader.from_mmap(file_path)`**: OS のメモリマップファイル（mmap）を利用したゼロコピー読み込み。
+
+```python
+from binary_master import BinaryReader
+
+# メモリマップを利用したゼロコピー・ストリーミング
+with BinaryReader.from_mmap("huge_dataset.bin") as reader:
+    for record in reader.iter_struct(DataRecord):
+        process(record)
+```
+
+### 6. 可変長整数（LEB128 VarInt / VarUInt）
+Protocol Buffers や WebAssembly、MIDI 等で広く使われる **LEB128 (Little Endian Base 128)** 形式の可変長整数をサポート。小さな数値は 1 バイト、大きな数値は必要なバイト数だけ消費します。
+
+- **型**: `VarUInt`, `VarInt`, `VarUInt32`, `VarInt32`, `VarUInt64`, `VarInt64`
+- **メソッド**: `writer.write_varuint()`, `writer.write_varint()`, `reader.read_varuint()`, `reader.read_varint()`
+
+```python
+from binary_master import binary_struct, VarUInt, VarInt, FixedString
+
+@binary_struct
+class CompactMessage:
+    msg_id: VarUInt         # 0..127 なら 1 バイト
+    delta: VarInt           # 負数対応の Signed LEB128
+    text: FixedString[16]
+```
+
+### 7. 任意ビットストリーム操作 (`BitWriter`, `BitReader`)
+バイト境界をまたぐ任意のビット長（1 bit, 3 bits, 12 bits 等）のパッキングおよび読み出しを自在に行えます。
+
+- **`BitWriter`**: `write_bits(value, bit_count)`, `flush_bits()`
+- **`BitReader`**: `read_bits(bit_count)`, `peek_bits(bit_count)`, `align_to_byte()`
+- **`BinaryWriter` / `BinaryReader` 連携**: `writer.write_bits()`, `reader.read_bits()` でバイトストリームとビットストリームをシームレスに混在可能。
+
+```python
+from binary_master import BitWriter, BitReader
+
+bw = BitWriter()
+bw.write_bits(0b101, 3)     # 3 ビット書き込み
+bw.write_bits(0b01011, 5)   # 5 ビット書き込み（計 8 ビット = 1 バイト完成）
+data = bw.to_bytes()
+
+br = BitReader(data)
+assert br.read_bits(3) == 0b101
+assert br.read_bits(5) == 0b01011
+```
+
+### 8. CLI バイナリインスペクター (`binary-master`)
+ターミナルから直接バイナリファイルの検査、差分比較、仕様書出力、多言語コードエクスポートが可能です。
+
+```bash
+# バイナリファイルの構造化 Hexdump 表示
+binary-master inspect data.bin
+
+# 2つのバイナリファイルの差分比較（ビジュアル diff）
+binary-master diff expected.bin actual.bin
+
+# 構造体クラスから仕様書 Markdown を生成
+binary-master spec my_module.MyPacket -o spec.md
+
+# 構造体クラスから各プログラミング言語のコードを標準出力 / ファイルへエクスポート
+binary-master export my_module.MyPacket --lang rust -o -
+binary-master export my_module.MyPacket --lang c -o my_packet.h
+binary-master export my_module.MyPacket --lang cpp -o my_packet.hpp
+binary-master export my_module.MyPacket --lang csharp -o MyPacket.cs
+binary-master export my_module.MyPacket --lang go -o my_packet.go
+```
+
+---
+
 ## サンプルコード一覧
 
 `sample/` ディレクトリには、基本機能から高度な応用まで系統立てて学べるサンプルスクリプトが用意されています：
@@ -1069,7 +1227,8 @@ if "footer" in result:
 | [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) | 相対ポインタ & オフセットテーブル | `Offset[T, Base.SELF]`、オフセット演算（`Base.SELF + 0x20`）、`OffsetTable`、自動デリファレンス |
 | [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング、デバッグダンプ（`hexdump`, `dump`） |
 | [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) | Builder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、多言語出力（C/Rust/C++/C#/Go）、`builder.write()`、`builder.read()` |
-| [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 5 本のサンプルを順番に自動実行・検証するオーケストレーター |
+| [`sample/06_advanced_v2_features.py`](sample/06_advanced_v2_features.py) | v2.0 高度機能総合デモ | CRC32、BinaryEnum、Magic、Constant、JSON連携、iter_struct、VarInt、BitWriter/BitReader |
+| [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 6 本のサンプルを順番に自動実行・検証するオーケストレーター |
 
 ```bash
 # 全サンプルの実行

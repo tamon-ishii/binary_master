@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import base64
+import enum
 import inspect
+import json
 import re
 import sys
 from dataclasses import dataclass
-from typing import Annotated, Any, Generic, Optional, TypeVar, Union, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, Callable, Generic, Optional, TypeVar, Union, get_args, get_origin, get_type_hints
 
 from binary_master.enums import Endian, EndianType, normalize_endian
+from binary_master.exceptions import (
+    ChecksumMismatchError,
+    InvalidConstantError,
+    InvalidEnumError,
+    InvalidMagicError,
+)
+from binary_master.checksum import ChecksumBase, compute_checksum, get_checksum_algorithm
+from binary_master.varint import VarIntTypeMeta, encode_varint, encode_varuint, decode_varint, decode_varuint
 
 # ==========================================================
 # Binary Primitive Types
@@ -302,6 +313,151 @@ class PrefixedString(BinaryType, metaclass=PrefixedStringMeta):
     _size = 0
     prefix_bytes = 1
     encoding = "utf-8"
+
+
+class BinaryEnumMeta(enum.EnumType):
+    """Metaclass for BinaryEnum allowing member lookup or parameterized type e.g. MyEnum[UInt8]."""
+
+    def __getitem__(cls, item: Any) -> Any:
+        if isinstance(item, str) and item in cls._member_map_:
+            return cls._member_map_[item]
+        return (cls, item)
+
+
+class BinaryEnum(enum.IntEnum, metaclass=BinaryEnumMeta):
+    """Base class for binary integer enums supporting explicit integer sizing (e.g. MyEnum[UInt8])."""
+    pass
+
+
+class MagicMeta(type):
+    """Metaclass for Magic[...] types."""
+
+    _value: Any = None
+    _raw_val: Any = None
+    _size: int = 0
+    _fmt: str = ""
+
+    def __getitem__(cls, val: Any) -> type:
+        if isinstance(val, (bytes, bytearray)):
+            size = len(val)
+            fmt = f"{size}s"
+            b_val = bytes(val)
+        elif isinstance(val, str):
+            b_val = val.encode("utf-8")
+            size = len(b_val)
+            fmt = f"{size}s"
+        elif isinstance(val, int):
+            if 0 <= val <= 0xFF:
+                size = 1
+                fmt = "B"
+            elif 0 <= val <= 0xFFFF:
+                size = 2
+                fmt = "H"
+            elif 0 <= val <= 0xFFFFFFFF:
+                size = 4
+                fmt = "I"
+            else:
+                size = 8
+                fmt = "Q"
+            b_val = val
+        else:
+            raise TypeError(f"Magic value must be bytes, str, or int, got {type(val).__name__}")
+
+        name = f"Magic[{val!r}]"
+        return MagicMeta(
+            name,
+            (MagicBase,),
+            {
+                "_value": b_val,
+                "_raw_val": val,
+                "_size": size,
+                "_fmt": fmt,
+                "__module__": cls.__module__,
+                "__qualname__": name,
+            },
+        )
+
+    @property
+    def value(cls) -> Any:
+        return getattr(cls, "_value", None)
+
+    @property
+    def raw_value(cls) -> Any:
+        return getattr(cls, "_raw_val", None)
+
+    @property
+    def size(cls) -> int:
+        return getattr(cls, "_size", 0)
+
+    @property
+    def fmt(cls) -> str:
+        return getattr(cls, "_fmt", "")
+
+    def __repr__(cls) -> str:
+        return f"Magic[{getattr(cls, '_raw_val', None)!r}]"
+
+
+class MagicBase:
+    pass
+
+
+class Magic(metaclass=MagicMeta):
+    """Declarative magic constraint: Magic[b'PNG...'] or Magic[0x504C4159]."""
+    pass
+
+
+class ConstantMeta(type):
+    """Metaclass for Constant[Type, Value]."""
+
+    _type: Any = None
+    _value: Any = None
+    _size: int = 0
+
+    def __getitem__(cls, args: tuple[Any, Any]) -> type:
+        if not isinstance(args, tuple) or len(args) != 2:
+            raise TypeError("Constant requires (Type, Value), e.g. Constant[UInt16, 1]")
+        target_t, val = args
+        size = sizeof(target_t) if hasattr(target_t, "_size") or hasattr(target_t, "__binary__") else 4
+        name = f"Constant[{getattr(target_t, '__name__', str(target_t))}, {val!r}]"
+        return ConstantMeta(
+            name,
+            (ConstantBase,),
+            {
+                "_type": target_t,
+                "_value": val,
+                "_size": size,
+                "__module__": cls.__module__,
+                "__qualname__": name,
+            },
+        )
+
+    @property
+    def target_type(cls) -> Any:
+        return getattr(cls, "_type", None)
+
+    @property
+    def value(cls) -> Any:
+        return getattr(cls, "_value", None)
+
+    @property
+    def size(cls) -> int:
+        return getattr(cls, "_size", 0)
+
+    def __repr__(cls) -> str:
+        t = getattr(cls, "_type", None)
+        v = getattr(cls, "_value", None)
+        t_name = getattr(t, "__name__", str(t))
+        return f"Constant[{t_name}, {v!r}]"
+
+
+class ConstantBase:
+    pass
+
+
+class Constant(metaclass=ConstantMeta):
+    """Declarative constant constraint: Constant[UInt16, 1]."""
+    pass
+
 
 
 # ==========================================================
@@ -734,6 +890,23 @@ def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool =
                 f"Cannot determine static binary size for variable-length field '{name}' with type {getattr(ftype, '__name__', str(ftype))}; use sizeof(instance) or offsetof(instance, '{name}') instead"
             )
         return ftype._size
+    elif isinstance(ftype, type) and issubclass(ftype, MagicBase):
+        return ftype.size
+    elif isinstance(ftype, type) and issubclass(ftype, ConstantBase):
+        return ftype.size
+    elif isinstance(ftype, type) and issubclass(ftype, ChecksumBase):
+        return ftype.size
+    elif isinstance(ftype, VarIntTypeMeta):
+        if not is_cls and val is not None:
+            return len(encode_varint(val) if ftype.is_signed else encode_varuint(val))
+        if is_cls:
+            raise ValueError(f"Cannot determine static binary size for variable-length VarInt field '{name}'")
+        return 0
+    elif isinstance(ftype, tuple) and len(ftype) >= 2 and isinstance(ftype[0], type) and issubclass(ftype[0], enum.Enum):
+        return sizeof(ftype[1]) if hasattr(ftype[1], "_size") else 4
+    elif isinstance(ftype, type) and issubclass(ftype, enum.Enum):
+        max_v = max([abs(m.value) for m in ftype], default=0)
+        return 1 if max_v <= 255 else (2 if max_v <= 65535 else 4)
     elif ftype in (int, float):
         return 4
     elif ftype is bool:
@@ -967,9 +1140,140 @@ def to_go_struct_method(cls, name: Optional[str] = None, desc: str = "") -> str:
     return generate_go_struct(cls, name=name, desc=desc)
 
 
+def _serialize_dict_value(val: Any, bytes_format: str = "hex") -> Any:
+    if hasattr(val, "to_dict"):
+        return val.to_dict(bytes_format=bytes_format)
+    if isinstance(val, (bytes, bytearray, memoryview)):
+        b = bytes(val)
+        if bytes_format == "hex":
+            return "0x" + b.hex()
+        elif bytes_format == "base64":
+            return base64.b64encode(b).decode("ascii")
+        elif bytes_format == "list":
+            return list(b)
+        return b.hex()
+    if isinstance(val, enum.Enum):
+        return val.name
+    if isinstance(val, list):
+        return [_serialize_dict_value(x, bytes_format=bytes_format) for x in val]
+    if isinstance(val, tuple):
+        return tuple(_serialize_dict_value(x, bytes_format=bytes_format) for x in val)
+    if isinstance(val, dict):
+        return {k: _serialize_dict_value(v, bytes_format=bytes_format) for k, v in val.items()}
+    return val
+
+
+def to_dict_method(self, bytes_format: str = "hex") -> dict[str, Any]:
+    """Convert struct instance to dictionary.
+    
+    Args:
+        bytes_format: 'hex' (default, e.g. '0x...'), 'base64', or 'list' (list of integers).
+    """
+    from dataclasses import fields as dc_fields, is_dataclass
+
+    result = {}
+    field_names = [f.name for f in dc_fields(self)] if is_dataclass(self) else getattr(self, "__binary__", {}).get("fields", {}).keys()
+    for fname in field_names:
+        val = getattr(self, fname, None)
+        result[fname] = _serialize_dict_value(val, bytes_format=bytes_format)
+    return result
+
+
+def _deserialize_dict_value(val: Any, ftype: Any) -> Any:
+    if val is None:
+        return None
+    if get_origin(ftype) is Annotated:
+        ftype = get_args(ftype)[0]
+    if hasattr(ftype, "from_dict"):
+        return ftype.from_dict(val)
+
+    # Check Enum
+    if isinstance(ftype, type) and issubclass(ftype, enum.Enum):
+        if isinstance(val, str) and hasattr(ftype, val):
+            return ftype[val]
+        return ftype(val)
+    if isinstance(ftype, tuple) and len(ftype) >= 2 and isinstance(ftype[0], type) and issubclass(ftype[0], enum.Enum):
+        enum_cls = ftype[0]
+        if isinstance(val, str) and hasattr(enum_cls, val):
+            return enum_cls[val]
+        return enum_cls(val)
+
+    # Check Bytes / byte types
+    if (isinstance(ftype, type) and issubclass(ftype, Bytes)) or ftype in (bytes, bytearray):
+        if isinstance(val, str):
+            if val.startswith("0x") or val.startswith("0X"):
+                return bytes.fromhex(val[2:])
+            try:
+                return bytes.fromhex(val)
+            except ValueError:
+                return base64.b64decode(val)
+        elif isinstance(val, list):
+            return bytes(val)
+        return val
+
+    # Check FixedArray / Array
+    is_arr = (
+        (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] in (FixedArray, Array))
+        or get_origin(ftype) in (FixedArray, Array)
+    )
+    if is_arr:
+        elem_t = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
+        if elem_t is UInt8:
+            if isinstance(val, str):
+                if val.startswith("0x") or val.startswith("0X"):
+                    return bytes.fromhex(val[2:])
+                try:
+                    return bytes.fromhex(val)
+                except ValueError:
+                    return base64.b64decode(val)
+            elif isinstance(val, list):
+                return val
+        if isinstance(val, list):
+            return [_deserialize_dict_value(x, elem_t) for x in val]
+
+    return val
+
+
+def from_dict_method(cls: type[T], data: dict[str, Any]) -> T:
+    """Reconstruct a @binary_struct instance from a dictionary."""
+    meta = getattr(cls, "__binary__", None)
+    if meta is None:
+        raise TypeError(f"{cls.__name__} is not a binary_struct")
+
+    fields_meta = meta.get("fields", {})
+    resolved = {}
+    for name, ftype in fields_meta.items():
+        if name in data:
+            resolved[name] = _deserialize_dict_value(data[name], ftype)
+    return cls(**resolved)
+
+
+def to_json_method(self, indent: Optional[int] = None, bytes_format: str = "hex") -> str:
+    """Convert struct instance to JSON string."""
+    return json.dumps(self.to_dict(bytes_format=bytes_format), indent=indent)
+
+
+def from_json_method(cls: type[T], json_str: str) -> T:
+    """Reconstruct a @binary_struct instance from a JSON string."""
+    return cls.from_dict(json.loads(json_str))
+
+
 def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_align=False):
 
     def wrapper(target_cls):
+        # Scan annotations for Magic, Constant, Checksum to provide defaults in init if omitted
+        magic_const_defaults = {}
+        if hasattr(target_cls, "__annotations__"):
+            for fname, ftype in target_cls.__annotations__.items():
+                if get_origin(ftype) is Annotated:
+                    ftype = get_args(ftype)[0]
+                if isinstance(ftype, type) and issubclass(ftype, MagicBase):
+                    magic_const_defaults[fname] = getattr(ftype, "_raw_val", getattr(ftype, "_value", None))
+                elif isinstance(ftype, type) and issubclass(ftype, ConstantBase):
+                    magic_const_defaults[fname] = getattr(ftype, "_value", None)
+                elif isinstance(ftype, type) and issubclass(ftype, ChecksumBase):
+                    magic_const_defaults[fname] = 0
+
         target_cls = dataclass(slots=True)(target_cls)
         doc = inspect.cleandoc(target_cls.__doc__) if target_cls.__doc__ else ""
         target_cls.__binary__ = BinaryMetadata(
@@ -980,8 +1284,30 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
             auto_align=auto_align,
             doc=doc,
         )
+
+        if magic_const_defaults:
+            orig_init = target_cls.__init__
+            from dataclasses import fields as dc_fields
+            def wrapped_init(self, *args, **kwargs):
+                all_fnames = [f.name for f in dc_fields(self.__class__)]
+                if args:
+                    non_default_names = [fn for fn in all_fnames if fn not in magic_const_defaults]
+                    if len(args) == len(non_default_names):
+                        for fn, arg_val in zip(non_default_names, args):
+                            kwargs[fn] = arg_val
+                        args = ()
+                for k, v in magic_const_defaults.items():
+                    if k not in kwargs:
+                        kwargs[k] = v
+                orig_init(self, *args, **kwargs)
+            target_cls.__init__ = wrapped_init
+
         target_cls.to_bytes = to_bytes
         target_cls.from_bytes = classmethod(from_bytes)
+        target_cls.to_dict = to_dict_method
+        target_cls.from_dict = classmethod(from_dict_method)
+        target_cls.to_json = to_json_method
+        target_cls.from_json = classmethod(from_json_method)
         target_cls.to_c_struct = classmethod(to_c_struct_method)
         target_cls.to_c = classmethod(to_c_struct_method)
         target_cls.to_rust_struct = classmethod(to_rust_struct_method)
@@ -1179,6 +1505,19 @@ def _get_field_alignment(ftype: Any, val: Any = None) -> int:
         if mapping:
             return max([_get_field_alignment(c) for c in mapping.values()], default=4)
         return 4
+    if isinstance(ftype, type) and issubclass(ftype, MagicBase):
+        return min(ftype.size, 8) if isinstance(ftype.value, int) else 1
+    if isinstance(ftype, type) and issubclass(ftype, ConstantBase):
+        return _get_field_alignment(ftype.target_type)
+    if isinstance(ftype, type) and issubclass(ftype, ChecksumBase):
+        return min(ftype.size, 8)
+    if isinstance(ftype, tuple) and len(ftype) >= 2 and isinstance(ftype[0], type) and issubclass(ftype[0], enum.Enum):
+        return _get_field_alignment(ftype[1])
+    if isinstance(ftype, type) and issubclass(ftype, enum.Enum):
+        max_v = max([abs(m.value) for m in ftype], default=0)
+        return 1 if max_v <= 255 else (2 if max_v <= 65535 else 4)
+    if isinstance(ftype, VarIntTypeMeta):
+        return 1
     return 1
 
 
@@ -1533,6 +1872,81 @@ def write_struct(
             p_bytes = getattr(ftype, "prefix_bytes", 1)
             enc = getattr(ftype, "encoding", "utf-8")
             writer.write_prefixed_string(s_val, prefix_bytes=p_bytes, endian=active_endian, encoding=enc, name=name, desc=f_desc)
+        # Check Magic type
+        if isinstance(ftype, type) and issubclass(ftype, MagicBase):
+            expected = getattr(ftype, "_value", None)
+            write_val = val if val is not None else getattr(ftype, "_raw_val", expected)
+            if isinstance(expected, bytes):
+                b_val = write_val if isinstance(write_val, (bytes, bytearray)) else (write_val.encode("utf-8") if isinstance(write_val, str) else expected)
+                writer.write_bytes(b_val, name=name, desc=f_desc)
+                if hasattr(writer, "_entries") and writer._entries:
+                    writer._entries[-1].type_name = f"Magic[{getattr(ftype, '_raw_val', '')!r}]"
+            else:
+                fmt_char = getattr(ftype, "_fmt", "I")
+                writer._pack_write(fmt_char, write_val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
+                if hasattr(writer, "_entries") and writer._entries:
+                    writer._entries[-1].type_name = f"Magic[{getattr(ftype, '_raw_val', '')!r}]"
+            continue
+
+        # Check Constant type
+        if isinstance(ftype, type) and issubclass(ftype, ConstantBase):
+            target_t = getattr(ftype, "_type", UInt32)
+            c_val = val if val is not None else getattr(ftype, "_value", None)
+            fmt_char = getattr(target_t, "_fmt", "I")
+            writer._pack_write(fmt_char, c_val, endian=active_endian, name=name, desc=f_desc, struct_name=current_struct_name, struct_doc=struct_doc)
+            if hasattr(writer, "_entries") and writer._entries:
+                writer._entries[-1].type_name = f"Constant[{getattr(target_t, '__name__', str(target_t))}, {getattr(ftype, '_value', '')!r}]"
+            continue
+
+        # Check ChecksumBase type
+        if isinstance(ftype, type) and issubclass(ftype, ChecksumBase):
+            current_all = writer.to_bytes()
+            cur_pos = writer.tell()
+            brange = getattr(ftype, "_range", None)
+            start_idx = struct_start_pos if (brange is None or brange.start is None) else brange.start
+            end_idx = cur_pos if (brange is None or brange.stop is None) else brange.stop
+            covered_bytes = current_all[start_idx:end_idx]
+            calculated_val = compute_checksum(ftype._algorithm, covered_bytes)
+            size = ftype._size
+            fmt_char = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(size, "I")
+            writer._pack_write(fmt_char, calculated_val, endian=active_endian, name=name, desc=f_desc or f"{ftype._algorithm.upper()} Checksum", struct_name=current_struct_name, struct_doc=struct_doc)
+            if hasattr(writer, "_entries") and writer._entries:
+                writer._entries[-1].type_name = ftype.__name__
+            try:
+                setattr(instance, name, calculated_val)
+            except Exception:
+                pass
+            continue
+
+        # Check VarInt / VarUInt types
+        if isinstance(ftype, VarIntTypeMeta):
+            num_val = val if val is not None else 0
+            if ftype.is_signed:
+                writer.write_varint(num_val, name=name, desc=f_desc)
+            else:
+                writer.write_varuint(num_val, name=name, desc=f_desc)
+            continue
+
+        # Check Enum / BinaryEnum types
+        is_enum = False
+        enum_cls = None
+        enum_size = 4
+        if isinstance(ftype, tuple) and len(ftype) >= 2 and isinstance(ftype[0], type) and issubclass(ftype[0], enum.Enum):
+            is_enum = True
+            enum_cls = ftype[0]
+            enum_size = getattr(ftype[1], "_size", 4)
+        elif isinstance(ftype, type) and issubclass(ftype, enum.Enum):
+            is_enum = True
+            enum_cls = ftype
+            max_v = max([abs(m.value) for m in enum_cls], default=0)
+            enum_size = 1 if max_v <= 255 else (2 if max_v <= 65535 else 4)
+
+        if is_enum and enum_cls is not None:
+            int_val = val.value if isinstance(val, enum.Enum) else int(val)
+            fmt_char = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(enum_size, "I")
+            writer._pack_write(fmt_char, int_val, endian=active_endian, name=name, desc=f_desc or f"Enum {enum_cls.__name__}", struct_name=current_struct_name, struct_doc=struct_doc)
+            if hasattr(writer, "_entries") and writer._entries:
+                writer._entries[-1].type_name = f"Enum[{enum_cls.__name__}]"
             continue
 
         # Check primitive BinaryType
@@ -1861,6 +2275,95 @@ def read_struct(
             p_bytes = getattr(ftype, "prefix_bytes", 1)
             enc = getattr(ftype, "encoding", "utf-8")
             kwargs[name] = reader.read_prefixed_string(prefix_bytes=p_bytes, endian=active_endian, encoding=enc)
+            continue
+
+        # Check Magic type
+        if isinstance(ftype, type) and issubclass(ftype, MagicBase):
+            expected = getattr(ftype, "_value", None)
+            raw_val = getattr(ftype, "_raw_val", expected)
+            if isinstance(expected, bytes):
+                read_b = reader.read_bytes(len(expected))
+                if read_b != expected:
+                    raise InvalidMagicError(
+                        f"Magic mismatch for field '{name}': expected {expected!r}, got {read_b!r}"
+                    )
+                kwargs[name] = read_b
+            else:
+                fmt_char = getattr(ftype, "_fmt", "I")
+                size = getattr(ftype, "_size", 4)
+                val = reader._unpack_read(fmt_char, size, endian=active_endian)
+                if val != raw_val:
+                    raise InvalidMagicError(
+                        f"Magic mismatch for field '{name}': expected {raw_val!r}, got {val!r}"
+                    )
+                kwargs[name] = val
+            continue
+
+        # Check Constant type
+        if isinstance(ftype, type) and issubclass(ftype, ConstantBase):
+            target_t = getattr(ftype, "_type", UInt32)
+            expected = getattr(ftype, "_value", None)
+            fmt_char = getattr(target_t, "_fmt", "I")
+            size = getattr(target_t, "_size", 4)
+            val = reader._unpack_read(fmt_char, size, endian=active_endian)
+            if val != expected:
+                raise InvalidConstantError(
+                    f"Constant mismatch for field '{name}': expected {expected!r}, got {val!r}"
+                )
+            kwargs[name] = val
+            continue
+
+        # Check ChecksumBase type
+        if isinstance(ftype, type) and issubclass(ftype, ChecksumBase):
+            cur_pos = reader.tell()
+            brange = getattr(ftype, "_range", None)
+            start_idx = struct_start_pos if (brange is None or brange.start is None) else brange.start
+            end_idx = cur_pos if (brange is None or brange.stop is None) else brange.stop
+            with reader.preserve_position():
+                reader.seek(start_idx)
+                covered_bytes = reader.read_bytes(end_idx - start_idx)
+            calculated = compute_checksum(ftype._algorithm, covered_bytes)
+            size = ftype._size
+            fmt_char = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(size, "I")
+            val = reader._unpack_read(fmt_char, size, endian=active_endian)
+            if val != calculated:
+                raise ChecksumMismatchError(
+                    f"Checksum mismatch for field '{name}': computed {hex(calculated)}, got {hex(val)} in stream"
+                )
+            kwargs[name] = val
+            continue
+
+        # Check VarInt / VarUInt types
+        if isinstance(ftype, VarIntTypeMeta):
+            if ftype.is_signed:
+                kwargs[name] = reader.read_varint()
+            else:
+                kwargs[name] = reader.read_varuint()
+            continue
+
+        # Check Enum / BinaryEnum types
+        is_enum = False
+        enum_cls = None
+        enum_size = 4
+        if isinstance(ftype, tuple) and len(ftype) >= 2 and isinstance(ftype[0], type) and issubclass(ftype[0], enum.Enum):
+            is_enum = True
+            enum_cls = ftype[0]
+            enum_size = getattr(ftype[1], "_size", 4)
+        elif isinstance(ftype, type) and issubclass(ftype, enum.Enum):
+            is_enum = True
+            enum_cls = ftype
+            max_v = max([abs(m.value) for m in enum_cls], default=0)
+            enum_size = 1 if max_v <= 255 else (2 if max_v <= 65535 else 4)
+
+        if is_enum and enum_cls is not None:
+            fmt_char = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(enum_size, "I")
+            raw_val = reader._unpack_read(fmt_char, enum_size, endian=active_endian)
+            try:
+                kwargs[name] = enum_cls(raw_val)
+            except ValueError as exc:
+                raise InvalidEnumError(
+                    f"Invalid enum value {raw_val} for {enum_cls.__name__} in field '{name}'"
+                ) from exc
             continue
 
         # Check primitive BinaryType

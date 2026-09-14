@@ -75,7 +75,50 @@ def go_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
         else:
             return f"[{size}]byte", f"{size}-byte boolean"
 
-    from binary_master.binary_struct import Bytes, FixedString, CString, PrefixedString
+    from binary_master.binary_struct import (
+        Bytes,
+        FixedString,
+        CString,
+        PrefixedString,
+        MagicBase,
+        ConstantBase,
+    )
+    from binary_master.checksum import ChecksumBase
+    from binary_master.varint import VarIntTypeMeta
+    import enum
+
+    if isinstance(field_type, type) and issubclass(field_type, MagicBase):
+        expected = getattr(field_type, "_value", None)
+        if isinstance(expected, bytes):
+            return f"[{len(expected)}]byte", f"Magic: {expected!r}"
+        else:
+            fmt = getattr(field_type, "_fmt", "I")
+            go_map = {"B": "uint8", "H": "uint16", "I": "uint32", "Q": "uint64"}
+            return go_map.get(fmt, "uint32"), f"Magic: {getattr(field_type, '_raw_val', '')!r}"
+
+    if isinstance(field_type, type) and issubclass(field_type, ConstantBase):
+        t = getattr(field_type, "_type", UInt32)
+        val = getattr(field_type, "_value", None)
+        go_name, _ = go_type_of(t)
+        return go_name, f"Constant: {val!r}"
+
+    if isinstance(field_type, type) and issubclass(field_type, ChecksumBase):
+        sz = getattr(field_type, "_size", 4)
+        go_map = {1: "uint8", 2: "uint16", 4: "uint32", 8: "uint64"}
+        return go_map.get(sz, "uint32"), f"{getattr(field_type, '_algorithm', 'checksum').upper()} Checksum"
+
+    if isinstance(field_type, VarIntTypeMeta):
+        return "int64" if field_type.is_signed else "uint64", "Variable-length integer (LEB128)"
+
+    if isinstance(field_type, tuple) and len(field_type) >= 2 and isinstance(field_type[0], type) and issubclass(field_type[0], enum.Enum):
+        go_name, _ = go_type_of(field_type[1])
+        return go_name, f"Enum: {field_type[0].__name__}"
+
+    if isinstance(field_type, type) and issubclass(field_type, enum.Enum):
+        max_v = max([abs(m.value) for m in field_type], default=0)
+        go_name = "uint8" if max_v <= 255 else ("uint16" if max_v <= 65535 else "uint32")
+        return go_name, f"Enum: {field_type.__name__}"
+
     if isinstance(field_type, type) and issubclass(field_type, Bytes):
         return f"[{field_type._size}]byte", "raw bytes"
     if isinstance(field_type, type) and issubclass(field_type, FixedString):

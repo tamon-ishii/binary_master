@@ -76,6 +76,22 @@ class BinaryReader:
         """Create a BinaryReader from a file path."""
         return cls(path, default_endian=default_endian, auto_close=True)
 
+    @classmethod
+    def from_mmap(
+        cls,
+        path: Union[str, Path],
+        default_endian: EndianType = Endian.LITTLE,
+    ) -> BinaryReader:
+        """Create a BinaryReader with memory-mapped zero-copy access."""
+        import mmap
+        f = open(path, "rb")
+        fileno = f.fileno()
+        mm = mmap.mmap(fileno, 0, access=mmap.ACCESS_READ)
+        reader = cls(mm, default_endian=default_endian, auto_close=True)
+        reader._mmap_file = f
+        reader._mmap = mm
+        return reader
+
     @property
     def default_endian(self) -> Endian:
         """Get the default endianness of this reader."""
@@ -191,7 +207,13 @@ class BinaryReader:
 
     def close(self) -> None:
         """Close the reader and underlying stream if auto_close is True."""
-        if self._auto_close and hasattr(self._stream, "close"):
+        if hasattr(self, "_mmap") and self._mmap is not None:
+            self._mmap.close()
+            self._mmap = None
+        if hasattr(self, "_mmap_file") and self._mmap_file is not None:
+            self._mmap_file.close()
+            self._mmap_file = None
+        if self._auto_close and hasattr(self._stream, "close") and not getattr(self._stream, "closed", False):
             self._stream.close()
 
     def __enter__(self) -> BinaryReader:
@@ -199,6 +221,65 @@ class BinaryReader:
 
     def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         self.close()
+
+    def iter_struct(self, struct_cls: type[T]) -> Any:
+        """Iteratively read struct instances until EOF."""
+        while not self.is_eof:
+            yield self.read_struct(struct_cls)
+
+    def read_varuint(self) -> int:
+        """Read an unsigned variable-length integer (LEB128)."""
+        from binary_master.varint import decode_varuint
+
+        val, _ = decode_varuint(self._stream)
+        return val
+
+    def read_varint(self) -> int:
+        """Read a signed variable-length integer (LEB128)."""
+        from binary_master.varint import decode_varint
+
+        val, _ = decode_varint(self._stream)
+        return val
+
+    def read_bits(self, bit_count: int) -> int:
+        """Read an arbitrary number of bits across byte boundaries."""
+        if not hasattr(self, "_bit_reader") or self._bit_reader is None:
+            from binary_master.bitstream import BitReader
+
+            self._bit_reader = BitReader(self._stream, msb_first=True)
+        return self._bit_reader.read_bits(bit_count)
+
+    def align_to_byte(self) -> None:
+        """Align bitstream reader to next byte boundary."""
+        if hasattr(self, "_bit_reader") and self._bit_reader is not None:
+            self._bit_reader.align_to_byte()
+            self._bit_reader = None
+
+    def verify_checksum(
+        self,
+        algorithm: Union[str, Any] = "crc32",
+        expected: Optional[int] = None,
+        length: Optional[int] = None,
+    ) -> bool:
+        """Verify checksum of preceding or specified length of bytes against expected (or next read)."""
+        from binary_master.checksum import compute_checksum, get_checksum_algorithm
+        from binary_master.exceptions import ChecksumMismatchError
+
+        func, size = get_checksum_algorithm(algorithm)
+        if expected is None:
+            fmt = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(size, "I")
+            expected = self._unpack_read(fmt, size, endian=self._default_endian)
+
+        cur = self.tell()
+        check_len = cur - size if length is None else length
+        start = max(0, cur - size - check_len) if length is None else cur - size - length
+        with self.preserve_position():
+            self.seek(start)
+            data = self.read_bytes(check_len)
+        computed = compute_checksum(algorithm, data)
+        if expected != computed:
+            raise ChecksumMismatchError(expected=computed, actual=expected)
+        return True
 
 
     # --- Internal Read Helpers ---

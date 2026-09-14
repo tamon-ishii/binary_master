@@ -75,7 +75,50 @@ def csharp_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
         else:
             return "byte", size, f"{size}-byte boolean"
 
-    from binary_master.binary_struct import Bytes, FixedString, CString, PrefixedString
+    from binary_master.binary_struct import (
+        Bytes,
+        FixedString,
+        CString,
+        PrefixedString,
+        MagicBase,
+        ConstantBase,
+    )
+    from binary_master.checksum import ChecksumBase
+    from binary_master.varint import VarIntTypeMeta
+    import enum
+
+    if isinstance(field_type, type) and issubclass(field_type, MagicBase):
+        expected = getattr(field_type, "_value", None)
+        if isinstance(expected, bytes):
+            return "byte[]", len(expected), f"Magic: {expected!r}"
+        else:
+            fmt = getattr(field_type, "_fmt", "I")
+            cs_map = {"B": "byte", "H": "ushort", "I": "uint", "Q": "ulong"}
+            return cs_map.get(fmt, "uint"), None, f"Magic: {getattr(field_type, '_raw_val', '')!r}"
+
+    if isinstance(field_type, type) and issubclass(field_type, ConstantBase):
+        t = getattr(field_type, "_type", UInt32)
+        val = getattr(field_type, "_value", None)
+        cs_name, _, _ = csharp_type_of(t)
+        return cs_name, None, f"Constant: {val!r}"
+
+    if isinstance(field_type, type) and issubclass(field_type, ChecksumBase):
+        sz = getattr(field_type, "_size", 4)
+        cs_map = {1: "byte", 2: "ushort", 4: "uint", 8: "ulong"}
+        return cs_map.get(sz, "uint"), None, f"{getattr(field_type, '_algorithm', 'checksum').upper()} Checksum"
+
+    if isinstance(field_type, VarIntTypeMeta):
+        return "long" if field_type.is_signed else "ulong", None, "Variable-length integer (LEB128)"
+
+    if isinstance(field_type, tuple) and len(field_type) >= 2 and isinstance(field_type[0], type) and issubclass(field_type[0], enum.Enum):
+        cs_name, _, _ = csharp_type_of(field_type[1])
+        return cs_name, None, f"Enum: {field_type[0].__name__}"
+
+    if isinstance(field_type, type) and issubclass(field_type, enum.Enum):
+        max_v = max([abs(m.value) for m in field_type], default=0)
+        cs_name = "byte" if max_v <= 255 else ("ushort" if max_v <= 65535 else "uint")
+        return cs_name, None, f"Enum: {field_type.__name__}"
+
     if isinstance(field_type, type) and issubclass(field_type, Bytes):
         return "byte[]", field_type._size, "raw bytes"
     if isinstance(field_type, type) and issubclass(field_type, FixedString):
