@@ -148,6 +148,12 @@ class MyStruct:
     ...
 ```
 
+### 3.1.1 Default Values Anywhere
+- Fields can define default values (`field: Type = default_val` or `field(default=...)`).
+- **No ordering restriction**: Unlike standard `@dataclass`, fields with defaults can appear **anywhere** (e.g. at the beginning of a header) without raising `TypeError: non-default argument follows default argument`.
+- When instantiating, omitted fields automatically take their defaults.
+
+
 ### 3.2 Injected Attributes and Methods on Decorated Classes
 Every `@binary_struct` class receives:
 - `instance.to_bytes(endian=None) -> bytes`: Serializes the instance to raw bytes.

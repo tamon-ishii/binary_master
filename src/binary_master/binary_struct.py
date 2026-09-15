@@ -1300,9 +1300,29 @@ def from_json_method(cls: type[T], json_str: str) -> T:
 def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_align=False):
 
     def wrapper(target_cls):
-        # Scan annotations for Magic, Constant, Checksum to provide defaults in init if omitted
+        # Scan annotations and attributes for default values (user defaults, Magic, Constant, Checksum)
         magic_const_defaults = {}
+        user_defaults = {}
+        user_default_factories = {}
+
         if hasattr(target_cls, "__annotations__"):
+            # Extract user defaults (e.g. field: Type = val or field(default=...))
+            # We strip them from target_cls before dataclass() so that fields with defaults
+            # can appear before fields without defaults without triggering dataclass TypeError!
+            for fname in list(target_cls.__annotations__.keys()):
+                if hasattr(target_cls, fname):
+                    val = getattr(target_cls, fname)
+                    if not inspect.isroutine(val) and not isinstance(val, property):
+                        import dataclasses
+                        if isinstance(val, dataclasses.Field):
+                            if val.default is not dataclasses.MISSING:
+                                user_defaults[fname] = val.default
+                            elif val.default_factory is not dataclasses.MISSING:
+                                user_default_factories[fname] = val.default_factory
+                        else:
+                            user_defaults[fname] = val
+                        delattr(target_cls, fname)
+
             for fname, ftype in target_cls.__annotations__.items():
                 if get_origin(ftype) is Annotated:
                     ftype = get_args(ftype)[0]
@@ -1324,20 +1344,31 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
             doc=doc,
         )
 
-        if magic_const_defaults:
+        all_defaults = {**magic_const_defaults, **user_defaults}
+        if all_defaults or user_default_factories:
             orig_init = target_cls.__init__
             from dataclasses import fields as dc_fields
             def wrapped_init(self, *args, **kwargs):
                 all_fnames = [f.name for f in dc_fields(self.__class__)]
                 if args:
-                    non_default_names = [fn for fn in all_fnames if fn not in magic_const_defaults]
+                    non_default_names = [fn for fn in all_fnames if fn not in all_defaults and fn not in user_default_factories]
                     if len(args) == len(non_default_names):
                         for fn, arg_val in zip(non_default_names, args):
                             kwargs[fn] = arg_val
                         args = ()
-                for k, v in magic_const_defaults.items():
+                    elif len(args) <= len(all_fnames):
+                        for fn, arg_val in zip(all_fnames[:len(args)], args):
+                            kwargs[fn] = arg_val
+                        args = ()
+                for k, factory in user_default_factories.items():
+                    if k not in kwargs:
+                        kwargs[k] = factory()
+                for k, v in all_defaults.items():
                     if k not in kwargs:
                         kwargs[k] = v
+                for fn in all_fnames:
+                    if fn not in kwargs:
+                        raise TypeError(f"{self.__class__.__name__}.__init__() missing required argument: {fn!r}")
                 orig_init(self, *args, **kwargs)
             target_cls.__init__ = wrapped_init
 

@@ -506,6 +506,62 @@ def test_struct_to_markdown_and_code(tmp_path):
     assert "PacketHeader" in rs_file.read_text(encoding="utf-8")
 
 
+def test_struct_default_values():
+    from dataclasses import field
+
+    # 1. Defaults at start and middle followed by non-default fields
+    @binary_struct
+    class PacketWithDefaults:
+        magic: UInt32 = 0x504B5401
+        version: UInt16 = 1
+        payload_len: UInt16
+        flags: UInt8 = 0
+        tag: UInt8 = field(default=0xFF)
+
+    # Keyword instantiation with only required non-default field
+    p1 = PacketWithDefaults(payload_len=64)
+    assert p1.magic == 0x504B5401
+    assert p1.version == 1
+    assert p1.payload_len == 64
+    assert p1.flags == 0
+    assert p1.tag == 0xFF
+
+    # Positional instantiation for non-default field
+    p2 = PacketWithDefaults(128)
+    assert p2.payload_len == 128
+    assert p2.magic == 0x504B5401
+
+    # Overriding defaults by keyword
+    p3 = PacketWithDefaults(magic=0xDEADBEEF, payload_len=256, flags=5)
+    assert p3.magic == 0xDEADBEEF
+    assert p3.payload_len == 256
+    assert p3.flags == 5
+    assert p3.version == 1
+
+    # Full positional
+    p4 = PacketWithDefaults(0xAABBCCDD, 2, 512, 1, 0xFE)
+    assert p4.magic == 0xAABBCCDD
+    assert p4.version == 2
+    assert p4.payload_len == 512
+    assert p4.flags == 1
+    assert p4.tag == 0xFE
+
+    # Missing required field raises TypeError
+    with pytest.raises(TypeError, match="missing required argument: 'payload_len'"):
+        PacketWithDefaults()
+
+    # Serialization and Deserialization round-trip
+    raw = p1.to_bytes()
+    assert len(raw) == 4 + 2 + 2 + 1 + 1
+    restored = PacketWithDefaults.from_bytes(raw)
+    assert restored.magic == 0x504B5401
+    assert restored.version == 1
+    assert restored.payload_len == 64
+    assert restored.flags == 0
+    assert restored.tag == 0xFF
+
+
+
 
 
 

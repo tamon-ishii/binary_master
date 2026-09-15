@@ -130,7 +130,24 @@ class PlayerProfile:
 - **プリミティブ型**: `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Int8`, `Int16`, `Int32`, `Int64`, `Float32`, `Float64`, `Bool` などを直接指定できます。
 - **固定長文字列 & バイト列**: `FixedString[N]` や `Bytes[N]` により、固定長テキストや生バイト列を Python の `str` / `bytes` として直感的に扱えます。
 - **固定長配列**: `FixedArray[Type, Length]` で任意型の固定長配列を定義できます。
+- **初期値（デフォルト値）の自由配置**: Python 標準の `@dataclass` の制限（「初期値ありフィールドの後に初期値なしフィールドを置けない」）を排除しており、**先頭や途中のフィールドにも自由に初期値（`magic: UInt32 = 0x504B5401`）を設定可能** です。
 - **Docstring とインラインコメント**: クラス docstring や `# コメント` は、後述する仕様書生成時に自動抽出され、マニュアルの「説明」に反映されます。
+
+```python
+# 初期値付き構造体の定義例（先頭の magic や version に初期値を指定可能）
+@binary_struct
+class PacketHeader:
+    magic: UInt32 = 0x504B5401    # 先頭フィールドに初期値
+    version: UInt16 = 1           # 初期値
+    payload_len: UInt16           # 必須フィールド（初期値なし）
+    flags: UInt8 = 0              # 末尾フィールドに初期値
+
+# 初期値を持つフィールドは省略してインスタンス化可能
+pkt = PacketHeader(payload_len=256)
+assert pkt.magic == 0x504B5401
+assert pkt.version == 1
+assert pkt.payload_len == 256
+```
 
 ### 1.2 シリアライズとデシリアライズ
 
