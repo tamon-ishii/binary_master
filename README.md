@@ -9,6 +9,35 @@
 Python 標準の `struct` モジュールで生じがちなフォーマット文字列のミス、手作業でのオフセット計算、エンディアンの混在、バイト列の煩雑な結合・切り出し処理を排除し、**型安全・宣言的・直感的**にバイナリデータを読み書きできます。  
 さらに、書き込んだバイナリ構造から **Mermaid ダイアグラム（フローチャート／パケット図）付きの仕様書（Markdown / インタラクティブ HTML）** をワンライナーで自動生成する機能を備えています。
 
+### 💡 ひと目でわかる Binary Master
+
+もう `struct.pack('<4sHf...', ...)` の暗号のような書式文字列や、手作業でのオフセット計算・チェックサム算出に悩む必要はありません：
+
+```python
+from binary_master import binary_struct, Magic, UInt16, Float32, CString, CRC32
+
+# 1. 宣言的にパケット構造を定義（データクラス感覚）
+@binary_struct
+class SensorPacket:
+    magic: Magic[b"PKT\x01"]               # ヘッダーシグネチャ（自動補完 & 検証）
+    sensor_id: UInt16                      # 2バイト符号なし整数
+    temperature: Float32                   # 4バイト浮動小数点数
+    device_name: CString                   # Null終端文字列
+    checksum: CRC32                        # CRC32（自動計算 & 検証）
+
+# 2. シリアライズ（書き込み）: マジックや CRC は完全自動計算！
+packet = SensorPacket(sensor_id=101, temperature=24.5, device_name="Sensor-A")
+data = packet.to_bytes()                   # -> bytes 列 (b'PKT\x01e\x00\x00\x00\xc4A...')
+
+# 3. デシリアライズ（読み込み）: データ整合性・破損も自動検証！
+restored = SensorPacket.from_bytes(data)
+print(restored.sensor_id, restored.temperature, restored.device_name)
+# 出力: 101 24.5 Sensor-A
+
+# 4. ブラウザで開けるインタラクティブ HTML 仕様書（Hex Inspector付き）を即時生成！
+packet.write_html("sensor_spec.html", title="センサー通信パケット仕様書")
+```
+
 > 📖 **まずは動かしてみたい方へ**: ステップバイステップで基本から応用までを学べる **[実践チュートリアル (TUTORIAL.md)](TUTORIAL.md)** をご覧ください。  
 > 🤖 **AI・LLM にライブラリ仕様を読み込ませたい方へ**: トークン効率と情報密度を最大化し、全機能・型システム・制約事項を凝縮した **[AI向け完全リファレンス (FOR_AI.md)](FOR_AI.md)** をコンテキストとしてご活用ください。
 
