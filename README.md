@@ -318,6 +318,39 @@ binary_data: bytes = writer.to_bytes()
 
 ### 2. `@binary_struct` の詳細機能
 
+#### フィールド定義時の初期値（デフォルト値）の自由配置
+`@binary_struct` では、通常の Python クラスのようにフィールド定義時に初期値（デフォルト値）を指定できます。
+
+Python 標準の `@dataclass` の制限（「デフォルト値を持つフィールドの後に、デフォルト値を持たないフィールドを置けない」）を排除しているため、**ヘッダーの先頭や途中のフィールドにも自由に初期値（`magic: UInt32 = 0x504B5401`）を配置可能** です。
+
+```python
+from binary_master import binary_struct, UInt32, UInt16, UInt8
+from dataclasses import field
+
+@binary_struct
+class PacketHeader:
+    magic: UInt32 = 0x504B5401        # 先頭フィールドに初期値を指定可能
+    version: UInt16 = 1               # 初期値
+    payload_len: UInt16               # 必須フィールド（初期値なし）
+    flags: UInt8 = 0                  # 初期値
+    checksum: UInt32 = field(default=0) # dataclasses.field も利用可能
+
+# 1. 必須フィールドのみ指定してインスタンス化可能
+pkt = PacketHeader(payload_len=256)
+assert pkt.magic == 0x504B5401
+assert pkt.version == 1
+assert pkt.payload_len == 256
+assert pkt.flags == 0
+
+# 2. 初期値の上書きも自由
+custom_pkt = PacketHeader(magic=0xDEADBEEF, payload_len=512)
+assert custom_pkt.magic == 0xDEADBEEF
+
+# 3. 必須フィールドのみの位置引数指定にも対応
+pos_pkt = PacketHeader(128)
+assert pos_pkt.payload_len == 128
+```
+
 #### 文字列・バイト列型 (`Bytes[N]`, `FixedString[N]`, `CString`, `PrefixedString[N]`)
 構造体メンバとして、固定長バイト配列や各種文字列フォーマットを直接宣言できます。
 
