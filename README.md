@@ -1046,12 +1046,17 @@ if "footer" in result:
 | `FixedArray[T, N]` | `sizeof(T) * N` | 固定長要素配列 |
 | `Array[T]` | 可変 | 可変長要素配列 |
 | `Variant[TagField, Mapping]` | 可変 | タグ値に応じた多態構造体（自動ディスパッチ） |
+| `Range[Type, min, max]` | `sizeof(Type)` | 許容値域の宣言的バリデーション（`RangeValidationError`） |
+| `LengthOf[Type, "field"]` | `sizeof(Type)` | 指定フィールドのバイト長を自動計算・連動デシリアライズ |
+| `CountOf[Type, "field"]` | `sizeof(Type)` | 指定配列フィールドの要素数を自動計算・連動デシリアライズ |
 
 ### 構造体操作 & ユーティリティ (`@binary_struct`)
 - **バイナリサイズ取得**: `Cls.binary_size` / `sizeof(Cls)`（クラスから静的サイズを取得）、`instance.binary_size` / `sizeof(instance)` / `len(instance)`（インスタンスのシリアライズサイズを取得）
-- **シリアライズ**: `instance.to_bytes(endian=None)` または `write_struct(instance)`
+- **シリアライズ**: `instance.to_bytes(endian=None)` または `write_struct(instance)`（`total_size` パディング対応）
 - **デシリアライズ**: `Cls.from_bytes(data, endian=None)` または `read_struct(Cls, reader)`
+- **仕様書生成**: `Cls.to_markdown()` / `Cls.write_markdown()`, `Cls.to_html()` / `Cls.write_html()`（双方向 Hex Inspector 付き HTML）
 - **他言語コード生成**: `Cls.to_c()` / `Cls.to_c_struct()`, `Cls.to_rust()`, `Cls.to_cpp()`, `Cls.to_csharp()`, `Cls.to_go()`
+- **JSON/辞書変換**: `instance.to_dict()` / `Cls.from_dict()`, `instance.to_json()` / `Cls.from_json()`
 
 ### `Builder` / `BinaryBuilder` 主要メソッド
 - **章・説明文の追加**: `add_document(title, content)`（Markdown 形式の説明文・章を追加）
@@ -1268,6 +1273,130 @@ binary-master export my_module.MyPacket --lang go -o my_packet.go
 
 ---
 
+## v0.3.0 新機能（高機能プロトコル & 検証・可視化）
+
+### 1. 半精度浮動小数点数 (`Float16`)
+センサーデータや GPU、組込みバイナリフォーマットで広く用いられる IEEE 754 半精度（16ビット、2バイト）浮動小数点数にネイティブ対応しました。
+
+```python
+from binary_master import binary_struct, Float16
+
+@binary_struct
+class SensorPacket:
+    temp_fp16: Float16      # 2バイト IEEE 754 半精度浮動小数点数
+    humidity_fp16: Float16
+
+packet = SensorPacket(temp_fp16=25.5, humidity_fp16=60.0)
+data = packet.to_bytes()
+assert len(data) == 4
+
+restored = SensorPacket.from_bytes(data)
+assert abs(restored.temp_fp16 - 25.5) < 1e-3
+```
+
+### 2. データ長・要素数の自動連動計算 (`LengthOf`, `CountOf`)
+後続の可変長ペイロードのバイトサイズや配列の要素数を、書き込み時に自動計算してシリアライズします。読み込み時もその値に連動して正確な長さ・要素数のみを復元するため、バッファを余計に貪欲消費する問題（greedy read）を完全に防止します。
+
+```python
+from binary_master import binary_struct, LengthOf, CountOf, UInt16, UInt8, Bytes, Array
+
+@binary_struct
+class NetworkFrame:
+    # payload の実バイト長を自動計算・格納（手動指定も可）
+    payload_len: LengthOf[UInt16, "payload"]
+    payload: Bytes
+    # values 配列の要素数を自動計算・格納
+    item_count: CountOf[UInt8, "values"]
+    values: Array[UInt16]
+    footer: UInt16 = 0xCAFE
+
+# payload_len と item_count を渡さずとも自動計算される
+frame = NetworkFrame(payload=b"GPS_FIX_OK", values=[100, 200, 300, 400])
+data = frame.to_bytes()
+
+# 読み込み時も payload_len / item_count と連動して正確に復元
+restored = NetworkFrame.from_bytes(data)
+assert restored.payload == b"GPS_FIX_OK"
+assert restored.values == [100, 200, 300, 400]
+assert restored.footer == 0xCAFE
+```
+
+### 3. 構造体固定サイズ保証 & ライター境界パディング (`total_size`, `pad_to`)
+パケットやディスクブロックなど、バイナリ全体のバイト長を一定に保つためのパディング機能を提供します。
+
+- **構造体デコレータ (`total_size=N`, `pad_byte=b"\x00"`)**:
+  実フィールドの合計サイズが `total_size` に満たない場合、自動的に `pad_byte` で末尾をパディングします。サイズを超過した場合は `TotalSizeExceededError` を送出します。C / C++ / Rust 等の多言語コード生成時にも自動で `uint8_t _padding[N]` フィールドが出力されます。
+- **手続き的ライター (`writer.pad_to(target_offset, pad_byte=b"\x00")`)**:
+  現在のカーソル位置から目標の絶対オフセットまで自動パディングします。
+
+```python
+from binary_master import binary_struct, UInt32, Float32, BinaryWriter
+
+@binary_struct(total_size=32, pad_byte=b"\x00")
+class FixedSector:
+    sector_id: UInt32
+    timestamp: UInt32
+
+sector = FixedSector(sector_id=1, timestamp=1000)
+data = sector.to_bytes()
+assert len(data) == 32  # 8バイトの実データ + 24バイトのパディング
+
+# 手続き的ライターでのパディング
+writer = BinaryWriter()
+writer.write_uint32(0xDEADBEEF)
+writer.pad_to(16, pad_byte=b"\xFF")
+assert len(writer.to_bytes()) == 16
+```
+
+### 4. 宣言的値域バリデーション (`Range[Type, min, max]`)
+構造体フィールドの値が許容範囲内にあるかをシリアライズ／デシリアライズの両方で厳格に検証します。範囲外の値を検知した場合は `RangeValidationError` を送出します。
+C、C++、Rust、C#、Go への多言語エクスポート時にも `/**< Range: [min, max] */` コメントが出力されます。
+
+```python
+from binary_master import binary_struct, Range, Int16, UInt8, RangeValidationError
+
+@binary_struct
+class WeatherTelemetry:
+    temperature_c: Range[Int16, -40, 85]  # -40℃ 〜 +85℃
+    humidity_pct:  Range[UInt8, 0, 100]    # 0% 〜 100%
+
+# 正常値は問題なくシリアライズ
+t = WeatherTelemetry(temperature_c=25, humidity_pct=50)
+data = t.to_bytes()
+
+# 範囲外の値を検知
+try:
+    WeatherTelemetry(temperature_c=120, humidity_pct=50).to_bytes()
+except RangeValidationError as e:
+    print(f"検知: {e}")  # Field 'temperature_c' value 120 is out of valid range [-40, 85]
+```
+
+### 5. スタンドアロン・インタラクティブ HTML 仕様書 (`to_html()`, `write_html()`)
+外部依存のない単一の HTML ファイルとして、美しいバイナリ仕様書マニュアルを自動生成します。
+仕様書表とバイナリ Hexdump が双方向で連動する **Interactive Hex Inspector**、ダーク/ライトテーマ切り替え、Mermaid 図のレンダリングに対応しています。
+
+- **双方向ホバーインスペクタ**: 仕様表の行をホバーすると Hexdump 上の該当バイト列が瞬時にハイライトされ、逆に Hexdump のバイトにカーソルを合わせると構造体のフィールド名・型・オフセットがフローティングバーに表示されます。
+- **ワンライナー呼び出し**:
+  - `Cls.write_html("spec.html")` / `Cls.to_html()`
+  - `instance.write_html("spec.html")`（インスタンスの実データを Hexdump に反映）
+  - `writer.write_html("spec.html")` / `builder.write_html("spec.html")`
+
+```python
+from binary_master import binary_struct, UInt32, Float32, PrefixedString
+
+@binary_struct
+class Packet:
+    magic: UInt32 = 0x5047534D
+    temp: Float32 = 23.5
+    name: PrefixedString[1] = "SENSOR_A"
+
+pkt = Packet()
+# ブラウザで直接開けるリッチな HTML 仕様書を出力
+pkt.write_html("packet_manual.html", title="センサー通信パケット仕様書")
+```
+
+---
+
 ## サンプルコード一覧
 
 `sample/` ディレクトリには、基本機能から高度な応用まで系統立てて学べるサンプルスクリプトが用意されています：
@@ -1280,7 +1409,8 @@ binary-master export my_module.MyPacket --lang go -o my_packet.go
 | [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング、デバッグダンプ（`hexdump`, `dump`） |
 | [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) | Builder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、多言語出力（C/Rust/C++/C#/Go）、`builder.write()`、`builder.read()` |
 | [`sample/06_advanced_v2_features.py`](sample/06_advanced_v2_features.py) | v2.0 高度機能総合デモ | CRC32、BinaryEnum、Magic、Constant、JSON連携、iter_struct、VarInt、BitWriter/BitReader |
-| [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 6 本のサンプルを順番に自動実行・検証するオーケストレーター |
+| [`sample/07_v0_3_0_features.py`](sample/07_v0_3_0_features.py) | v0.3.0 新機能 | Float16、LengthOf / CountOf、total_size / pad_to、Range バリデーション、インタラクティブ HTML 仕様書生成 |
+| [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 7 本のサンプルを順番に自動実行・検証するオーケストレーター |
 
 ```bash
 # 全サンプルの実行

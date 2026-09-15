@@ -33,6 +33,7 @@ def main():
         sample_dir / "04_procedural_writer.py",
         sample_dir / "05_builder_and_reader.py",
         sample_dir / "06_advanced_v2_features.py",
+        sample_dir / "07_v0_3_0_features.py",
     ]
 
     print("======================================================================")
@@ -47,7 +48,7 @@ def main():
 
     print("\n" + "=" * 70)
     if all_passed:
-        print(" ALL 6 SAMPLES COMPLETED SUCCESSFULLY!")
+        print(" ALL 7 SAMPLES COMPLETED SUCCESSFULLY!")
     else:
         print(" SOME SAMPLES FAILED!")
     print("=" * 70)
