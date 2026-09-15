@@ -98,6 +98,12 @@ class Float64(BinaryType):
     _size = 8
 
 
+# Convenient aliases for floating point types
+Float = Float32
+Double = Float64
+double = Double
+
+
 class BoolMeta(BinaryTypeMeta):
     """Metaclass for Bool allowing parameterized sizes like Bool[2], Bool[4], etc."""
 

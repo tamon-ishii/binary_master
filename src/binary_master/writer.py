@@ -670,6 +670,9 @@ class BinaryWriter:
             raise TypeError(f"write_float64 requires a float or int, got {type(value).__name__}")
         return self._pack_write("d", float(value), endian, name=name, desc=desc)
 
+    write_float = write_float32
+    write_double = write_float64
+
     def write_bool(
         self,
         value: bool,

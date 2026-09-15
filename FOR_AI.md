@@ -36,6 +36,7 @@ from binary_master import (
     UInt8, UInt16, UInt32, UInt64,
     Int8,  Int16,  Int32,  Int64,
     Float16, Float32, Float64,
+    Float, Double, double,  # Convenient aliases: Float = Float32, Double = Float64
 
     # Generic & Advanced Type Annotations
     Bits,                # Bits[N]: Bitfield slice (used with @binary_struct(bits=N))
@@ -125,7 +126,7 @@ from binary_master import (
 |---|---|---|---|
 | `UInt8`, `UInt16`, `UInt32`, `UInt64` | 1, 2, 4, 8 bytes | `int` | Unsigned standard integers |
 | `Int8`, `Int16`, `Int32`, `Int64` | 1, 2, 4, 8 bytes | `int` | Signed 2's complement integers |
-| `Float16`, `Float32`, `Float64` | 2, 4, 8 bytes | `float` | IEEE 754 half / single / double precision |
+| `Float16`, `Float32` (`Float`), `Float64` (`Double`, `double`) | 2, 4, 8 bytes | `float` | IEEE 754 half / single / double precision (`Float` = `Float32`, `Double` = `Float64`) |
 | `Bool` / `bool` | 1 byte (or `Bool[N]` bytes) | `bool` | `0x00` = False, non-zero = True (supports `Bool[1]`, `Bool[2]`, `Bool[4]`) |
 | `Bytes[N]` | `N` bytes | `bytes` | Static raw bytes buffer. Example: `Bytes[16]` |
 | `FixedString[N]` | `N` bytes | `str` | Static fixed-length string (null/space-padded). Example: `FixedString[8]` |

@@ -350,6 +350,9 @@ class BinaryReader:
         """Read a 64-bit double precision IEEE 754 float."""
         return self._unpack_read("d", 8, endian)
 
+    read_float = read_float32
+    read_double = read_float64
+
     def read_bool(self, size: int = 1, endian: EndianType = None) -> bool:
         """Read a boolean value with configurable byte size (0 is False, any non-zero is True)."""
         if not isinstance(size, int) or size <= 0:

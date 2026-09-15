@@ -1413,9 +1413,9 @@ class BinaryBuilder:
             writer.write_int64(val, endian=endian, name=elem.name, desc=elem.desc)
         elif "float16" in t:
             writer.write_float16(val, endian=endian, name=elem.name, desc=elem.desc)
-        elif "float32" in t:
+        elif "float32" in t or t == "float":
             writer.write_float32(val, endian=endian, name=elem.name, desc=elem.desc)
-        elif "float64" in t:
+        elif "float64" in t or "double" in t:
             writer.write_float64(val, endian=endian, name=elem.name, desc=elem.desc)
         elif "bool" in t:
             writer.write_bool(bool(val), size=elem.size or 1, endian=endian, name=elem.name, desc=elem.desc)
@@ -1585,9 +1585,9 @@ class BinaryBuilder:
             return reader.read_int64(endian=endian)
         if "float16" in t:
             return reader.read_float16(endian=endian)
-        if "float32" in t:
+        if "float32" in t or t == "float":
             return reader.read_float32(endian=endian)
-        if "float64" in t:
+        if "float64" in t or "double" in t:
             return reader.read_float64(endian=endian)
         if "bool" in t:
             return reader.read_bool(size=elem.size or 1, endian=endian)
@@ -1621,9 +1621,9 @@ class BinaryBuilder:
             writer.write_int64(int(val), endian=order, name=elem.name, desc=elem.desc)
         elif "float16" in t:
             writer.write_float16(float(val), endian=order, name=elem.name, desc=elem.desc)
-        elif "float32" in t:
+        elif "float32" in t or t == "float":
             writer.write_float32(float(val), endian=order, name=elem.name, desc=elem.desc)
-        elif "float64" in t:
+        elif "float64" in t or "double" in t:
             writer.write_float64(float(val), endian=order, name=elem.name, desc=elem.desc)
         elif "bool" in t:
             writer.write_bool(bool(val), size=elem.size or 1, endian=order, name=elem.name, desc=elem.desc)

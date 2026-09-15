@@ -1118,8 +1118,8 @@ if "footer" in result:
 | `UInt32` / `Int32` | 4 バイト | 32ビット 符号なし / 符号付き整数 |
 | `UInt64` / `Int64` | 8 バイト | 64ビット 符号なし / 符号付き整数 |
 | `Float16` | 2 バイト | IEEE 754 半精度浮動小数点数 |
-| `Float32` | 4 バイト | IEEE 754 単精度浮動小数点数 |
-| `Float64` | 8 バイト | IEEE 754 倍精度浮動小数点数 |
+| `Float32` / `Float` / `float` | 4 バイト | IEEE 754 単精度浮動小数点数（`Float` は `Float32` のエイリアス） |
+| `Float64` / `Double` / `double` | 8 バイト | IEEE 754 倍精度浮動小数点数（`Double` / `double` は `Float64` のエイリアス） |
 | `Bits[N]` | N ビット | ビットフィールドのフィールド幅 |
 | `Offset[T, Size, BaseOffset]` | 指定サイズ（デフォルト: 4B） | 構造体 `T` へのバイトオフセット（自動解決。`UInt16` 等のサイズ指定や `Base.SELF + 0x20` 等の構造体先頭相対指定に対応） |
 | `OffsetTable[Count, Type, BaseOffset]` | `sizeof(Type) * Count` | オフセットテーブル配列（自動解決。`Base.SELF` 等の相対指定に対応） |
@@ -1160,7 +1160,7 @@ if "footer" in result:
 
 ### `BinaryWriter` / `Writer` 主要メソッド
 - **整数書き込み**: `write_uint8`, `write_int8`, `write_uint16`, `write_int16`, `write_uint32`, `write_int32`, `write_uint64`, `write_int64`
-- **浮動小数点数**: `write_float32`, `write_float64`
+- **浮動小数点数**: `write_float16`, `write_float32`, `write_float64`（短縮形 `write_float`, `write_double` 対応）
 - **論理値 / バイト**: `write_bool`, `write_bytes`
 - **文字列**: `write_cstring`, `write_prefixed_string`, `write_fixed_string`
 - **オフセットテーブル**: `write_offset_table(count, offset_size=4, endian=None, name="offsets", desc="Offset Table", base_offset=0, spec_count=None)`（戻り値 `OffsetTableHandle` で `set_offset`, `write_offset`, `write_target`, `base_offset`, `get_target_offset`, `get_stored_offset` 等が可能。`spec_count` で仕様書の集約表示が可能）
@@ -1179,7 +1179,7 @@ if "footer" in result:
 
 ### `BinaryReader` / `Reader` 主要メソッド
 - **整数読み込み**: `read_uint8`, `read_int8`, `read_uint16`, `read_int16`, `read_uint32`, `read_int32`, `read_uint64`, `read_int64`
-- **浮動小数点数**: `read_float32`, `read_float64`
+- **浮動小数点数**: `read_float16`, `read_float32`, `read_float64`（短縮形 `read_float`, `read_double` 対応）
 - **論理値 / バイト**: `read_bool`, `read_bytes(count=None)`
 - **文字列**: `read_cstring`, `read_prefixed_string`, `read_fixed_string`, `read_string`
 - **構造体**: `read_struct(cls, endian=None)`
