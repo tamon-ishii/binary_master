@@ -220,94 +220,138 @@ print(header.binary_size)   # インスタンスから取得（参照先含む�
 print(len(header))          # len(instance) でも取得可能 -> 19 バイト
 ```
 
-### 2. 仕様書（Markdown & Mermaid）の自動生成
+### 2. 仕様書（Markdown & Mermaid & HTML）の自動生成
 
-書き込み実行後の `BinaryWriter`、または事前定義用 `Builder` から、フォーマット仕様書（マニュアル）をワンライナーで自動生成できます。
+`binary_master` の最大の強みのひとつは、バイナリ構造の定義や書き込み結果から、**人間が読みやすく美しい仕様書（Markdown / インタラクティブ HTML）を完全自動生成**できる点です。
+
+Excel や Word、Wiki で二重管理することなく、**Python コードを「唯一の信頼できる情報源（Single Source of Truth）」** として常に最新の仕様書を即時出力できます。
+
+#### 🚀 仕様書の出力方法（ワンライナー）
 
 ```python
-# 方法1: BinaryWriter から直接出力（推奨・データ駆動）
-from binary_master import BinaryWriter
+# 1. 構造体クラス・インスタンスから直接出力（一番手軽！）
+pkt = TelemetryPacket(...)
+pkt.write_markdown("spec.md", diagram_type="both")       # Markdown 仕様書（Mermaid 図付き）
+pkt.write_html("spec.html", title="センサー通信仕様書")    # 双方向 Hex Inspector 付き HTML
 
+# 2. BinaryWriter から直接出力（実際に書き込んだバイナリログから生成）
 writer = BinaryWriter()
 writer.write_struct(header)
-writer.write_struct(image)
+writer.write_struct(payload)
+writer.write_markdown("spec.md")
+writer.write_html("spec.html")
 
-# 仕様書を Markdown ファイルに出力
-writer.write_markdown("image_spec.md")
-
-# C言語ヘッダーや Rust コードも同様に出力可能
-# writer.write_c_header("image_spec.h")
-# writer.write_rust("image_spec.rs")
-
-# 方法2: Builder による静的スキーマ設計（実バイナリデータがない場合）
-# from binary_master import Builder
-# builder = Builder(title="Sample Image File Specification")
-# builder.add_struct(Header)
-# builder.add_struct(Image)
-# builder.write("image_spec.md")
+# 3. Builder による事前スキーマ設計（実データ不要で仕様書を先行生成）
+builder = Builder(title="IoT Protocol Specification")
+builder.add_struct(Header)
+builder.add_struct(Payload)
+builder.write("spec.md", diagram_type="both")
 ```
 
-#### 生成される仕様書のイメージ
+#### 📊 実際に自動生成される仕様書のサンプル
 
-生成された Markdown には、概要、Mermaid 図、メモリレイアウト表、ビットフィールド詳細が含まれます。
+以下は、`binary_master` が自動生成する仕様書の実物サンプルです。GitHub 上でそのまま美しいグラフィカルな図表としてレンダリングされます：
 
-````markdown
-# Sample Image File Specification
+---
 
-## Overview
-- **Total Size**: 19 bytes (`0x0013`)
+### サンプル仕様書: IoT Telemetry Packet Specification
+
+#### Overview
+IoTセンサーテレメトリ通信パケット仕様。ヘッダーシグネチャ、制御フラグ、半精度浮動小数点センサー値、CRC32整合性検証コードを含みます。
+
+- **Total Size**: 20 bytes (`0x0014`)
 - **Default Endianness**: Little
-- **Total Fields**: 7
+- **Total Fields**: 8
 
-## Structure Diagram
+#### 1. 全体パケット配置図（RFC 形式 32-bit `packet-beta`）
+各フィールドがパケット内のどのビット／バイト位置を占有しているかを、RFC 標準の 32 ビット幅で直感的に可視化します：
+
 ```mermaid
-flowchart TD
-    subgraph SG_Header ["Header (0x0000 - 0x000B, 11B)"]
-        N0["0x0000: magic (UInt32, 4B)"]
-        N1["0x0004: version (UInt16, 2B)"]
-        N2["0x0006: flags (HeaderFlags, 1B)"]
-        N3["0x0007: image_offset (Offset[Image], 4B)"]
-    end
-    subgraph SG_Image ["Image (0x000B - 0x0013, 8B)"]
-        N4["0x000B: width (UInt16, 2B)"]
-        N5["0x000D: height (UInt16, 2B)"]
-        N6["0x000F: pixels (FixedArray[UInt8, 4], 4B)"]
-    end
-    N0 --> N1
-    N1 --> N2
-    N2 --> N3
-    N3 --> N4
-    N4 --> N5
-    N5 --> N6
-    N3 -.->|"offset: 0x000B"| N4
+packet-beta
+title TelemetryPacket (32 bits / row)
+0-31: "magic (UInt32: 0x5047534D)"
+32-47: "version (UInt16: 1)"
+48-55: "flags (HeaderFlags, 1B)"
+56-63: "payload_offset (1B)"
+64-95: "timestamp (UInt32)"
+96-111: "temperature (Float16: 24.5)"
+112-127: "humidity (Float16: 60.0)"
+128-159: "checksum (CRC32: 0xDEADBEEF)"
 ```
 
-## Memory Layout Table
-| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Value / Preview | Description |
-|---|---|---|---|---|---|---|---|
-| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | `1196314761 (0x474E5089)` | - |
-| `0x0004` | 4 | 2 | `version` | `UInt16` | Little | `1 (0x1)` | - |
-| `0x0006` | 6 | 1 | `flags` | `HeaderFlags` | Little | `1 (0x1)` | - |
-| `0x0007` | 7 | 4 | `image_offset` | `Offset[Image]` | Little | `11 (0xB)` | - |
-| `0x000B` | 11 | 2 | `width` | `UInt16` | Little | `1920 (0x780)` | - |
-| `0x000D` | 13 | 2 | `height` | `UInt16` | Little | `1080 (0x438)` | - |
-| `0x000F` | 15 | 4 | `pixels` | `FixedArray[UInt8, 4]` | Little | `[255, 0, 0, 255]` | - |
+#### 2. ビットフィールド詳細図（8-bit / 16-bit `packet-beta`）
+サブバイト（ビット単位）のフラグや予約ビットの配置を独立したビットマップとして展開します：
 
-## Bitfield Details
-### `flags` (Offset: `0x0006`, Size: 1B)
 ```mermaid
 ---
 config:
   packet:
     bitsPerRow: 8
+    bitWidth: 96
 ---
 packet-beta
 title flags (8 bits)
 0: "compressed (1)"
 1: "encrypted (0)"
-2-7: "reserved (0)"
+2-3: "priority (2)"
+4-7: "reserved (0)"
 ```
-````
+
+| Bit Range | Field Name | Width | Value | Description |
+|---|---|---|---|---|
+| `[0:1]` | `compressed` | 1 bit | 1 | 圧縮有効フラグ |
+| `[1:2]` | `encrypted` | 1 bit | 0 | 暗号化フラグ |
+| `[2:4]` | `priority` | 2 bits | 2 | 配信優先度 (0: Low, 1: Normal, 2: High, 3: Critical) |
+| `[4:8]` | `reserved` | 4 bits | 0 | 将来拡張用リザーブ領域 |
+
+#### 3. 構造体フローチャート図（`flowchart TD`）
+パケット内の論理セクション（Header / Payload / Footer）の境界や、オフセットポインタ（`Offset[T]`）の参照先リンクを矢印で明示します：
+
+```mermaid
+flowchart TD
+    subgraph SG_Header ["Header (0x0000 - 0x0008, 8B)"]
+        N0["0x0000: magic (UInt32, 4B)"]
+        N1["0x0004: version (UInt16, 2B)"]
+        N2["0x0006: flags (HeaderFlags, 1B)"]
+        N3["0x0007: payload_offset (Offset[Payload], 1B)"]
+    end
+    subgraph SG_Payload ["Payload (0x0008 - 0x0010, 8B)"]
+        N4["0x0008: timestamp (UInt32, 4B)"]
+        N5["0x000C: temperature (Float16, 2B)"]
+        N6["0x000E: humidity (Float16, 2B)"]
+    end
+    subgraph SG_Footer ["Footer (0x0010 - 0x0014, 4B)"]
+        N7["0x0010: checksum (CRC32, 4B)"]
+    end
+    N0 --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7
+    N3 -.->|"offset: 0x0008"| N4
+```
+
+#### 4. メモリレイアウト詳細表
+全フィールドの 16進/10進 オフセット、占有サイズ、型、エンディアン、値プレビュー、制約条件（Range / Constant / Magic）を一覧化します：
+
+| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Value / Preview | Description |
+|---|---|---|---|---|---|---|---|
+| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | `0x5047534D` | プロトコル識別子 (`Magic`) |
+| `0x0004` | 4 | 2 | `version` | `UInt16` | Little | `1` | プロトコルバージョン |
+| `0x0006` | 6 | 1 | `flags` | `HeaderFlags` | Little | `0x09` | 制御フラグ（ビットフィールド） |
+| `0x0007` | 7 | 1 | `payload_offset` | `Offset[Payload]` | Little | `0x08` | ペイロード先頭へのオフセット (`-> 0x0008`) |
+| `0x0008` | 8 | 4 | `timestamp` | `UInt32` | Little | `1710000000` | UNIXエポック秒 |
+| `0x000C` | 12 | 2 | `temperature` | `Float16` | Little | `24.5` | 温度計測値 (℃) |
+| `0x000E` | 14 | 2 | `humidity` | `Float16` | Little | `60.0` | 湿度計測値 (%) |
+| `0x0010` | 16 | 4 | `checksum` | `CRC32` | Little | `0xDEADBEEF` | パケット末尾 CRC32 自動整合性検証 |
+
+---
+
+#### 🌐 インタラクティブ HTML 仕様書（Hex Inspector 内蔵）
+
+`pkt.write_html("spec.html")` または `writer.write_html("spec.html")` を実行すると、**外部依存ライブラリなし（スタンドアロン）でブラウザですぐ開ける HTML 仕様書** が生成されます。
+
+- **双方向 Hex Inspector**:
+  - メモリレイアウト表の行にマウスカーソルを合わせると、Hexdump 上の**該当バイト列が即座にハイライト**されます。
+  - 逆に Hexdump のバイト列にカーソルを合わせると、**対応する構造体フィールド名・型・オフセットがフローティングバーに表示**され、表の該当行が強調表示されます。
+- **ダーク / ライトテーマ対応**: 閲覧環境に応じた快適な視認性。
+- **Mermaid 図のネイティブ描画**: ブラウザ側でフローチャートやパケット図が美しく描画されます。
 
 ---
 
@@ -793,28 +837,37 @@ class NetworkPacket:
 
 ### 3. 仕様書（マニュアル）生成オプション
 
-`Builder` では、出力形式やダイアグラムの表示スタイルを柔軟にカスタマイズできます。
+`to_markdown()` / `write_markdown()` / `to_html()` / `write_html()` / `Builder.write()` では、プロトコルの性質やチームのドキュメント規約に合わせて、ダイアグラムの形式やビット幅を柔軟にカスタマイズできます。
 
 ```python
-from binary_master import Builder
-
-builder = Builder(title="Network Protocol Spec")
-builder.add_struct(Header)
-
-# 仕様書出力オプション
-builder.write(
+# 仕様書出力オプション例（構造体クラス、インスタンス、Writer、Builder すべてで共通）
+pkt.write_markdown(
     "spec.md",
-    diagram_type="both",      # 'flowchart', 'packet', 'both'
-    diagram_direction="TD",   # フローチャートの向き ('TD', 'LR')
-    bits_per_row=32,          # パケット図の1行あたりのビット数 (8, 16, 32)
-    bit_width=40,             # パケット図の1ビットあたりの横幅 (px)。横に大きく広げたい場合に指定
+    diagram_type="both",            # 'flowchart' | 'packet' | 'both' | 'none'
+    diagram_direction="TD",         # フローチャートの方向 ('TD': 上下, 'LR': 左右)
+    bits_per_row=32,                # パケット図の1行のビット幅 (8, 16, 32, 64)
+    bit_width=50,                   # パケット図の1ビットあたりの横幅 (px)
     include_bitfield_diagram=True,  # ビットフィールドの詳細パケット図を含めるか
+    include_values=True,            # 実データの値をダイアグラムのラベルに併記するか
+)
+
+# スタンドアロン HTML 仕様書の出力
+pkt.write_html(
+    "spec.html",
+    title="IoT センサー通信仕様書 (v1.0)",
+    theme="dark",                   # 'dark' | 'light'
+    diagram_type="both",
 )
 ```
 
-- **`diagram_type="flowchart"`**: 構造体の入れ子構造やオフセット参照（矢印）を可視化するフローチャート。
-- **`diagram_type="packet"`**: RFC風のパケットレイアウト図（`packet-beta` 記法）を生成。
-- **`diagram_type="both"`**: フローチャートとパケット図の両方を並記。
+| オプション | デフォルト | 選択肢 / 説明 |
+|---|---|---|
+| `diagram_type` | `"flowchart"` | `"flowchart"`（構造関連図）、`"packet"`（RFC風ビットレイアウト）、`"both"`（両方並記）、`"none"`（ダイアグラム省略） |
+| `bits_per_row` | `32` | パケット図の1行あたりのビット幅。`32`（RFC標準・32ビット境界）、`16`（組込み16ビットワード）、`8`（1バイト幅） |
+| `diagram_direction` | `"TD"` | フローチャートの描画方向。`"TD"`（Top-Down: 上から下）、`"LR"`（Left-to-Right: 左から右） |
+| `bit_width` | 自動 | パケット図のセル横幅。小さくコンパクトにしたい場合や横幅を広げたい場合にピクセル値で指定 |
+| `include_bitfield_diagram` | `True` | ビットフィールド（`Bits[N]`）の独立した詳細パケット図を末尾に含めるか |
+| `include_values` | `False` | サンプルインスタンスの実データ値（`0x5047534D` 等）をダイアグラムのノード名に併記するか |
 
 ### 4. バイナリの読み込みとデシリアライズ (`BinaryReader` / `from_bytes`)
 
