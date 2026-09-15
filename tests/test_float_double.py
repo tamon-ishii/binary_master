@@ -1,11 +1,10 @@
-"""Unit tests for Float and Double/double aliases."""
+"""Unit tests for Float and Double aliases."""
 
 import pytest
 from binary_master import (
     binary_struct,
     Float,
     Double,
-    double,
     Float32,
     Float64,
     BinaryWriter,
@@ -19,10 +18,9 @@ from binary_master import (
 
 
 def test_float_double_identity():
-    """Float is Float32, Double is Float64, double is Double."""
+    """Float is Float32, Double is Float64."""
     assert Float is Float32
     assert Double is Float64
-    assert double is Float64
     assert Float._size == 4
     assert Float._fmt == "f"
     assert Double._size == 8
@@ -35,17 +33,15 @@ def test_binary_struct_float_double():
     class Telemetry:
         temp: Float
         pressure: Double
-        altitude: double
 
-    assert sizeof(Telemetry) == 20
-    t = Telemetry(temp=25.5, pressure=1013.25, altitude=150.75)
+    assert sizeof(Telemetry) == 12
+    t = Telemetry(temp=25.5, pressure=1013.25)
     data = t.to_bytes()
-    assert len(data) == 20
+    assert len(data) == 12
 
     restored = Telemetry.from_bytes(data)
     assert abs(restored.temp - 25.5) < 1e-5
     assert abs(restored.pressure - 1013.25) < 1e-9
-    assert abs(restored.altitude - 150.75) < 1e-9
 
 
 def test_writer_reader_float_double():

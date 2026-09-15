@@ -1119,7 +1119,7 @@ if "footer" in result:
 | `UInt64` / `Int64` | 8 バイト | 64ビット 符号なし / 符号付き整数 |
 | `Float16` | 2 バイト | IEEE 754 半精度浮動小数点数 |
 | `Float32` / `Float` / `float` | 4 バイト | IEEE 754 単精度浮動小数点数（`Float` は `Float32` のエイリアス） |
-| `Float64` / `Double` / `double` | 8 バイト | IEEE 754 倍精度浮動小数点数（`Double` / `double` は `Float64` のエイリアス） |
+| `Float64` / `Double` | 8 バイト | IEEE 754 倍精度浮動小数点数（`Double` は `Float64` のエイリアス） |
 | `Bits[N]` | N ビット | ビットフィールドのフィールド幅 |
 | `Offset[T, Size, BaseOffset]` | 指定サイズ（デフォルト: 4B） | 構造体 `T` へのバイトオフセット（自動解決。`UInt16` 等のサイズ指定や `Base.SELF + 0x20` 等の構造体先頭相対指定に対応） |
 | `OffsetTable[Count, Type, BaseOffset]` | `sizeof(Type) * Count` | オフセットテーブル配列（自動解決。`Base.SELF` 等の相対指定に対応） |

@@ -101,7 +101,6 @@ class Float64(BinaryType):
 # Convenient aliases for floating point types
 Float = Float32
 Double = Float64
-double = Double
 
 
 class BoolMeta(BinaryTypeMeta):
