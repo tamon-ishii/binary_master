@@ -51,7 +51,7 @@ from binary_master import (
     Base,                # Base.SELF, Base.STRUCT, Base.FIELD origin markers
     RelativeBase,        # Result of Base + delta arithmetic
 
-    # v2.0 & v0.3.0 Declarative Types & Constraints
+    # v0.2.0 & v0.3.0 Declarative Types & Constraints
     BinaryEnum,          # IntEnum with explicit sizing: MyEnum[UInt8]
     Magic,               # Magic[b"PNG..."] or Magic[0x1234]: signature constraint
     Constant,            # Constant[Type, Value]: fixed-value constant field
@@ -737,7 +737,7 @@ binary_data = writer.to_bytes()
 
 ---
 
-## 11. v2.0 & v0.3.0 Advanced Features Reference (LLM Quick Reference)
+## 11. v0.2.0 & v0.3.0 Advanced Features Reference (LLM Quick Reference)
 
 ### 11.1 CRC & Checksum Declarative Types
 - **Types**: `CRC32` (4B, IEEE 802.3), `CRC16` / `CRC16_CCITT` (2B, poly 0x1021), `CRC16_ARC` (2B, poly 0xA001), `Checksum8` (1B, sum mod 256), `Checksum16` (2B, sum mod 65536), `Fletcher16` (2B), `Adler32` (4B).

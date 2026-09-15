@@ -1115,7 +1115,7 @@ if "footer" in result:
 
 ---
 
-## v2.0 高度機能（プロトコル & 実践ツール）
+## v0.2.0 高度機能（プロトコル & 実践ツール）
 
 ### 1. CRC / チェックサム自動計算 & 検証 (`CRC32`, `CRC16`, `Checksum8`, etc.)
 ヘッダーやパケット末尾の誤り検出符号（CRC32, CRC16-CCITT, CRC16-ARC, Checksum8, Checksum16, Fletcher16, Adler32）を、手動計算することなく宣言的に定義・検証できます。
@@ -1408,7 +1408,7 @@ pkt.write_html("packet_manual.html", title="センサー通信パケット仕様
 | [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) | 相対ポインタ & オフセットテーブル | `Offset[T, Base.SELF]`、オフセット演算（`Base.SELF + 0x20`）、`OffsetTable`、自動デリファレンス |
 | [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング、デバッグダンプ（`hexdump`, `dump`） |
 | [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) | Builder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、多言語出力（C/Rust/C++/C#/Go）、`builder.write()`、`builder.read()` |
-| [`sample/06_advanced_v2_features.py`](sample/06_advanced_v2_features.py) | v2.0 高度機能総合デモ | CRC32、BinaryEnum、Magic、Constant、JSON連携、iter_struct、VarInt、BitWriter/BitReader |
+| [`sample/06_advanced_v2_features.py`](sample/06_advanced_v2_features.py) | v0.2.0 高度機能総合デモ | CRC32、BinaryEnum、Magic、Constant、JSON連携、iter_struct、VarInt、BitWriter/BitReader |
 | [`sample/07_v0_3_0_features.py`](sample/07_v0_3_0_features.py) | v0.3.0 新機能 | Float16、LengthOf / CountOf、total_size / pad_to、Range バリデーション、インタラクティブ HTML 仕様書生成 |
 | [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 7 本のサンプルを順番に自動実行・検証するオーケストレーター |
 
