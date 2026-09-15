@@ -51,6 +51,10 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
   - 6.7 任意ビットストリーム操作 (`BitWriter`, `BitReader`)
   - 6.8 CLI バイナリインスペクター (`binary-master`)
   - 6.9 構造体・インスタンスからの直接仕様書 & コード出力 (`to_markdown`, `to_code`)
+  - 6.10 `LengthOf` & `CountOf`（自動長さ/要素数計算と連動デシリアライズ）
+  - 6.11 `total_size` & `pad_to`（固定総サイズ保証とパディング）
+  - 6.12 `Range`（型安全な値の範囲バリデーション）
+  - 6.13 インタラクティブ HTML 仕様書 (`to_html()`, `write_html()`)
 - [Step 7: 実践業界別レシピ集 (Real-World Industry Recipes)](#step-7-実践業界別レシピ集-real-world-industry-recipes)
   - 7.1 レシピ 1: ゲームセーブデータ・アーカイブ形式（Header + File Table + VarInt + CRC32）
   - 7.2 レシピ 2: IoT / 車載センサーテレメトリストリーム（Magic + BinaryEnum + LEB128タイムスタンプ）
@@ -127,7 +131,7 @@ class PlayerProfile:
 ```
 
 #### ポイント
-- **プリミティブ型**: `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Int8`, `Int16`, `Int32`, `Int64`, `Float32`, `Float64`, `Bool` などを直接指定できます。
+- **プリミティブ型**: `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Int8`, `Int16`, `Int32`, `Int64`, `Float16`, `Float32`, `Float64`, `Bool` などを直接指定できます。
 - **固定長文字列 & バイト列**: `FixedString[N]` や `Bytes[N]` により、固定長テキストや生バイト列を Python の `str` / `bytes` として直感的に扱えます。
 - **固定長配列**: `FixedArray[Type, Length]` で任意型の固定長配列を定義できます。
 - **初期値（デフォルト値）の自由配置**: Python 標準の `@dataclass` の制限（「初期値ありフィールドの後に初期値なしフィールドを置けない」）を排除しており、**先頭や途中のフィールドにも自由に初期値（`magic: UInt32 = 0x504B5401`）を設定可能** です。
@@ -1139,6 +1143,102 @@ SensorPacket.write_code("src/sensor.rs", "rust")
 # 3. 実データが入ったインスタンスからもワンライナーで出力可能
 pkt = SensorPacket(sequence=1001, temperature=24.5)
 md_live = pkt.to_markdown(include_values=True)  # 実測値付きの仕様書
+```
+
+### 6.10 `LengthOf` & `CountOf`（自動長さ/要素数計算と連動デシリアライズ）
+
+バイナリ通信では「ペイロードのバイト長」や「後続配列の要素数」をヘッダーに格納する設計が極めて一般的です。`LengthOf` と `CountOf` を使うと、シリアライズ時の自動計算とデシリアライズ時の連動読み込みを完全に自動化できます。
+
+```python
+from binary_master import binary_struct, UInt16, UInt32, UInt8, Bytes, Array, LengthOf, CountOf
+
+@binary_struct
+class FileChunk:
+    # payload フィールドのバイト長を自動計算
+    payload_len: LengthOf[UInt16, "payload"]
+    payload: Bytes
+    footer: UInt8
+
+# 書き込み: payload_len を指定しなくても、実データ（5バイト）から自動計算！
+chunk = FileChunk(payload=b"HELLO", footer=0xFF)
+data = chunk.to_bytes()  # b"\x05\x00HELLO\xFF"
+assert chunk.payload_len == 5
+
+# 読み込み: payload_len (5) の値に従って正確に 5 バイトだけ payload に読み込まれ、後続の footer も正常に復元
+recovered = FileChunk.from_bytes(data)
+assert recovered.payload == b"HELLO"
+assert recovered.footer == 0xFF
+```
+
+### 6.11 `total_size` & `pad_to`（固定総サイズ保証とパディング）
+
+固定長ブロック（ディスクセクター512バイト、固定長パケット64バイト等）を作成する際、`total_size` を指定すると不足分が自動パディングされます。
+
+```python
+from binary_master import binary_struct, UInt16, UInt8, BinaryWriter, sizeof
+
+# 構造体全体のサイズを厳格に 16 バイトに固定
+@binary_struct(total_size=16, pad_byte=b"\x00")
+class FixedBlock:
+    magic: UInt16
+    version: UInt8
+
+block = FixedBlock(magic=0x1234, version=1)
+raw = block.to_bytes()
+assert len(raw) == 16  # 3バイトのデータ + 13バイトのパディング
+assert sizeof(FixedBlock) == 16
+
+# 手続き型ライターでも pad_to で任意オフセットまで簡単パディング
+writer = BinaryWriter()
+writer.write_uint16(0xCAFE)
+writer.pad_to(16, pad_byte=b"\xFF")
+assert len(writer.to_bytes()) == 16
+```
+
+### 6.12 `Range`（型安全な値の範囲バリデーション）
+
+`Range[Type, min, max]` を指定すると、シリアライズ（`to_bytes`）およびデシリアライズ（`from_bytes`）の双方で値の上下限チェックが自動実行されます。
+
+```python
+from binary_master import binary_struct, Range, Int16, UInt8, RangeValidationError
+
+@binary_struct
+class Telemetry:
+    temperature: Range[Int16, -40, 125]
+    humidity: Range[UInt8, 0, 100]
+
+# 正常値: 通常通りシリアライズ
+valid = Telemetry(temperature=25, humidity=50)
+data = valid.to_bytes()
+
+# 異常値: RangeValidationError が発生
+try:
+    invalid = Telemetry(temperature=200, humidity=50)
+    invalid.to_bytes()
+except RangeValidationError as e:
+    print(f"検知: {e}")  # Field 'temperature' value 200 is out of valid range [-40, 125]
+```
+
+### 6.13 インタラクティブ HTML 仕様書 (`to_html()`, `write_html()`)
+
+単一ファイルで完結する美しい HTML 仕様書を出力できます。
+ブラウザで開くだけで、Mermaid による構造図や、**仕様表の行をホバーすると該当バイトが光る「インタラクティブ Hex Inspector」** が利用できます。
+
+```python
+from binary_master import binary_struct, UInt32, Float32, CString
+
+@binary_struct
+class DeviceReport:
+    """デバイス稼働状態レポート"""
+    device_id: UInt32
+    voltage: Float32
+    status_msg: CString
+
+report = DeviceReport(device_id=98765, voltage=3.3, status_msg="ONLINE")
+
+# HTML 文字列を取得、またはファイルに直接保存
+html_text = report.to_html(title="Device Report Specification")
+report.write_html("report_manual.html")
 ```
 
 ---

@@ -28,6 +28,7 @@ _FMT_TO_TYPE_NAME = {
     "i": "Int32",
     "Q": "UInt64",
     "q": "Int64",
+    "e": "Float16",
     "f": "Float32",
     "d": "Float64",
     "?": "Bool",
@@ -651,6 +652,12 @@ class BinaryWriter:
 
     # --- Floating Point, Boolean, and Raw Bytes Methods ---
 
+    def write_float16(self, value: float, endian: EndianType = None, name: str = "", desc: str = "") -> BinaryWriter:
+        """Write a 16-bit half-precision IEEE 754 floating point number."""
+        if not isinstance(value, (float, int)):
+            raise TypeError(f"write_float16 requires a float or int, got {type(value).__name__}")
+        return self._pack_write("e", float(value), endian, name=name, desc=desc)
+
     def write_float32(self, value: float, endian: EndianType = None, name: str = "", desc: str = "") -> BinaryWriter:
         """Write a 32-bit single-precision IEEE 754 floating point number."""
         if not isinstance(value, (float, int)):
@@ -1010,6 +1017,18 @@ class BinaryWriter:
         if rem != 0:
             padding_needed = boundary - rem
             self.pad(padding_needed, pad_byte=pad_byte, name=name, desc=desc or f"Align to {boundary}B boundary")
+        return self
+
+    def pad_to(self, target_offset: int, pad_byte: bytes = b"\x00", name: str = "padding", desc: str = "") -> BinaryWriter:
+        """Pad the stream with pad_byte until tell() reaches target_offset."""
+        if not isinstance(target_offset, int) or target_offset < 0:
+            raise ValueError(f"target_offset must be a non-negative integer, got {target_offset}")
+        pos = self.tell()
+        if pos > target_offset:
+            raise ValueError(f"Current stream position {pos} already exceeds pad_to target {target_offset}")
+        if pos < target_offset:
+            padding_needed = target_offset - pos
+            self.pad(padding_needed, pad_byte=pad_byte, name=name, desc=desc or f"Pad to offset 0x{target_offset:X}")
         return self
 
     def write_offset_table(
@@ -1412,6 +1431,16 @@ class BinaryWriter:
         else:
             raise TypeError(f"Invalid path_or_file: {type(path_or_file).__name__}")
         return content
+
+    def to_html(self, **kwargs: Any) -> str:
+        """Generate an interactive HTML specification manual with hex inspector."""
+        from binary_master.manual import generate_html
+        return generate_html(self, **kwargs)
+
+    def write_html(self, path_or_file: Union[str, Path, IO[str]], **kwargs: Any) -> str:
+        """Generate specification HTML and write it to a file or stream."""
+        from binary_master.manual import write_html
+        return write_html(self, path_or_file, **kwargs)
 
     def to_c_header(self, guard: Optional[str] = None, pack: bool = True) -> str:
         """Generate a C99/C11 header file from this writer's recorded structures and variants."""

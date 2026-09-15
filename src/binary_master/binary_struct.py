@@ -15,6 +15,8 @@ from binary_master.exceptions import (
     InvalidConstantError,
     InvalidEnumError,
     InvalidMagicError,
+    RangeValidationError,
+    TotalSizeExceededError,
 )
 from binary_master.checksum import ChecksumBase, compute_checksum, get_checksum_algorithm
 from binary_master.varint import VarIntTypeMeta, encode_varint, encode_varuint, decode_varint, decode_varuint
@@ -79,6 +81,11 @@ class Int32(BinaryType):
 class Int64(BinaryType):
     _fmt = "q"
     _size = 8
+
+
+class Float16(BinaryType):
+    _fmt = "e"
+    _size = 2
 
 
 class Float32(BinaryType):
@@ -459,6 +466,258 @@ class Constant(metaclass=ConstantMeta):
     pass
 
 
+class RangeBase:
+    """Base class for Range[Type, min, max]."""
+    _type: Any = None
+    _min: Any = None
+    _max: Any = None
+    _size: int = 4
+    _fmt: str = ""
+
+
+class RangeMeta(BinaryTypeMeta):
+    """Metaclass for Range[Type, min, max]."""
+
+    _type: Any = None
+    _min: Any = None
+    _max: Any = None
+    _size: int = 4
+    _fmt: str = ""
+
+    def __getitem__(cls, args: tuple[Any, Any, Any]) -> type:
+        if not isinstance(args, tuple) or len(args) != 3:
+            raise TypeError("Range requires (Type, min, max), e.g. Range[UInt8, 0, 100]")
+        target_t, min_val, max_val = args
+        sz = sizeof(target_t) if hasattr(target_t, "_size") or hasattr(target_t, "__binary__") else 4
+        fmt = getattr(target_t, "_fmt", "")
+        name = f"Range[{getattr(target_t, '__name__', str(target_t))}, {min_val!r}, {max_val!r}]"
+        base_parent = target_t if isinstance(target_t, type) and issubclass(target_t, BinaryType) else BinaryType
+        return RangeMeta(
+            name,
+            (RangeBase, base_parent),
+            {
+                "_type": target_t,
+                "_min": min_val,
+                "_max": max_val,
+                "_size": sz,
+                "_fmt": fmt,
+                "__module__": cls.__module__,
+                "__qualname__": name,
+            },
+        )
+
+    @property
+    def target_type(cls) -> Any:
+        return getattr(cls, "_type", None)
+
+    @property
+    def min_value(cls) -> Any:
+        return getattr(cls, "_min", None)
+
+    @property
+    def max_value(cls) -> Any:
+        return getattr(cls, "_max", None)
+
+    @property
+    def size(cls) -> int:
+        return getattr(cls, "_size", 0)
+
+    def __repr__(cls) -> str:
+        t = getattr(cls, "_type", None)
+        min_v = getattr(cls, "_min", None)
+        max_v = getattr(cls, "_max", None)
+        t_name = getattr(t, "__name__", str(t))
+        return f"Range[{t_name}, {min_v!r}, {max_v!r}]"
+
+
+class Range(metaclass=RangeMeta):
+    """Declarative bounded-range field: Range[UInt8, 0, 100]."""
+    pass
+
+
+class LengthOfBase:
+    """Base class for LengthOf annotations."""
+    _target: str = ""
+    _target_field: str = ""
+    _type: Any = None
+    _target_type: Any = None
+    _size: int = 2
+    _delta: int = 0
+    _fmt: str = "H"
+
+
+class LengthOfMeta(BinaryTypeMeta):
+    """Metaclass for LengthOf[Type, "target_field", delta=0] or LengthOf["target_field", Type, delta=0]."""
+
+    _target: str = ""
+    _target_field: str = ""
+    _type: Any = None
+    _target_type: Any = None
+    _size: int = 2
+    _delta: int = 0
+    _fmt: str = "H"
+
+    def __getitem__(cls, args: Any) -> type:
+        delta = 0
+        target_t = UInt16
+        target = ""
+        if isinstance(args, tuple):
+            if isinstance(args[0], (str, bytes)):
+                target = str(args[0])
+                if len(args) >= 2:
+                    target_t = args[1]
+            else:
+                target_t = args[0]
+                if len(args) >= 2:
+                    target = str(args[1])
+            if len(args) >= 3:
+                delta = args[2]
+        else:
+            if isinstance(args, (str, bytes)):
+                target = str(args)
+            else:
+                target_t = args
+
+        sz = sizeof(target_t) if hasattr(target_t, "_size") or hasattr(target_t, "__binary__") else 2
+        fmt = getattr(target_t, "_fmt", "H")
+        name = f"LengthOf[{getattr(target_t, '__name__', str(target_t))}, {target!r}]"
+        base_parent = target_t if isinstance(target_t, type) and issubclass(target_t, BinaryType) else BinaryType
+        return LengthOfMeta(
+            name,
+            (LengthOfBase, base_parent),
+            {
+                "_target": target,
+                "_target_field": target,
+                "_type": target_t,
+                "_target_type": target_t,
+                "_size": sz,
+                "_delta": delta,
+                "_fmt": fmt,
+                "__module__": cls.__module__,
+                "__qualname__": name,
+            },
+        )
+
+    @property
+    def target_field(cls) -> str:
+        return getattr(cls, "_target", "")
+
+    @property
+    def target_type(cls) -> Any:
+        return getattr(cls, "_type", None)
+
+    @property
+    def delta(cls) -> int:
+        return getattr(cls, "_delta", 0)
+
+    @property
+    def size(cls) -> int:
+        return getattr(cls, "_size", 0)
+
+    def __repr__(cls) -> str:
+        target = getattr(cls, "_target", "")
+        t = getattr(cls, "_type", None)
+        t_name = getattr(t, "__name__", str(t))
+        return f"LengthOf[{t_name}, {target!r}]"
+
+
+class LengthOf(metaclass=LengthOfMeta):
+    """Declarative byte length field linking to target field: LengthOf[UInt16, 'payload']."""
+    pass
+
+
+class CountOfBase:
+    """Base class for CountOf annotations."""
+    _target: str = ""
+    _target_field: str = ""
+    _type: Any = None
+    _target_type: Any = None
+    _size: int = 4
+    _delta: int = 0
+    _fmt: str = "I"
+
+
+class CountOfMeta(BinaryTypeMeta):
+    """Metaclass for CountOf[Type, "target_field", delta=0] or CountOf["target_field", Type, delta=0]."""
+
+    _target: str = ""
+    _target_field: str = ""
+    _type: Any = None
+    _target_type: Any = None
+    _size: int = 4
+    _delta: int = 0
+    _fmt: str = "I"
+
+    def __getitem__(cls, args: Any) -> type:
+        delta = 0
+        target_t = UInt32
+        target = ""
+        if isinstance(args, tuple):
+            if isinstance(args[0], (str, bytes)):
+                target = str(args[0])
+                if len(args) >= 2:
+                    target_t = args[1]
+            else:
+                target_t = args[0]
+                if len(args) >= 2:
+                    target = str(args[1])
+            if len(args) >= 3:
+                delta = args[2]
+        else:
+            if isinstance(args, (str, bytes)):
+                target = str(args)
+            else:
+                target_t = args
+
+        sz = sizeof(target_t) if hasattr(target_t, "_size") or hasattr(target_t, "__binary__") else 4
+        fmt = getattr(target_t, "_fmt", "I")
+        name = f"CountOf[{getattr(target_t, '__name__', str(target_t))}, {target!r}]"
+        base_parent = target_t if isinstance(target_t, type) and issubclass(target_t, BinaryType) else BinaryType
+        return CountOfMeta(
+            name,
+            (CountOfBase, base_parent),
+            {
+                "_target": target,
+                "_target_field": target,
+                "_type": target_t,
+                "_target_type": target_t,
+                "_size": sz,
+                "_delta": delta,
+                "_fmt": fmt,
+                "__module__": cls.__module__,
+                "__qualname__": name,
+            },
+        )
+
+    @property
+    def target_field(cls) -> str:
+        return getattr(cls, "_target", "")
+
+    @property
+    def target_type(cls) -> Any:
+        return getattr(cls, "_type", None)
+
+    @property
+    def delta(cls) -> int:
+        return getattr(cls, "_delta", 0)
+
+    @property
+    def size(cls) -> int:
+        return getattr(cls, "_size", 0)
+
+    def __repr__(cls) -> str:
+        target = getattr(cls, "_target", "")
+        t = getattr(cls, "_type", None)
+        t_name = getattr(t, "__name__", str(t))
+        return f"CountOf[{t_name}, {target!r}]"
+
+
+class CountOf(metaclass=CountOfMeta):
+    """Declarative element count field linking to target field: CountOf[UInt32, 'items']."""
+    pass
+
+
+
 
 # ==========================================================
 # Generic Types
@@ -728,12 +987,14 @@ def extract_field_descriptions(cls: type) -> dict[str, str]:
 class BinaryMetadata(dict):
     """Metadata container for binary_struct with lazy type hint and description resolution."""
 
-    def __init__(self, cls, endian="little", bits=None, align=None, auto_align=False, doc=""):
+    def __init__(self, cls, endian="little", bits=None, align=None, auto_align=False, total_size=None, pad_byte=b"\x00", doc=""):
         super().__init__({
             "endian": endian,
             "bits": bits,
             "align": align,
             "auto_align": auto_align,
+            "total_size": total_size,
+            "pad_byte": pad_byte,
             "doc": doc,
             "descriptions": {},
         })
@@ -894,6 +1155,8 @@ def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool =
         return ftype.size
     elif isinstance(ftype, type) and issubclass(ftype, ConstantBase):
         return ftype.size
+    elif isinstance(ftype, type) and issubclass(ftype, (RangeBase, LengthOfBase, CountOfBase)):
+        return ftype._size
     elif isinstance(ftype, type) and issubclass(ftype, ChecksumBase):
         return ftype.size
     elif isinstance(ftype, VarIntTypeMeta):
@@ -1049,6 +1312,10 @@ def sizeof(target: Any) -> int:
         target_name = getattr(target, "__name__", None) or type(target).__name__
         raise TypeError(f"Class {target_name} is not a binary_struct")
 
+    total_size_setting = meta.get("total_size")
+    if total_size_setting is not None:
+        return total_size_setting
+
     total_bits = meta.get("bits")
     if isinstance(total_bits, int):
         raw_bytes = (total_bits + 7) // 8
@@ -1159,6 +1426,27 @@ class _WriteMarkdownDescriptor:
             Path(path).write_text(md, encoding="utf-8")
             return md
         return _write_markdown
+
+
+class _ToHtmlDescriptor:
+    def __get__(self, instance, owner=None):
+        target = instance if instance is not None else owner
+        def _to_html(**kwargs):
+            from binary_master.manual import generate_html
+            return generate_html(target, **kwargs)
+        return _to_html
+
+
+class _WriteHtmlDescriptor:
+    def __get__(self, instance, owner=None):
+        target = instance if instance is not None else owner
+        def _write_html(path, **kwargs):
+            from pathlib import Path
+            from binary_master.manual import generate_html
+            content = generate_html(target, **kwargs)
+            Path(path).write_text(content, encoding="utf-8")
+            return content
+        return _write_html
 
 
 class _ToCodeDescriptor:
@@ -1297,10 +1585,10 @@ def from_json_method(cls: type[T], json_str: str) -> T:
     return cls.from_dict(json.loads(json_str))
 
 
-def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_align=False):
+def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_align=False, total_size=None, pad_byte=b"\x00"):
 
     def wrapper(target_cls):
-        # Scan annotations and attributes for default values (user defaults, Magic, Constant, Checksum)
+        # Scan annotations and attributes for default values (user defaults, Magic, Constant, Checksum, LengthOf, CountOf)
         magic_const_defaults = {}
         user_defaults = {}
         user_default_factories = {}
@@ -1330,6 +1618,8 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
                     magic_const_defaults[fname] = getattr(ftype, "_raw_val", getattr(ftype, "_value", None))
                 elif isinstance(ftype, type) and issubclass(ftype, ConstantBase):
                     magic_const_defaults[fname] = getattr(ftype, "_value", None)
+                elif isinstance(ftype, type) and issubclass(ftype, (LengthOfBase, CountOfBase)):
+                    magic_const_defaults[fname] = 0
                 elif isinstance(ftype, type) and issubclass(ftype, ChecksumBase):
                     magic_const_defaults[fname] = 0
 
@@ -1341,6 +1631,8 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
             bits=bits,
             align=align,
             auto_align=auto_align,
+            total_size=total_size,
+            pad_byte=pad_byte,
             doc=doc,
         )
 
@@ -1390,6 +1682,8 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
         target_cls.to_go = classmethod(to_go_struct_method)
         target_cls.to_markdown = _ToMarkdownDescriptor()
         target_cls.write_markdown = _WriteMarkdownDescriptor()
+        target_cls.to_html = _ToHtmlDescriptor()
+        target_cls.write_html = _WriteHtmlDescriptor()
         target_cls.to_code = _ToCodeDescriptor()
         target_cls.write_code = _WriteCodeDescriptor()
         target_cls.binary_size = _BinarySizeDescriptor()
@@ -1972,6 +2266,56 @@ def write_struct(
                 writer._entries[-1].type_name = f"Constant[{getattr(target_t, '__name__', str(target_t))}, {getattr(ftype, '_value', '')!r}]"
             continue
 
+        # Check Range constraint
+        if isinstance(ftype, type) and issubclass(ftype, RangeBase):
+            min_v = ftype._min
+            max_v = ftype._max
+            val_to_check = val if val is not None else 0
+            if not (min_v <= val_to_check <= max_v):
+                raise RangeValidationError(name, val_to_check, min_v, max_v)
+            fmt = getattr(ftype, "_fmt", "")
+            if fmt:
+                writer._pack_write(fmt, val_to_check, endian=active_endian, name=name, desc=f_desc or f"Range: [{min_v}, {max_v}]", struct_name=current_struct_name, struct_doc=struct_doc)
+                if hasattr(writer, "_entries") and writer._entries:
+                    writer._entries[-1].type_name = repr(ftype)
+            continue
+
+        # Check LengthOf / CountOf
+        if isinstance(ftype, type) and issubclass(ftype, (LengthOfBase, CountOfBase)):
+            target_name = getattr(ftype, "_target", "")
+            delta = getattr(ftype, "_delta", 0)
+            target_obj = getattr(instance, target_name, None) if instance is not None else None
+            calculated_val = 0
+            if target_obj is not None:
+                if issubclass(ftype, CountOfBase):
+                    try:
+                        calculated_val = len(target_obj) + delta
+                    except Exception:
+                        calculated_val = delta
+                else:
+                    if hasattr(target_obj, "__binary__"):
+                        calculated_val = sizeof(target_obj) + delta
+                    elif isinstance(target_obj, (bytes, bytearray, memoryview)):
+                        calculated_val = len(target_obj) + delta
+                    elif isinstance(target_obj, str):
+                        calculated_val = len(target_obj.encode("utf-8")) + delta
+                    elif isinstance(target_obj, list):
+                        calculated_val = sum(sizeof(x) if hasattr(x, "__binary__") else (len(x) if isinstance(x, (bytes, bytearray, str)) else getattr(x, "_size", 1)) for x in target_obj) + delta
+                    else:
+                        calculated_val = delta
+
+            write_val = calculated_val if (val is None or val == 0) else val
+            try:
+                setattr(instance, name, write_val)
+            except Exception:
+                pass
+            fmt_char = getattr(ftype, "_fmt", "H")
+            kind_str = "Count" if issubclass(ftype, CountOfBase) else "Length"
+            writer._pack_write(fmt_char, write_val, endian=active_endian, name=name, desc=f_desc or f"{kind_str} of '{target_name}'", struct_name=current_struct_name, struct_doc=struct_doc)
+            if hasattr(writer, "_entries") and writer._entries:
+                writer._entries[-1].type_name = repr(ftype)
+            continue
+
         # Check ChecksumBase type
         if isinstance(ftype, type) and issubclass(ftype, ChecksumBase):
             current_all = writer.to_bytes()
@@ -2055,6 +2399,28 @@ def write_struct(
             if rem != 0:
                 pad_len = struct_boundary - rem
                 writer.pad(pad_len, name="alignment_pad", desc="Struct size alignment")
+
+    # Struct total_size padding
+    total_size_setting = meta.get("total_size")
+    if total_size_setting is not None:
+        cur_written = writer.tell() - struct_start_pos
+        if cur_written > total_size_setting:
+            raise TotalSizeExceededError(
+                f"Struct {current_struct_name} serialized size ({cur_written}B) exceeds declared total_size ({total_size_setting}B)"
+            )
+        elif cur_written < total_size_setting:
+            pad_b = meta.get("pad_byte", b"\x00")
+            if isinstance(pad_b, int):
+                pad_b = bytes([pad_b])
+            pad_len = total_size_setting - cur_written
+            writer.write_bytes(
+                pad_b * pad_len,
+                name="_padding",
+                desc=f"Padding to total_size={total_size_setting}B",
+            )
+            if hasattr(writer, "_entries") and writer._entries:
+                writer._entries[-1].struct_name = current_struct_name
+                writer._entries[-1].struct_doc = struct_doc
 
     # Process deferred offset target objects
     for item in deferred_offsets:
@@ -2148,6 +2514,8 @@ def read_struct(
     align_setting = meta.get("align")
     auto_align = meta.get("auto_align", False)
     kwargs = {}
+    known_counts: dict[str, int] = {}
+    known_lengths: dict[str, int] = {}
 
     for name, ftype in fields.items():
         # Unwrap Annotated
@@ -2294,26 +2662,61 @@ def read_struct(
         )
         if is_arr:
             elem_t = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
-            if elem_t is Bool or (isinstance(elem_t, type) and issubclass(elem_t, Bool)) or elem_t is bool:
-                b_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
+            explicit_count = known_counts.get(name)
+            explicit_length = known_lengths.get(name)
+
+            if explicit_count is not None:
                 items = []
-                while reader.remaining() >= b_size:
-                    items.append(reader.read_bool(size=b_size, endian=active_endian))
-                kwargs[name] = items
-            elif elem_t is UInt8:
-                kwargs[name] = reader.read_bytes()
-            elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
+                for _ in range(explicit_count):
+                    if elem_t is Bool or (isinstance(elem_t, type) and issubclass(elem_t, Bool)) or elem_t is bool:
+                        b_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
+                        items.append(reader.read_bool(size=b_size, endian=active_endian))
+                    elif elem_t is UInt8:
+                        items.append(reader.read_uint8())
+                    elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
+                        items.append(reader._unpack_read(elem_t._fmt, elem_t._size, endian=active_endian))
+                    elif hasattr(elem_t, "__binary__"):
+                        items.append(read_struct(elem_t, reader=reader, endian=active_endian))
+                    else:
+                        items.append(reader.read_uint8())
+                kwargs[name] = bytes(items) if elem_t is UInt8 else items
+            elif explicit_length is not None:
+                stop_pos = reader.tell() + explicit_length
                 items = []
-                while reader.remaining() >= elem_t._size:
-                    items.append(reader._unpack_read(elem_t._fmt, elem_t._size, endian=active_endian))
-                kwargs[name] = items
-            elif hasattr(elem_t, "__binary__"):
-                items = []
-                while reader.remaining() > 0:
-                    items.append(read_struct(elem_t, reader=reader, endian=active_endian))
-                kwargs[name] = items
+                while reader.tell() < stop_pos and reader.remaining() > 0:
+                    if elem_t is Bool or (isinstance(elem_t, type) and issubclass(elem_t, Bool)) or elem_t is bool:
+                        b_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
+                        items.append(reader.read_bool(size=b_size, endian=active_endian))
+                    elif elem_t is UInt8:
+                        items.append(reader.read_uint8())
+                    elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
+                        items.append(reader._unpack_read(elem_t._fmt, elem_t._size, endian=active_endian))
+                    elif hasattr(elem_t, "__binary__"):
+                        items.append(read_struct(elem_t, reader=reader, endian=active_endian))
+                    else:
+                        items.append(reader.read_uint8())
+                kwargs[name] = bytes(items) if elem_t is UInt8 else items
             else:
-                kwargs[name] = reader.read_bytes()
+                if elem_t is Bool or (isinstance(elem_t, type) and issubclass(elem_t, Bool)) or elem_t is bool:
+                    b_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
+                    items = []
+                    while reader.remaining() >= b_size:
+                        items.append(reader.read_bool(size=b_size, endian=active_endian))
+                    kwargs[name] = items
+                elif elem_t is UInt8:
+                    kwargs[name] = reader.read_bytes()
+                elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
+                    items = []
+                    while reader.remaining() >= elem_t._size:
+                        items.append(reader._unpack_read(elem_t._fmt, elem_t._size, endian=active_endian))
+                    kwargs[name] = items
+                elif hasattr(elem_t, "__binary__"):
+                    items = []
+                    while reader.remaining() > 0:
+                        items.append(read_struct(elem_t, reader=reader, endian=active_endian))
+                    kwargs[name] = items
+                else:
+                    kwargs[name] = reader.read_bytes()
             continue
 
         # Check nested binary_struct
@@ -2335,7 +2738,11 @@ def read_struct(
 
         # Check Bytes type
         if isinstance(ftype, type) and issubclass(ftype, Bytes):
-            kwargs[name] = reader.read_bytes(ftype._size if ftype._size > 0 else None)
+            explicit_len = known_lengths.get(name, known_counts.get(name))
+            if explicit_len is not None:
+                kwargs[name] = reader.read_bytes(explicit_len)
+            else:
+                kwargs[name] = reader.read_bytes(ftype._size if ftype._size > 0 else None)
             continue
 
         # Check CString type
@@ -2385,6 +2792,33 @@ def read_struct(
                     f"Constant mismatch for field '{name}': expected {expected!r}, got {val!r}"
                 )
             kwargs[name] = val
+            continue
+
+        # Check Range constraint
+        if isinstance(ftype, type) and issubclass(ftype, RangeBase):
+            fmt = getattr(ftype, "_fmt", "")
+            sz = getattr(ftype, "_size", 4)
+            val = reader._unpack_read(fmt, sz, endian=active_endian)
+            min_v = ftype._min
+            max_v = ftype._max
+            if not (min_v <= val <= max_v):
+                raise RangeValidationError(name, val, min_v, max_v)
+            kwargs[name] = val
+            continue
+
+        # Check LengthOf / CountOf
+        if isinstance(ftype, type) and issubclass(ftype, (LengthOfBase, CountOfBase)):
+            fmt_char = getattr(ftype, "_fmt", "H")
+            sz = getattr(ftype, "_size", 2)
+            val = reader._unpack_read(fmt_char, sz, endian=active_endian)
+            kwargs[name] = val
+            target_name = getattr(ftype, "_target", "")
+            delta = getattr(ftype, "_delta", 0)
+            if target_name:
+                if issubclass(ftype, CountOfBase):
+                    known_counts[target_name] = val - delta
+                else:
+                    known_lengths[target_name] = val - delta
             continue
 
         # Check ChecksumBase type
@@ -2455,9 +2889,14 @@ def read_struct(
         elif ftype is bool:
             kwargs[name] = reader.read_bool()
         elif ftype is bytes:
-            kwargs[name] = reader.read_bytes()
+            explicit_len = known_lengths.get(name, known_counts.get(name))
+            kwargs[name] = reader.read_bytes(explicit_len)
         elif ftype is str:
-            kwargs[name] = reader.read_cstring()
+            explicit_len = known_lengths.get(name)
+            if explicit_len is not None:
+                kwargs[name] = reader.read_bytes(explicit_len).decode("utf-8", errors="replace")
+            else:
+                kwargs[name] = reader.read_cstring()
         else:
             raise TypeError(f"Unsupported field type for {name}: {ftype}")
 
@@ -2468,6 +2907,13 @@ def read_struct(
         struct_boundary = align_setting if align_setting else max_field_align
         if struct_boundary > 1:
             reader.align(struct_boundary)
+
+    # Struct total_size padding
+    total_size_setting = meta.get("total_size")
+    if total_size_setting is not None:
+        cur_read = reader.tell() - struct_start_pos
+        if cur_read < total_size_setting:
+            reader.skip(total_size_setting - cur_read)
 
     return cls(**kwargs)
 

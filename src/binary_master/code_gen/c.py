@@ -20,6 +20,7 @@ from typing import (
 
 from binary_master.binary_struct import (
     FixedArray,
+    Float16,
     Float32,
     Float64,
     Int8,
@@ -85,6 +86,8 @@ def c_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
         return "int32_t", None, None
     if field_type is Int64:
         return "int64_t", None, None
+    if field_type is Float16 or field_type == "Float16":
+        return "_Float16", None, None
     if field_type is Float32:
         return "float", None, None
     if field_type is Float64:
@@ -109,10 +112,25 @@ def c_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
         PrefixedString,
         MagicBase,
         ConstantBase,
+        RangeBase,
+        LengthOfBase,
+        CountOfBase,
     )
     from binary_master.checksum import ChecksumBase
     from binary_master.varint import VarIntTypeMeta
     import enum
+
+    if isinstance(field_type, type) and issubclass(field_type, RangeBase):
+        c_name, arr_cnt, _ = c_type_of(field_type._type)
+        return c_name, arr_cnt, f"Range: [{field_type._min}, {field_type._max}]"
+
+    if isinstance(field_type, type) and issubclass(field_type, LengthOfBase):
+        c_name, arr_cnt, _ = c_type_of(field_type._type)
+        return c_name, arr_cnt, f"Length of '{field_type._target_field}'"
+
+    if isinstance(field_type, type) and issubclass(field_type, CountOfBase):
+        c_name, arr_cnt, _ = c_type_of(field_type._type)
+        return c_name, arr_cnt, f"Count of '{field_type._target_field}'"
 
     if isinstance(field_type, type) and issubclass(field_type, MagicBase):
         expected = getattr(field_type, "_value", None)
@@ -299,6 +317,17 @@ def generate_c_struct(
                 lines.append(f"    {c_name} {field_name}[{arr_cnt}];{comment}")
             else:
                 lines.append(f"    {c_name} {field_name};{comment}")
+
+        total_size = meta.get("total_size")
+        if total_size is not None:
+            try:
+                from binary_master.binary_struct import _calculate_field_size
+                curr_size = sum(_calculate_field_size(fn, ft, is_cls=True) for fn, ft in fields.items())
+                if curr_size < total_size:
+                    pad_len = total_size - curr_size
+                    lines.append(f"    uint8_t _padding[{pad_len}]; /**< Struct padding to total size {total_size} */")
+            except Exception:
+                pass
 
         lines.append(f"}} {cls_name};")
 

@@ -2,12 +2,12 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-194%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-228%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・読み込み（シリアライズ／デシリアライズ）＆仕様書自動生成ライブラリです。
 
 Python 標準の `struct` モジュールで生じがちなフォーマット文字列のミス、手作業でのオフセット計算、エンディアンの混在、バイト列の煩雑な結合・切り出し処理を排除し、**型安全・宣言的・直感的**にバイナリデータを読み書きできます。  
-さらに、書き込んだバイナリ構造から **Mermaid ダイアグラム（フローチャート／パケット図）付きの仕様書（Markdown）** をワンライナーで自動生成する機能を備えています。
+さらに、書き込んだバイナリ構造から **Mermaid ダイアグラム（フローチャート／パケット図）付きの仕様書（Markdown / インタラクティブ HTML）** をワンライナーで自動生成する機能を備えています。
 
 > 📖 **まずは動かしてみたい方へ**: ステップバイステップで基本から応用までを学べる **[実践チュートリアル (TUTORIAL.md)](TUTORIAL.md)** をご覧ください。  
 > 🤖 **AI・LLM にライブラリ仕様を読み込ませたい方へ**: トークン効率と情報密度を最大化し、全機能・型システム・制約事項を凝縮した **[AI向け完全リファレンス (FOR_AI.md)](FOR_AI.md)** をコンテキストとしてご活用ください。
@@ -20,18 +20,25 @@ Python 標準の `struct` モジュールで生じがちなフォーマット文
   - Python の型ヒントとデータクラス記法を用いて、バイナリヘッダーやパケットフォーマットを直感的に定義可能。
   - **双方向シリアライズ**: `instance.to_bytes()` による書き込みと `Cls.from_bytes(data)` による自動デシリアライズの両方に対応。
   - **バイナリサイズ取得 (`Cls.binary_size`, `sizeof(Cls)`, `len(instance)`)**: クラス定義からの静的計算や、インスタンスからの動的バイト数取得に対応。
-  - **ワンライナー仕様書 & 多言語コード直接出力 (`Cls.to_markdown()`, `Cls.to_code("rust")`, `Cls.write_markdown()`, `Cls.write_code()`)**: Builder や Writer を介さず、構造体クラスや実データインスタンスから直接 Markdown 仕様書や Rust/C/C++/C#/Go コードを出力可能。
+  - **固定総サイズ保証 & パディング (`total_size=N`, `pad_byte=b"\x00"`)**: 構造体の総バイトサイズを固定保証。不足バイトを自動パディングし、超過時は `TotalSizeExceededError` を送出。
+  - **自動長さ/要素数計算 (`LengthOf`, `CountOf`)**: ペイロードのバイト長や配列要素数を書き込み時に自動計算し、読み込み時は連動して正確なバイト数／要素数のみを復元。
+  - **値の範囲検証 (`Range[Type, min, max]`)**: 許容範囲外の値をシリアライズ／デシリアライズ時に即時検知（`RangeValidationError`）。
+  - **ワンライナー仕様書 & 多言語コード直接出力 (`Cls.to_markdown()`, `Cls.to_html()`, `Cls.to_code("rust")`)**: Builder や Writer を介さず、構造体クラスや実データインスタンスから直接 Markdown 仕様書、インタラクティブ HTML 仕様書、Rust/C/C++/C#/Go コードを出力可能。
   - **JSON & 辞書相互シリアライズ (`to_dict()`, `from_dict()`, `to_json()`, `from_json()`)**: Web API や設定ファイル連携のための完全な JSON/dict 双方向変換（16進文字列、Base64、数値配列のフォーマット選択可能）。
   - **Docstring の仕様書自動反映**: クラスの docstring（`"""..."""`）が仕様書の概要やビットフィールド詳細にそのまま自動反映。
   - **コメントの自動抽出**: コード上のインラインコメント（`# ...`）や `Annotated[Type, "説明"]` を自動抽出し、仕様書の `Description` 列に反映。
   - **自動アライメント & パディング (`auto_align=True`, `align=N`)**: C言語の構造体アライメント規則に基づき、メンバ境界や構造体サイズのアライメントパディングを自動挿入。
+- 🌐 **スタンドアロン・インタラクティブ HTML 仕様書 (`to_html()`, `write_html()`)**  
+  - 単一ファイル完結（外部依存なし）で開けるレスポンシブ HTML 仕様書。ダーク/ライトテーマ対応。
+  - **Hex Inspector（ヘックスダンプ検査機構）**: 仕様表の行をホバーすると対応するバイト列が瞬時にハイライトされ、逆にヘックスバイトをホバーすると対応する構造体フィールドが浮き上がる双方向インスペクタを内蔵。
+  - **Mermaid 埋め込み**: フローチャートおよびパケット図をそのままブラウザで綺麗に描画。
 - 🧩 **高度な型サポート & 制約システム**  
   - **シグネチャ & 定数制約 (`Magic[b"..."]`, `Constant[Type, Val]`)**: ヘッダーマジックや固定値のコンストラクタ自動補完とデシリアライズ時の自動不整合検知。
   - **サイズ固定列挙型 (`BinaryEnum`)**: `MyEnum[UInt8]` や `size=1` など、バイナリサイズが明示された型安全な列挙型。
   - **統合チェックサム (`CRC32`, `CRC16`, `CRC16_CCITT`, `CRC16_ARC`, `Adler32`, `Fletcher16`, `Checksum8`, `Checksum16`)**: ヘッダーやペイロードのチェックサム自動計算・検証。
   - **LEB128 可変長整数 (`VarUInt`, `VarInt`)**: Protocol Buffers / WebAssembly 準拠の可変長整数（1〜10バイト動的サイズ）。
   - **任意ビットストリーム (`BitWriter`, `BitReader`)**: バイト境界をまたぐ任意ビット幅（1〜64ビット）データの連続パッキング・アンパッキング。
-  - 符号付き / 符号なし整数（8, 16, 32, 64-bit）および浮動小数点数（Float32, Float64）
+  - 符号付き / 符号なし整数（8, 16, 32, 64-bit）および浮動小数点数（Float16, Float32, Float64）
   - **論理値 (`Bool` / `bool`)**: サイズ設定可能（`Bool[1]`, `Bool[2]`, `Bool[4]` 等、デフォルト1バイト）
   - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング・アンパッキング
   - **文字列・バイト列型 (`Bytes[N]`, `FixedString[N]`, `CString`, `PrefixedString[N]`)**: 固定長バイト配列、Null終端文字列、長さプレフィックス文字列、固定長文字列を構造体メンバとして直接宣言可能
@@ -1029,6 +1036,7 @@ if "footer" in result:
 | `UInt16` / `Int16` | 2 バイト | 16ビット 符号なし / 符号付き整数 |
 | `UInt32` / `Int32` | 4 バイト | 32ビット 符号なし / 符号付き整数 |
 | `UInt64` / `Int64` | 8 バイト | 64ビット 符号なし / 符号付き整数 |
+| `Float16` | 2 バイト | IEEE 754 半精度浮動小数点数 |
 | `Float32` | 4 バイト | IEEE 754 単精度浮動小数点数 |
 | `Float64` | 8 バイト | IEEE 754 倍精度浮動小数点数 |
 | `Bits[N]` | N ビット | ビットフィールドのフィールド幅 |

@@ -13,6 +13,7 @@ from .binary_struct import (
     Int16,
     Int32,
     Int64,
+    Float16,
     Float32,
     Float64,
     Bool,
@@ -39,6 +40,9 @@ from .binary_struct import (
     BinaryEnum,
     Magic,
     Constant,
+    Range,
+    LengthOf,
+    CountOf,
 )
 from .exceptions import (
     BinaryMasterError,
@@ -46,6 +50,8 @@ from .exceptions import (
     InvalidMagicError,
     InvalidConstantError,
     InvalidEnumError,
+    RangeValidationError,
+    TotalSizeExceededError,
 )
 from .checksum import (
     ChecksumBase,
@@ -75,6 +81,8 @@ from .bitstream import BitWriter, BitReader
 from .manual import (
     LayoutEntry,
     generate_manual,
+    generate_html,
+    write_html,
     generate_mermaid_diagram,
     generate_packet_diagram,
     generate_bitfield_packet_diagram,
@@ -105,7 +113,7 @@ from .debug import (
 
 
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "BinaryWriter",
@@ -125,6 +133,7 @@ __all__ = [
     "Int16",
     "Int32",
     "Int64",
+    "Float16",
     "Float32",
     "Float64",
     "Bool",
@@ -143,11 +152,16 @@ __all__ = [
     "BinaryEnum",
     "Magic",
     "Constant",
+    "Range",
+    "LengthOf",
+    "CountOf",
     "BinaryMasterError",
     "ChecksumMismatchError",
     "InvalidMagicError",
     "InvalidConstantError",
     "InvalidEnumError",
+    "RangeValidationError",
+    "TotalSizeExceededError",
     "ChecksumBase",
     "CRC32",
     "CRC16",
@@ -180,6 +194,8 @@ __all__ = [
     "bit_offsetof",
     "LayoutEntry",
     "generate_manual",
+    "generate_html",
+    "write_html",
     "generate_mermaid_diagram",
     "generate_packet_diagram",
     "generate_bitfield_packet_diagram",

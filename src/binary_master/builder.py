@@ -940,6 +940,36 @@ class BinaryBuilder:
         """
         return self.write(path_or_file=path_or_file, **kwargs)
 
+    @property
+    def entries(self) -> List[LayoutEntry]:
+        """Aggregate layout entries from all registered StructElements."""
+        from binary_master.manual import inspect_struct_layout
+        all_entries: List[LayoutEntry] = []
+        for elem in self.elements:
+            if isinstance(elem, StructElement):
+                all_entries.extend(inspect_struct_layout(elem.struct_cls))
+        return all_entries
+
+    def to_html(self, **kwargs: Any) -> str:
+        """Generate a complete standalone HTML specification manual."""
+        from binary_master.manual import generate_html
+        kwargs.setdefault("title", self.title)
+        kwargs.setdefault("default_endian", self.default_endian)
+        return generate_html(self.entries, **kwargs)
+
+    def write_html(self, path_or_file: Union[str, Path, IO[str]], **kwargs: Any) -> str:
+        """Generate specification HTML and write it to a file or stream."""
+        content = self.to_html(**kwargs)
+        if isinstance(path_or_file, (str, Path)):
+            p = Path(path_or_file)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+        elif hasattr(path_or_file, "write"):
+            path_or_file.write(content)
+        else:
+            raise TypeError(f"Invalid path_or_file: {type(path_or_file).__name__}")
+        return content
+
     def to_c_header(self, guard: Optional[str] = None, pack: bool = True) -> str:
         """Generate a complete C99/C11 header file from this specification schema.
 
@@ -1381,6 +1411,8 @@ class BinaryBuilder:
             writer.write_int32(val, endian=endian, name=elem.name, desc=elem.desc)
         elif "int64" in t:
             writer.write_int64(val, endian=endian, name=elem.name, desc=elem.desc)
+        elif "float16" in t:
+            writer.write_float16(val, endian=endian, name=elem.name, desc=elem.desc)
         elif "float32" in t:
             writer.write_float32(val, endian=endian, name=elem.name, desc=elem.desc)
         elif "float64" in t:
@@ -1551,6 +1583,8 @@ class BinaryBuilder:
             return reader.read_int32(endian=endian)
         if "int64" in t:
             return reader.read_int64(endian=endian)
+        if "float16" in t:
+            return reader.read_float16(endian=endian)
         if "float32" in t:
             return reader.read_float32(endian=endian)
         if "float64" in t:
@@ -1585,6 +1619,8 @@ class BinaryBuilder:
             writer.write_int32(int(val), endian=order, name=elem.name, desc=elem.desc)
         elif "int64" in t:
             writer.write_int64(int(val), endian=order, name=elem.name, desc=elem.desc)
+        elif "float16" in t:
+            writer.write_float16(float(val), endian=order, name=elem.name, desc=elem.desc)
         elif "float32" in t:
             writer.write_float32(float(val), endian=order, name=elem.name, desc=elem.desc)
         elif "float64" in t:

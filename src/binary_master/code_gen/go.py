@@ -19,6 +19,7 @@ from typing import (
 
 from binary_master.binary_struct import (
     FixedArray,
+    Float16,
     Float32,
     Float64,
     Int8,
@@ -58,6 +59,8 @@ def go_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
         return "int32", None
     if field_type is Int64:
         return "int64", None
+    if field_type is Float16 or field_type == "Float16":
+        return "uint16", "float16"
     if field_type is Float32:
         return "float32", None
     if field_type is Float64:
@@ -82,10 +85,25 @@ def go_type_of(field_type: Any) -> Tuple[str, Optional[str]]:
         PrefixedString,
         MagicBase,
         ConstantBase,
+        RangeBase,
+        LengthOfBase,
+        CountOfBase,
     )
     from binary_master.checksum import ChecksumBase
     from binary_master.varint import VarIntTypeMeta
     import enum
+
+    if isinstance(field_type, type) and issubclass(field_type, RangeBase):
+        go_name, _ = go_type_of(field_type._type)
+        return go_name, f"Range: [{field_type._min}, {field_type._max}]"
+
+    if isinstance(field_type, type) and issubclass(field_type, LengthOfBase):
+        go_name, _ = go_type_of(field_type._type)
+        return go_name, f"Length of '{field_type._target_field}'"
+
+    if isinstance(field_type, type) and issubclass(field_type, CountOfBase):
+        go_name, _ = go_type_of(field_type._type)
+        return go_name, f"Count of '{field_type._target_field}'"
 
     if isinstance(field_type, type) and issubclass(field_type, MagicBase):
         expected = getattr(field_type, "_value", None)
@@ -270,6 +288,17 @@ def generate_go_struct(
             f_pascal = to_pascal_case(field_name)
             comment = f" // {field_desc}" if field_desc else ""
             lines.append(f"\t{f_pascal} {go_t}{comment}")
+
+        total_size = meta.get("total_size")
+        if total_size is not None:
+            try:
+                from binary_master.binary_struct import _calculate_field_size
+                curr_size = sum(_calculate_field_size(fn, ft, is_cls=True) for fn, ft in fields.items())
+                if curr_size < total_size:
+                    pad_len = total_size - curr_size
+                    lines.append(f"\tPadding [{pad_len}]byte // Struct padding to total size {total_size}")
+            except Exception:
+                pass
 
         lines.append("}")
 

@@ -338,6 +338,10 @@ class BinaryReader:
 
     # --- Floating-point & Boolean Readers ---
 
+    def read_float16(self, endian: EndianType = None) -> float:
+        """Read a 16-bit half precision IEEE 754 float."""
+        return self._unpack_read("e", 2, endian)
+
     def read_float32(self, endian: EndianType = None) -> float:
         """Read a 32-bit single precision IEEE 754 float."""
         return self._unpack_read("f", 4, endian)

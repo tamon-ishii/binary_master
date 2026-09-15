@@ -35,7 +35,7 @@ from binary_master import (
     Bool,                # Configurable boolean type (default 1 byte, supports Bool[1], Bool[2], Bool[4])
     UInt8, UInt16, UInt32, UInt64,
     Int8,  Int16,  Int32,  Int64,
-    Float32, Float64,
+    Float16, Float32, Float64,
 
     # Generic & Advanced Type Annotations
     Bits,                # Bits[N]: Bitfield slice (used with @binary_struct(bits=N))
@@ -51,10 +51,13 @@ from binary_master import (
     Base,                # Base.SELF, Base.STRUCT, Base.FIELD origin markers
     RelativeBase,        # Result of Base + delta arithmetic
 
-    # v2.0 Declarative Types & Constraints
+    # v2.0 & v2.1 Declarative Types & Constraints
     BinaryEnum,          # IntEnum with explicit sizing: MyEnum[UInt8]
     Magic,               # Magic[b"PNG..."] or Magic[0x1234]: signature constraint
     Constant,            # Constant[Type, Value]: fixed-value constant field
+    Range,               # Range[Type, min, max]: bounded value range with validation
+    LengthOf,            # LengthOf[Type, "target_field"]: automatic byte length calculation & linked deserialization
+    CountOf,             # CountOf[Type, "target_field"]: automatic array element count calculation & linked deserialization
     CRC32, CRC16, CRC16_CCITT, CRC16_ARC, Checksum8, Checksum16, Fletcher16, Adler32,
     compute_checksum,
     VarUInt, VarInt, VarUInt32, VarInt32, VarUInt64, VarInt64,
@@ -67,6 +70,8 @@ from binary_master import (
     InvalidMagicError,
     InvalidConstantError,
     InvalidEnumError,
+    RangeValidationError,
+    TotalSizeExceededError,
 
     # Protocol Builder & Automated Deserialization
     Builder,             # Top-level protocol schema builder (alias: BinaryBuilder)
@@ -100,8 +105,10 @@ from binary_master import (
     diff_dump,           # diff_dump(target_a, target_b, color=False)
     dump_table, dump_json, dump_dict,
 
-    # Manual & Mermaid Generation
+    # Manual, HTML & Mermaid Generation
     generate_manual,
+    generate_html,
+    write_html,
     generate_mermaid_diagram,
     generate_packet_diagram,
     generate_bitfield_packet_diagram,
@@ -118,7 +125,7 @@ from binary_master import (
 |---|---|---|---|
 | `UInt8`, `UInt16`, `UInt32`, `UInt64` | 1, 2, 4, 8 bytes | `int` | Unsigned standard integers |
 | `Int8`, `Int16`, `Int32`, `Int64` | 1, 2, 4, 8 bytes | `int` | Signed 2's complement integers |
-| `Float32`, `Float64` | 4, 8 bytes | `float` | IEEE 754 single / double precision |
+| `Float16`, `Float32`, `Float64` | 2, 4, 8 bytes | `float` | IEEE 754 half / single / double precision |
 | `Bool` / `bool` | 1 byte (or `Bool[N]` bytes) | `bool` | `0x00` = False, non-zero = True (supports `Bool[1]`, `Bool[2]`, `Bool[4]`) |
 | `Bytes[N]` | `N` bytes | `bytes` | Static raw bytes buffer. Example: `Bytes[16]` |
 | `FixedString[N]` | `N` bytes | `str` | Static fixed-length string (null/space-padded). Example: `FixedString[8]` |
@@ -126,6 +133,9 @@ from binary_master import (
 | `PrefixedString[N]` | Variable (`N + len` bytes) | `str` | Length-prefixed string with N-byte length prefix (1, 2, 4) |
 | `FixedArray[T, N]` | `N * sizeof(T)` | `bytes` (if T is UInt8) or `list[T]` | Static fixed element buffer. Example: `FixedArray[UInt8, 16]` |
 | `Array[T]` | Dynamic (`len * sizeof(T)`) | `bytes` (if T is UInt8) or `list[T]` | Dynamic sequence. Consumes remaining bytes on read unless bounded. |
+| `Range[Type, min, max]` | `sizeof(Type)` | `int` or `float` | Bounded numeric field validated on serialization and deserialization. |
+| `LengthOf[Type, target]` | `sizeof(Type)` | `int` | Auto-calculates target byte length on write; bounds target read on deserialization. |
+| `CountOf[Type, target]` | `sizeof(Type)` | `int` | Auto-calculates target element count on write; bounds target array read on deserialization. |
 | `Bits[N]` | `N` bits | `int` | Bitfield slice. Must be within struct decorated with `@binary_struct(bits=Total)`. |
 | `Offset[Target, Type, Base]` | 1, 2, 4, or 8 bytes | Instance of `Target` or `int` | Pointer offset. Backpatched automatically on write; auto-dereferenced on read. Default: `UInt32`, Base `0`. |
 | `OffsetTable[Count, Type, Base]` | `Count * sizeof(Type)` | `list[Target]` or `OffsetTableHandle` | Fixed-count table of pointer offsets. |
@@ -143,6 +153,8 @@ from binary_master import (
     bits=None,            # Total bit width if this struct is a Bitfield container (e.g. 8, 16, 32, 64)
     align=None,           # Explicit struct-level boundary alignment (e.g. align=4)
     auto_align=False,     # True: aligns each field to its natural boundary (C struct behavior)
+    total_size=None,      # Fixed total byte size of struct. Automatically pads with pad_byte up to total_size
+    pad_byte=b"\x00",     # Byte used for total_size padding (default b"\x00")
 )
 class MyStruct:
     ...
@@ -433,6 +445,7 @@ writer.write_int8(-1, name="i8")
 writer.write_int16(-32000, name="i16")
 writer.write_int32(-100000, name="i32")
 writer.write_int64(-9999999999, name="i64")
+writer.write_float16(1.5, name="f16")
 writer.write_float32(3.14159, name="f32")
 writer.write_float64(2.7182818284, name="f64")
 writer.write_bool(True, name="flag")
@@ -519,6 +532,7 @@ i8  = reader.read_int8()
 i16 = reader.read_int16()
 i32 = reader.read_int32()
 i64 = reader.read_int64()
+f16 = reader.read_float16()
 f32 = reader.read_float32()
 f64 = reader.read_float64()
 b   = reader.read_bool()
@@ -780,7 +794,63 @@ binary_data = writer.to_bytes()
 `@binary_struct` classes and instances support direct specification and multi-language code export without instantiating `Builder` or `BinaryWriter`:
 - `Cls.to_markdown(title=None, **kwargs) -> str` / `inst.to_markdown(include_values=True, **kwargs) -> str`
 - `Cls.write_markdown(path, **kwargs) -> str` / `inst.write_markdown(path, **kwargs) -> str`
+- `Cls.to_html(title=None, **kwargs) -> str` / `inst.to_html(**kwargs) -> str`
+- `Cls.write_html(path, **kwargs) -> str` / `inst.write_html(path, **kwargs) -> str`
 - `Cls.to_code(lang="rust"|"c"|"cpp"|"csharp"|"go", **kwargs) -> str` / `inst.to_code(lang, **kwargs) -> str`
 - `Cls.write_code(path, lang=None, **kwargs) -> str` / `inst.write_code(path, **kwargs) -> str` (infers language from file extension if `lang` is omitted)
 - Individual language shortcuts: `Cls.to_c()`, `Cls.to_rust()`, `Cls.to_cpp()`, `Cls.to_csharp()`, `Cls.to_go()`.
+
+### 11.10 LengthOf & CountOf (Automatic Calculation & Bound Deserialization)
+- **Declarative Syntax**: `LengthOf[Type, "target_field", delta=0]` and `CountOf[Type, "target_field", delta=0]`. (Also accepts `["target_field", Type]`).
+- **Serialization**: When writing, if the field value is `0` or omitted, it is automatically computed from the target field's byte length (`LengthOf`) or item count (`CountOf`).
+- **Deserialization**: When reading, `LengthOf` and `CountOf` values dynamically bind the number of bytes read by downstream `Bytes` / `Array[T]`, eliminating greedy buffer overconsumption.
+```python
+@binary_struct
+class Packet:
+    payload_len: LengthOf[UInt16, "payload"]
+    payload: Bytes
+    footer: UInt8
+
+p = Packet(payload=b"hello", footer=0xFF)
+data = p.to_bytes()  # payload_len auto-computed as 5!
+recovered = Packet.from_bytes(data)
+assert recovered.payload == b"hello"
+assert recovered.footer == 0xFF
+```
+
+### 11.11 Value Range Validation (`Range[Type, min, max]`)
+- **Declarative Syntax**: `Range[Type, min_val, max_val]`. Supports integer and floating-point types (`UInt8`, `Int32`, `Float32`, etc.).
+- **Validation**:
+  - `to_bytes()` / `write_struct`: Validates that `min <= val <= max`. Raises `RangeValidationError(field_name, value, min, max)` if violated.
+  - `from_bytes()` / `read_struct`: Validates read value against `[min, max]`, raising `RangeValidationError` on invalid data.
+- **Multi-Language Export**: Emitted in C, C++, Rust, C#, and Go with inline comment `/**< Range: [min, max] */`.
+```python
+@binary_struct
+class SensorPacket:
+    temp: Range[Int16, -40, 125]
+    humidity: Range[UInt8, 0, 100]
+```
+
+### 11.12 Struct Fixed Size & Writer Padding (`total_size`, `pad_to`)
+- **Struct-Level Total Size**: `@binary_struct(total_size=64, pad_byte=b"\x00")`.
+  - Serializes fields and automatically appends `pad_byte` until the struct reaches `total_size` bytes.
+  - If field data exceeds `total_size`, raises `TotalSizeExceededError`.
+  - `sizeof(Struct)` returns `total_size`.
+  - Multi-language export automatically emits a padding buffer field (e.g. `uint8_t _padding[N]`).
+- **Procedural Pad To**: `writer.pad_to(target_offset, pad_byte=b"\x00")`.
+  - Pads stream with `pad_byte` until `writer.tell() == target_offset`.
+  - Raises `ValueError` if current stream offset is already past `target_offset`.
+
+### 11.13 Interactive Standalone HTML Documentation (`to_html()`, `write_html()`)
+- **Single-File Output**: Generates self-contained HTML specification manuals with responsive CSS, light/dark theme toggle, embedded Mermaid diagrams, and bitfield tables.
+- **Interactive Hex Inspector**:
+  - Displays a 16-byte side-by-side hex dump and ASCII preview.
+  - Bidirectional hover inspection: Hovering any row in the specification table highlights its exact byte range in the hex dump. Hovering any hex byte highlights the corresponding field in the table and updates a floating inspection bar.
+- **API Availability**:
+  - `Cls.to_html(title=None, **kwargs) -> str` / `Cls.write_html(path, **kwargs) -> str`
+  - `instance.to_html(**kwargs) -> str` / `instance.write_html(path, **kwargs) -> str`
+  - `writer.to_html(**kwargs) -> str` / `writer.write_html(path, **kwargs) -> str`
+  - `builder.to_html(**kwargs) -> str` / `builder.write_html(path, **kwargs) -> str`
+  - `generate_html(entries, sample_data=None, **kwargs) -> str` / `write_html(entries, path, **kwargs) -> str`
+
 
