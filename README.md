@@ -708,9 +708,10 @@ for i in range(10):
 - **Mermaid ダイアグラム**:
   10個のノードが1つのサブグラフに集約可視化されます：
   ```mermaid
-  subgraph SG_offsets ["offsets 🔁 xnum_chunk (0x000A - 0x0032, 40B)"]
-      N1["+0x00: offsets[i] (Offset[UInt32], 4B)"]
-  end
+  flowchart TD
+      subgraph SG_offsets ["offsets 🔁 xnum_chunk (0x000A - 0x0032, 40B)"]
+          N1["+0x00: offsets[i] (Offset[UInt32], 4B)"]
+      end
   ```
 
 ###### ユースケース B: 構造体ループの仕様書集約
