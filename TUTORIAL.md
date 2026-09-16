@@ -334,28 +334,67 @@ print(sizeof(NaturalAlignedStruct))  # => 8
 
 > 対応サンプルコード: [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py)
 
-バイナリファイルフォーマット（フォント、3Dモデル、ゲームアーカイブなど）では、ヘッダー内に「データ本体が存在するオフセット位置」を記録することが多々あります。
+バイナリファイルフォーマット（フォント、画像、3Dモデル、ゲームアーカイブなど）では、ヘッダー内に「データ本体が存在するオフセット位置」を記録する構造が頻出します。
 
-Binary Master は **オフセットの自動バックパッチ（遅延解決）** と **読み込み時の自動インスタンス化** を標準サポートしています。
+Binary Master は **オフセットの自動バックパッチ（遅延解決）**、**ポインタテーブルの自動生成**、および **読み込み時の自動インスタンス化** を標準サポートしています。
 
-### 3.1 自動オフセット計算 (`Offset[T, Base.SELF]`)
+---
+
+### 3.1 「Offset で渡した構造体はどこに書かれるのか？」
+
+初心者が最も疑問に持ちやすいポイントが **「`Offset[T]` に渡したオブジェクトの実体はバイナリのどこに書き出されるのか？」** です。
+
+答えは **「親構造体の全通常フィールドが書き終わった直後（末尾）に順番に追加書き込みされる」** です。
+
+#### 3段階のシリアライズ・ライフサイクル
+
+```text
+【メモリレイアウト / バイト列の配置順序】
+
+0x0000 ┌───────────────────────────────────────────────┐
+       │ AssetContainer (親構造体 / ヘッダー)          │
+       │   magic: UInt32 (4B)                          │
+       │   version: UInt16 (2B)                        │
+0x0006 │   primary_offset: Offset[TextureData] (4B) ──┐│ ← 1. まず仮値 0x00000000 を書き込み位置を記憶
+0x000A │   aux_offset: Offset[TextureData] (4B) ────┐ ││
+0x000E ├─────────────────────────────────────────────┼─┼┤ ← 親構造体の末尾
+       │ TextureData (primary_offset の実体データ)   │ ││
+       │   width: 256, height: 256 ... (13B)         │ ││ ← 2. 親構造体の直後に自動追記！
+0x001B ├─────────────────────────────────────────────┼─┼┤
+       │ TextureData (aux_offset の実体データ)       │ ││
+       │   width: 128, height: 128 ... (13B)         │ ││ ← 2. 続いて末尾に自動追記！
+       └─────────────────────────────────────────────┴─┴┘
+                                                     │ │
+                                                     │ └─── 3. 実際の配置位置 (0x000E) との相対差分を
+                                                     │         primary_offset の位置に自動バックパッチ！
+                                                     └───── 3. 実際の配置位置 (0x001B) との相対差分を
+                                                               aux_offset の位置に自動バックパッチ！
+```
+
+1. **フェーズ 1 (親構造体の通常フィールドの書き込み)**:
+   ヘッダーの各フィールドを先頭から順にストリームへ書き出します。`Offset` フィールドの位置には **仮値 `0x00000000`（4バイト）** が書き込まれ、その書き込み位置（プレースホルダー）が内部で記録されます。
+2. **フェーズ 2 (実体データの末尾追記)**:
+   親構造体の通常フィールドがすべて書き終わった直後、引数で渡された各実体オブジェクト（`primary_offset=tex_main` 等）が **ストリームの末尾に順番に追加（追記）書き込み** されます。
+3. **フェーズ 3 (オフセットの自動バックパッチ)**:
+   実体データが配置された実アドレス（`writer.tell()`）を取得し、基準点（`Base.SELF` や `Base.STRUCT` 等）との相対差分を計算して、フェーズ 1 で残したプレースホルダーへシークして正しいオフセット値を上書きします。
+
+したがって、**実体データを手動で別途 `write_struct` する必要はなく、`container.to_bytes()` を呼ぶだけで全体が完璧にシリアライズされます。**
 
 ```python
 from binary_master import (
     Base,
     FixedArray,
     Offset,
-    OffsetTable,
     UInt8,
     UInt16,
     UInt32,
     binary_struct,
-    BinaryWriter,
+    BinaryStruct,
 )
 
 # 参照先ペイロード
 @binary_struct
-class TextureData:
+class TextureData(BinaryStruct):
     width: UInt16
     height: UInt16
     format: UInt8
@@ -363,63 +402,115 @@ class TextureData:
 
 # コンテナヘッダー
 @binary_struct
-class AssetContainer:
+class AssetContainer(BinaryStruct):
     magic: UInt32
     version: UInt16
     # 自身の先頭 (Base.SELF) からの相対オフセットを 4バイト整数で格納
     primary_offset: Offset[TextureData, Base.SELF, UInt32]
     # オフセット基準位置にバイアスを付与 (Base.SELF + 0x20)
     aux_offset: Offset[TextureData, Base.SELF + 0x20, UInt32]
-    # 先行フィールド num_textures を要素数とするテクスチャオフセット配列テーブル
-    num_textures: UInt16
-    texture_table: OffsetTable["num_textures", UInt32, Base.SELF]
-```
 
-### 3.2 データの書き出しと自動バックパッチ
-
-`BinaryWriter` を使用して書き出す際、オフセット値の手動計算は一切不要です：
-
-```python
-writer = BinaryWriter()
-
-# 1. ターゲットデータを先に作成
+# 1. 実体オブジェクトを作成
 tex_main = TextureData(width=256, height=256, format=1, raw_pixels=b"MAIN_TEX")
 tex_aux  = TextureData(width=128, height=128, format=1, raw_pixels=b"AUX__TEX")
-sub_tex1 = TextureData(width=64,  height=64,  format=2, raw_pixels=b"SUB_TEX1")
-sub_tex2 = TextureData(width=32,  height=32,  format=2, raw_pixels=b"SUB_TEX2")
 
-# 2. ヘッダーを定義（参照先オブジェクトをそのまま渡す）
+# 2. ヘッダーに実体オブジェクトを渡してインスタンス化
 container = AssetContainer(
     magic=0x54535341,  # 'ASST'
     version=1,
     primary_offset=tex_main,
     aux_offset=tex_aux,
-    num_textures=2,
-    texture_table=[sub_tex1, sub_tex2],
 )
 
-# 3. 構造体と実体をストリームに書き出す
-writer.write_struct(container)
-writer.write_struct(tex_main)
-writer.write_struct(tex_aux)
-writer.write_struct(sub_tex1)
-writer.write_struct(sub_tex2)
-
-# 4. バイト列を取得（この時点で全オフセット値が自動計算・書き換えされます）
-binary_package = writer.to_bytes()
+# 3. to_bytes() だけでヘッダーと各実体データが順番に書き出され、オフセットが自動計算されます
+binary_package = container.to_bytes()
 ```
 
-### 3.3 自動デリファレンスによる読み込み
+---
 
-`AssetContainer.from_bytes(binary_package)` で読み込むと、オフセットが指す先の実体データが自動的に `TextureData` インスタンスとして復元されます。
+### 3.2 中間構造体不要！`Offset[OffsetTable[...]]` によるポインタテーブル直接配置
+
+「ヘッダー内にポインタテーブルへのオフセットを持ち、そのテーブルが複数の要素を指す」という構造も、ラッパー用の構造体を作ることなく直接宣言できます。
+
+```text
+【Offset[OffsetTable] の配置順序】
+
+┌──────────────────────────────────────┐
+│ DirectTableContainer (ヘッダー)      │
+│   magic: UInt32                      │
+│   num_items: UInt16 (=2 自動反映)     │
+│   table_offset: Offset ──────────┐   │
+├──────────────────────────────────┼───┤
+│ OffsetTable (ポインタ配列テーブル)  │<──┘
+│   table[0] ──────────────────┐   │
+│   table[1] ──────────────┐   │   │
+├──────────────────────────┼───┼───┤
+│ LeafItem #0 (id=1, val=100)│<──┘   │
+├──────────────────────────┼───────┤
+│ LeafItem #1 (id=2, val=200)│<──────┘
+└──────────────────────────┴───────┘
+```
 
 ```python
-loaded = AssetContainer.from_bytes(binary_package)
-print(loaded.primary_offset.target.width)  # => 256
-print(bytes(loaded.primary_offset.target.raw_pixels))  # => b'MAIN_TEX'
+from binary_master import binary_struct, BinaryStruct, UInt16, UInt32, Offset, OffsetTable, Base
+
+@binary_struct
+class LeafItem(BinaryStruct):
+    item_id: UInt16
+    val: UInt32
+
+@binary_struct
+class DirectTableContainer(BinaryStruct):
+    magic: UInt32
+    num_items: UInt16
+    # 中間構造体なしで OffsetTable へのオフセットを直接指定！
+    table_offset: Offset[OffsetTable["num_items", UInt32, Base.SELF], Base.SELF]
+
+# Python リストを直接渡すだけで OK（num_items は省略しても自動的に 2 が設定されます）
+container = DirectTableContainer(
+    magic=0x524F4F54,
+    table_offset=[LeafItem(item_id=1, val=100), LeafItem(item_id=2, val=200)],
+)
+
+raw = container.to_bytes()
+restored = DirectTableContainer.from_bytes(raw)
+print(restored.num_items)     # => 2
+print(restored.table_offset)  # => [8, 14] (各 LeafItem への相対オフセット)
 ```
 
-### 3.4 手続き的ライターでのオフセットテーブル予約 (`write_offset_table`) と仕様書集約 (`spec_count`)
+---
+
+### 3.3 自由配置・ヘッダー先行書き込み (`NamedOffset["key"]`)
+
+`Offset[...]` は親構造体の直後に自動追記されますが、**「ヘッダーを先に書いて、その後に任意の文字列や可変長データを挟み、後からオフセットの指す先を確定させたい」** 場合には、`NamedOffset["key"]` を使用します。
+
+```python
+from binary_master import binary_struct, BinaryStruct, UInt16, BinaryWriter, NamedOffset, read_struct
+
+@binary_struct
+class Header(BinaryStruct):
+    magic: UInt16
+    offset: NamedOffset["payload_pos"]  # "payload_pos" というキー名でオフセット枠を宣言
+
+writer = BinaryWriter()
+h = Header(magic=0x1234)
+
+writer.write_struct(h)                    # 1. まずヘッダーを出力（オフセット位置は未確定）
+writer.write_string("任意の可変長データ...") # 2. 途中に自由なデータを書き込む
+writer.write_named_offset("payload_pos")  # 3. ここで "payload_pos" のオフセットを現在位置に確定・自動バックパッチ！
+
+raw = writer.to_bytes()
+restored = read_struct(Header, raw)
+print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
+```
+
+#### 例外安全性
+- `NamedOffset` を含む構造体を誤って 2 回 `write_struct()` したり、同じキー名を重複登録した場合は、安全のため [`DuplicateNamedOffsetError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L101-L103) が発生します。
+- `write_named_offset("key")` や `rewrite_named_offset("key")` で存在しないキーを指定した場合は、安全のため [`NamedOffsetNotFoundError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L106-L108) が発生します。
+
+---
+
+### 3.4 手続き的ライターでのオフセットテーブル予約 (`write_offset_table`)
 
 構造体を使わず手続き的にバイナリを構築する場合も、`write_offset_table` でオフセット配列枠を予約し、後からオフセットをセットできます。
 `spec_count="num_chunks"` を渡すと、仕様書（Markdown / Mermaid）上では個別のスロット行が 1 つのテンプレート行（`offsets[i]`）と繰り返しバッジ（`🔁 xnum_chunks`）に自動集約されます。

@@ -546,9 +546,13 @@ def test_struct_default_values():
     assert p4.flags == 1
     assert p4.tag == 0xFE
 
-    # Missing required field raises TypeError
-    with pytest.raises(TypeError, match="missing required argument: 'payload_len'"):
-        PacketWithDefaults()
+    # Omitted fields without explicit default are automatically zero-initialized
+    p_zero = PacketWithDefaults()
+    assert p_zero.magic == 0x504B5401
+    assert p_zero.version == 1
+    assert p_zero.payload_len == 0
+    assert p_zero.flags == 0
+    assert p_zero.tag == 0xFF
 
     # Serialization and Deserialization round-trip
     raw = p1.to_bytes()
@@ -559,6 +563,56 @@ def test_struct_default_values():
     assert restored.payload_len == 64
     assert restored.flags == 0
     assert restored.tag == 0xFF
+
+
+def test_binary_struct_base_class():
+    """Verify subclassing BinaryStruct provides statically typed methods and clean serialization."""
+    from binary_master import BinaryStruct, Struct, to_bytes, from_bytes
+
+    @binary_struct
+    class Header(BinaryStruct):
+        id: UInt16
+        code: UInt32
+
+    h = Header(id=42, code=999)
+    raw = h.to_bytes()
+    assert len(raw) == 6
+
+    # from_bytes classmethod
+    h2 = Header.from_bytes(raw)
+    assert h2.id == 42
+    assert h2.code == 999
+
+    # to_dict / from_dict
+    d = h.to_dict()
+    assert d == {"id": 42, "code": 999}
+    h3 = Header.from_dict(d)
+    assert h3 == h
+
+    # to_json / from_json
+    j = h.to_json()
+    h4 = Header.from_json(j)
+    assert h4 == h
+
+    # Struct alias works the same
+    @binary_struct
+    class SubItem(Struct):
+        val: UInt8
+
+    s = SubItem(val=7)
+    assert s.to_bytes() == b"\x07"
+
+    # Standalone to_bytes and from_bytes
+    @binary_struct
+    class Plain:
+        v: UInt16
+
+    p = Plain(v=123)
+    p_raw = to_bytes(p)
+    assert p_raw == struct.pack("<H", 123)
+    p_restored = from_bytes(Plain, p_raw)
+    assert p_restored.v == 123
+
 
 
 

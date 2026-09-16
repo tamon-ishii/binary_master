@@ -22,6 +22,10 @@
 from binary_master import (
     # Core Structures & Decorators
     binary_struct,       # Class decorator for declarative structs
+    BinaryStruct,        # Base class providing static typing for IDEs/ty/mypy/pyright (alias: Struct)
+    Struct,              # Alias for BinaryStruct
+    to_bytes,            # Standalone struct serializer to bytes: to_bytes(struct_instance)
+    from_bytes,          # Standalone struct deserializer from bytes: from_bytes(StructCls, data)
     write_struct,        # Procedural struct serializer
     write_variant,       # Procedural variant serializer with candidate validation
     read_struct,         # Procedural struct deserializer
@@ -45,6 +49,7 @@ from binary_master import (
     CString,             # CString: Null-terminated string (str)
     PrefixedString,      # PrefixedString[N]: Length-prefixed string (str)
     Offset,              # Offset[Target, OffsetType=UInt32, BaseOffset=0]
+    NamedOffset,         # NamedOffset["key", OffsetType=UInt32, BaseOffset=0]
     OffsetTable,         # OffsetTable[Count, OffsetType=UInt32, BaseOffset=0]
     Variant,             # Variant[tag_field_name, {tag_val: StructCls, ...}]
     Array,               # Array[T]: Dynamic length sequence
@@ -139,6 +144,7 @@ from binary_master import (
 | `CountOf[Type, target]` | `sizeof(Type)` | `int` | Auto-calculates target element count on write; bounds target array read on deserialization. |
 | `Bits[N]` | `N` bits | `int` | Bitfield slice. Must be within struct decorated with `@binary_struct(bits=Total)`. |
 | `Offset[Target, Type, Base]` | 1, 2, 4, or 8 bytes | Instance of `Target` or `int` | Pointer offset. Backpatched automatically on write; auto-dereferenced on read. Default: `UInt32`, Base `0`. |
+| `NamedOffset[Key, Type, Base]` | 1, 2, 4, or 8 bytes | `int` | Named placeholder offset resolved via `writer.write_named_offset("key")`. |
 | `OffsetTable[Count, Type, Base]` | `Count * sizeof(Type)` | `list[Target]` or `OffsetTableHandle` | Fixed-count table of pointer offsets. |
 | `Variant[tag_field, mapping]` | Dynamic | Target struct instance | Polymorphic tagged union dispatched by `tag_field`. |
 | `Base.SELF`, `Base.STRUCT`, `Base.FIELD` | 0 (Symbolic) | `RelativeBase` | Offset base origin. Supports arithmetic: `Base.SELF + 0x20`. |
@@ -161,10 +167,11 @@ class MyStruct:
     ...
 ```
 
-### 3.1.1 Default Values Anywhere
-- Fields can define default values (`field: Type = default_val` or `field(default=...)`).
+### 3.1.1 Default Values Anywhere & Automatic Zero-Initialization
+- Fields can define explicit default values (`field: Type = default_val` or `field(default=...)`).
 - **No ordering restriction**: Unlike standard `@dataclass`, fields with defaults can appear **anywhere** (e.g. at the beginning of a header) without raising `TypeError: non-default argument follows default argument`.
-- When instantiating, omitted fields automatically take their defaults.
+- **Automatic Zero-Initialization**: Fields without explicit defaults automatically default to zero (or type-appropriate zero values: `0`, `0.0`, `False`, `b"\x00"*N`, `[]`, `None`). All fields can be omitted during instantiation (e.g. `MyStruct()` or `MyStruct(magic=0x1234)`).
+- When instantiating, omitted fields automatically take their explicit default or zero value.
 
 
 ### 3.2 Injected Attributes and Methods on Decorated Classes
@@ -279,6 +286,42 @@ restored = FileContainer.from_bytes(data)
 assert restored.primary_offset.width == 10
 assert restored.aux_offset.width == 30
 assert restored.chunk_table == [46, 58] # Offsets in table (relative to Base.SELF)
+
+#### Direct Offset to OffsetTable (`Offset[OffsetTable[...]]`)
+No wrapper struct needed. Passing a python list of structs automatically calculates count, writes table and elements at the end, and backpatches:
+```python
+@binary_struct
+class DirectTableContainer:
+    magic: UInt32
+    num_items: UInt16
+    table_offset: Offset[OffsetTable["num_items", UInt32, Base.SELF], Base.SELF]
+
+# Automatically derives num_items=2, serializes table and items at the end:
+container = DirectTableContainer(
+    magic=0x524F4F54,
+    table_offset=[ChunkPayload(width=1, height=2, pixels=b"A"*8), ChunkPayload(width=3, height=4, pixels=b"B"*8)],
+)
+raw = container.to_bytes()
+```
+
+#### NamedOffset for Arbitrary Positioning (`NamedOffset["key"]`)
+When header is written first, arbitrary data/padding is streamed, and target offset is determined later:
+```python
+from binary_master import BinaryWriter, NamedOffset, DuplicateNamedOffsetError, NamedOffsetNotFoundError
+
+@binary_struct
+class Header:
+    magic: UInt16
+    payload_offset: NamedOffset["my_payload"]
+
+writer = BinaryWriter()
+writer.write_struct(Header(magic=0x1234))
+writer.write_string("variable length padding or metadata...")
+# Backpatch "my_payload" offset to current position (or write target struct):
+writer.write_named_offset("my_payload") 
+# Duplicate writes of same NamedOffset struct or key raise DuplicateNamedOffsetError.
+# Calling write_named_offset or rewrite_named_offset with unknown key raises NamedOffsetNotFoundError.
+```
 ```
 
 #### Polymorphic Tagged Union (`Variant`)

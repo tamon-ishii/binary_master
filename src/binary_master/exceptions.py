@@ -92,3 +92,18 @@ class TotalSizeExceededError(BinaryMasterError, ValueError):
     """Raised when serialized struct size exceeds declared total_size."""
     pass
 
+
+class NamedOffsetError(BinaryMasterError):
+    """Base exception for NamedOffset errors."""
+    pass
+
+
+class DuplicateNamedOffsetError(NamedOffsetError, ValueError):
+    """Raised when a named offset key is already registered or duplicated."""
+    pass
+
+
+class NamedOffsetNotFoundError(NamedOffsetError, KeyError):
+    """Raised when a named offset key does not exist."""
+    pass
+

@@ -69,7 +69,8 @@ packet.write_html("sensor_spec.html", title="センサー通信パケット仕�
   - **論理値 (`Bool` / `bool`)**: サイズ設定可能（`Bool[1]`, `Bool[2]`, `Bool[4]` 等、デフォルト1バイト）
   - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング・アンパッキング
   - **文字列・バイト列型 (`Bytes[N]`, `FixedString[N]`, `CString`, `PrefixedString[N]`)**: 固定長バイト配列、Null終端文字列、長さプレフィックス文字列、固定長文字列を構造体メンバとして直接宣言可能
-  - **オフセット自動計算 & 解決 (`Offset[T, Size, BaseOffset]`)**: ヘッダーのオフセット値の自動バックパッチ（1, 2, 4, 8バイト指定可、`Base.SELF + 0x20` などの構造体先頭相対指定対応）および読み込み時の参照先自動インスタンス化
+  - **オフセット自動計算 & 解決 (`Offset[T, Size, BaseOffset]`)**: ヘッダーのオフセット値の自動バックパッチ（1, 2, 4, 8バイト指定可、`Base.SELF + 0x20` などの構造体先頭相対指定対応）および読み込み時の参照先自動インスタンス化。中間構造体なしの直接テーブル指定 (`Offset[OffsetTable[...]]`) にも対応。
+  - **名前付き遅延オフセット (`NamedOffset["key"]`)**: ヘッダー先行宣言と、後続の `writer.write_named_offset("key")` による位置確定・自動バックパッチ連携
   - **オフセットテーブル (`OffsetTable[Count, Type, BaseOffset]`)**: 複数エントリのオフセット配列の予約・自動バックパッチ（`Base.SELF` などの相対指定対応）
   - **多態チャンク & タグ付き共用体 (`Variant[TagField, Mapping]`)**: 種別IDに応じて切り替わる多態構造体の自動ディスパッチ
   - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
@@ -413,7 +414,7 @@ class PacketHeader:
     flags: UInt8 = 0                  # 初期値
     checksum: UInt32 = field(default=0) # dataclasses.field も利用可能
 
-# 1. 必須フィールドのみ指定してインスタンス化可能
+# 1. 必要なフィールドのみ指定してインスタンス化可能（初期値未指定のフィールドは自動的に0クリア）
 pkt = PacketHeader(payload_len=256)
 assert pkt.magic == 0x504B5401
 assert pkt.version == 1
@@ -424,9 +425,43 @@ assert pkt.flags == 0
 custom_pkt = PacketHeader(magic=0xDEADBEEF, payload_len=512)
 assert custom_pkt.magic == 0xDEADBEEF
 
-# 3. 必須フィールドのみの位置引数指定にも対応
+# 3. 引数をすべて省略することも可能（未指定フィールドは自動的にゼロ値で初期化）
+zero_pkt = PacketHeader()
+assert zero_pkt.payload_len == 0
+
+# 4. 任意フィールドのみの位置引数指定にも対応
 pos_pkt = PacketHeader(128)
 assert pos_pkt.payload_len == 128
+```
+
+#### 静的型チェッカー（ty / Pyright / mypy）対応と基底クラス (`BinaryStruct` / `Struct`)
+`@binary_struct` は実行時に動的に `to_bytes()`, `from_bytes()`, `to_dict()` などのメソッドを付与します。
+Astral の `ty` や Pyright、mypy などの静的型チェッカーにおいて、動的属性の警告（`unresolved-attribute`）を回避し、IDE のコード補完（IntelliSense）を有効化するには、基底クラス `BinaryStruct`（または別名 `Struct`）を継承します：
+
+```python
+from binary_master import binary_struct, BinaryStruct, UInt16
+
+@binary_struct
+class Data(BinaryStruct):
+    data: UInt16
+
+data = Data()
+# ty や Pyright、mypy で警告が出ず、IDE の補完も完全に機能します
+raw = data.to_bytes()
+restored = Data.from_bytes(raw)
+```
+
+また、クラス定義を変更せずにトップレベル関数 `to_bytes(data)` / `from_bytes(Data, raw)` を使用することでも型チェッカーの警告を回避できます：
+
+```python
+from binary_master import binary_struct, UInt16, to_bytes
+
+@binary_struct
+class Data:
+    data: UInt16
+
+data = Data()
+raw = to_bytes(data)  # トップレベル関数呼び出し
 ```
 
 #### 文字列・バイト列型 (`Bytes[N]`, `FixedString[N]`, `CString`, `PrefixedString[N]`)
@@ -473,28 +508,55 @@ class ControlFlags:
 ```
 
 #### オフセット自動計算 (`Offset[T, Size, BaseOffset]`)
-ファイルフォーマットなどで頻出する「ヘッダー内に後続ブロックの開始オフセットを格納する」構造を自動処理します。オフセットサイズ（1, 2, 4, 8バイト）のカスタマイズや、自身が含まれる構造体の先頭アドレス相対（`Base.SELF + delta`）も柔軟に指定できます。
+
+バイナリフォーマットで頻出する「ヘッダー内に後続ブロックの開始オフセット（ポインタ）を格納する」構造を完全自動化します。
+
+##### 💡 「Offset で渡した構造体はどこに書かれるのか？」
+`Offset[Target]` を含む構造体を `to_bytes()` または `write_struct()` で書き出すとき、以下の **3段階のライフサイクル** でシリアライズされます：
+
+```text
+【メモリレイアウト / バイト列の配置順序】
+
+0x0000 ┌───────────────────────────────────────────────┐
+       │ FileHeader (主構造体)                         │
+       │   magic: UInt32 (4B)                          │
+0x0004 │   body_offset: Offset[FileBody] (4B) ───┐     │ ← 1. まず仮値 0x00000000 を書き込み位置を記憶
+       │   other_field: ...                      │     │
+0x0010 ├─────────────────────────────────────────┼─────┤ ← 主構造体の末尾
+       │ FileBody (Offsetで渡した実体データ)       │     │
+       │   data_length: UInt32 (4B)              │     │ ← 2. 主構造体の直後(末尾)に自動追記！
+0x0014 │   raw_data: Bytes[128]                  │     │
+       └─────────────────────────────────────────┴─────┘
+                                                 │
+                                                 └─── 3. 実際の開始位置 (0x0010) との相対オフセットを
+                                                         ヘッダー内の body_offset に自動バックパッチ！
+```
+
+1. **フェーズ 1 (主構造体の書き込み)**: ヘッダーの各フィールドを順にストリームへ出力します。`Offset` フィールドの位置には仮値 `0x00000000` を書き込み、そのファイル位置（プレースホルダー）を記録します。
+2. **フェーズ 2 (実体データの末尾追記)**: 主構造体の全フィールドの書き込みが完了した直後、`body_offset=FileBody(...)` で渡された子構造体の実体が **ストリームの末尾に順番に追加（追記）書き込み** されます。
+3. **フェーズ 3 (オフセットの自動バックパッチ)**: 子構造体が配置された実アドレスを取得し、基準位置（`Base.SELF` = 自身の位置、または `Base.STRUCT` = 構造体先頭など）との差分を計算して、フェーズ 1 のプレースホルダーへ戻って正しいオフセット値を上書きします。
 
 ```python
-from binary_master import Base, Offset, UInt16, UInt32, binary_struct
-
-@binary_struct
-class FileHeader:
-    magic: UInt32
-    # 1. 構造体先頭からの相対オフセット (Base.SELF)
-    body_offset: Offset[FileBody, UInt32, Base.SELF]
-    # 2. 構造体先頭 + 0x20 を基準とする相対オフセット（加減算対応）
-    data_offset: Offset[FileBody, UInt32, Base.SELF + 0x20]
-    # 3. 型を省略した短縮記法 (4バイトUInt32デフォルト)
-    short_offset: Offset[FileBody, Base.SELF + 0x20]
-    # 4. 2バイトオフセット (UInt16)
-    small_offset: Offset[FileBody, UInt16, Base.SELF]
+from binary_master import Base, Offset, UInt16, UInt32, FixedArray, UInt8, binary_struct
 
 @binary_struct
 class FileBody:
     data_length: UInt32
     raw_data: FixedArray[UInt8, 128]
 
+@binary_struct
+class FileHeader:
+    magic: UInt32
+    # 1. 自身のフィールド位置からの相対オフセット (Base.SELF)
+    body_offset: Offset[FileBody, UInt32, Base.SELF]
+    # 2. 構造体先頭 + 0x20 を基準とする相対オフセット（加減算対応）
+    data_offset: Offset[FileBody, UInt32, Base.SELF + 0x20]
+    # 3. 型を省略した短縮記法 (4バイト UInt32 がデフォルト)
+    short_offset: Offset[FileBody, Base.SELF + 0x20]
+    # 4. 2バイトオフセット (UInt16)
+    small_offset: Offset[FileBody, UInt16, Base.SELF]
+
+# 実体オブジェクトを渡して初期化するだけ
 header = FileHeader(
     magic=0x12345678,
     body_offset=FileBody(data_length=128, raw_data=b"\xAA" * 128),
@@ -502,7 +564,88 @@ header = FileHeader(
     short_offset=FileBody(data_length=32, raw_data=b"\xCC" * 32),
     small_offset=FileBody(data_length=16, raw_data=b"\xDD" * 16),
 )
+
+# シリアライズ時に各 FileBody がヘッダー直後に順次書き出され、各オフセットが自動バックパッチされます
+data = header.to_bytes()
 ```
+
+##### 🌟 中間構造体不要！`Offset[OffsetTable[...]]` によるポインタテーブル直接配置
+ヘッダーからポインタテーブル（オフセット配列）を指し、そのテーブル内の各ポインタが実体アイテムを指す「2段階の間接参照」も、中間ラッパー構造体を作ることなく 1 行で宣言できます。
+リストを直接渡すだけで、要素数カウント（`num_items`）の自動導出、テーブルの配置、各アイテムの配置、全ポインタの自動バックパッチがすべて自動で行われます。
+
+```text
+【Offset[OffsetTable] の配置順序】
+
+┌──────────────────────────────────────┐
+│ DirectTableContainer (ヘッダー)      │
+│   magic: UInt32                      │
+│   num_items: UInt16 (=2 自動反映)     │
+│   table_offset: Offset ──────────┐   │
+├──────────────────────────────────┼───┤
+│ OffsetTable (ポインタ配列テーブル)  │<──┘
+│   table[0] ──────────────────┐   │
+│   table[1] ──────────────┐   │   │
+├──────────────────────────┼───┼───┤
+│ LeafItem #0 (id=1, val=100)│<──┘   │
+├──────────────────────────┼───────┤
+│ LeafItem #1 (id=2, val=200)│<──────┘
+└──────────────────────────┴───────┘
+```
+
+```python
+from binary_master import binary_struct, UInt16, UInt32, Offset, OffsetTable, Base
+
+@binary_struct
+class LeafItem:
+    item_id: UInt16
+    val: UInt32
+
+@binary_struct
+class DirectTableContainer:
+    magic: UInt32
+    num_items: UInt16
+    # 中間構造体なしで OffsetTable へのオフセットを直接指定！
+    table_offset: Offset[OffsetTable["num_items", UInt32, Base.SELF], Base.SELF]
+
+# Python リストを直接渡すだけで OK（num_items は省略しても自動的に 2 が設定されます）
+container = DirectTableContainer(
+    magic=0x524F4F54,
+    table_offset=[LeafItem(item_id=1, val=100), LeafItem(item_id=2, val=200)],
+)
+
+raw = container.to_bytes()
+restored = DirectTableContainer.from_bytes(raw)
+print(restored.num_items)     # => 2
+print(restored.table_offset)  # => [8, 14] (各 LeafItem への相対オフセット)
+```
+
+##### 🎯 自由配置・ヘッダー先行書き込み (`NamedOffset["key"]`)
+`Offset[...]` は「親構造体の直後に自動追記」されますが、**「ヘッダーを先に書いて、その後に任意の文字列や可変長データを挟み、任意のタイミングでオフセット位置を確定させたい」** 場合には、`NamedOffset["key"]` を使用します。
+
+```python
+from binary_master import binary_struct, UInt16, BinaryWriter, NamedOffset, read_struct
+
+@binary_struct
+class Header:
+    magic: UInt16
+    offset: NamedOffset["payload_pos"]  # "payload_pos" というキー名でオフセット枠を宣言
+
+writer = BinaryWriter()
+h = Header(magic=0x1234)
+
+writer.write_struct(h)                    # 1. まずヘッダーを出力
+writer.write_string("任意の可変長データ...") # 2. 途中に自由なデータを書き込む
+writer.write_named_offset("payload_pos")  # 3. ここで "payload_pos" のオフセットを現在位置に確定・上書き！
+
+raw = writer.to_bytes()
+restored = read_struct(Header, raw)
+print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
+```
+
+- **例外安全性**:
+  - `NamedOffset` を含む構造体を誤って 2 回 `write_struct()` したり、同じキー名を重複登録した場合は、安全のため [`DuplicateNamedOffsetError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L101-L103) が発生します。
+  - `write_named_offset("key")` や `rewrite_named_offset("key")` で存在しないキーを指定した場合は、安全のため [`NamedOffsetNotFoundError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L106-L108) が発生します。
+
 
 #### 配列 (`FixedArray` & `Array`)
 - `FixedArray[Type, Size]`: 固定長配列（サイズ不足時は自動パディング、サイズ超過時はエラー検知）。
