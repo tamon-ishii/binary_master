@@ -339,7 +339,6 @@ with writer.namespace("chunk_1"):
 # Root escape with leading slash: NamedOffset["/global_footer"] bypasses active namespace.
 # Auto-incrementing IDs: with writer.namespace("chunk", auto_id=True): (generates chunk_0, chunk_1...)
 ```
-```
 
 #### Polymorphic Tagged Union (`Variant`)
 ```python
@@ -748,59 +747,328 @@ md = generate_manual(
 
 ---
 
-## 10. Common Implementation Patterns
+## 10. AI Decision Guide: Recommended Approaches ("こういうときはこれを使う")
 
-### Pattern A: Network Packet with Fixed Header and Variable Tail Payload
+AI（LLM）がユーザー要件やプロトコル仕様からコードを生成する際、最適な型・機能を選択するための判断指針。
+
+### 10.1 Feature Selection Matrix (要件・ユースケース別 選択表)
+
+| 要件・ユースケース | 推奨機能 / 型アノテーション | 避けるべきアンチパターン | 選定理由・メリット |
+|---|---|---|---|
+| **固定ヘッダー + 可変長ボディ + フッター/CRC** | `LengthOf[UInt16, "payload"]` + `payload: Bytes` | `payload: Array[UInt8]` を中間に配置 | `Array` は EOF まで貪欲に読み込むため、後続のフッターや CRC が読めなくなる。`LengthOf` なら読み込みバイト数が自動制限され、後続フィールドも正しく復元される。 |
+| **可変個数の子構造体リスト** | `CountOf[UInt16, "items"]` + `items: Array[ItemCls]` | 手動で `len(items)` を計算してヘッダーに詰める | シリアライズ時に要素数が自動計算され、デシリアライズ時にも指定個数分だけ正確に復元される。 |
+| **ファイルシグネチャ・パケット開始識別子** | `magic: Magic[b"PKT\x01"]` または `Magic[0x12345678]` | `magic: Bytes[4]` に初期値を与えて自前で `if` 比較 | コンストラクタ引数から除外され（引数不要）、`from_bytes` 時に自動検証されて不整合なら即座に `InvalidMagicError` が送出される。 |
+| **プロトコルバージョン等の固定定数** | `version: Constant[UInt8, 1]` | `version: UInt8 = 1` | 固定値として強制され、読み込み時にバージョン違いを `InvalidConstantError` として厳格に検知。 |
+| **エラー検知・完全性検証 (CRC/チェックサム)** | `checksum: CRC32` または `CRC16`, `Adler32` | 自前で `zlib.crc32` を呼んで手動バックパッチ | シリアライズ時に直前バイトまでを自動計算して書き込み、デシリアライズ時に自動検証（不一致で `ChecksumMismatchError`）。 |
+| **固定長フレーム（通信規格・セクタサイズ合わせ）** | `@binary_struct(total_size=512, pad_byte=b"\x00")` | 自前で `b"\x00" * (512 - len(data))` を末尾追加 | サイズ不足を自動パディング。万が一フィールド合計が 512B を超えた場合は `TotalSizeExceededError` で即検知。多言語出力時もパディング配列が自動生成される。 |
+| **構造体先頭相対のポインタ・データ参照** | `offset: Offset[TargetCls, UInt32, Base.SELF]` | 手続き的にオフセットを手動計算して書き込む | シリアライズ時に対象構造体を末尾に配置しオフセットを自動バックパッチ。デシリアライズ時に対象クラスを自動インスタンス化。 |
+| **離れた場所への遅延バックパッチ** | `NamedOffset["target_key"]` + `writer.write_named_offset(...)` | グローバル変数や `seek()` の手動計算 | 文字列キーで直感的に遅延解決。同一キーの多重登録で複数箇所の一括バックパッチも可能。 |
+| **反復ブロック内でのキー衝突防止** | `with writer.namespace("block", auto_id=True):` | キー名を手動で `"block_0_payload"` のように結合 | コンテキストマネージャでスコープ化され、構造体定義を変更せずにキー衝突を完全に回避。 |
+| **種別タグに応じた構造体の切り替え** | `Variant["tag_field", {1: ClsA, 2: ClsB}]` | パケットごとに `if type == 1:` と分岐パーサーを手書き | 宣言的なタグ付き共用体。`Variant` より前に必ず `tag_field` を宣言する。 |
+| **状態・コマンドなどの限定値** | `state: MyEnum[UInt8]` (subclass of `BinaryEnum`) | 生の `UInt8` で定義して自前バリデーション | Python の `Enum` オブジェクトとして直接読み書きされ、未定義値は `InvalidEnumError` で弾かれる。 |
+| **センサー値や範囲制限のある数値** | `temp: Range[Int16, -40, 125]` | 読み込み後に自前で `if not (-40 <= temp <= 125):` | 宣言的な境界検証（違反時は `RangeValidationError`）。仕様書や多言語コード（C/Rust等）にも範囲コメントが反映される。 |
+| **大容量ファイル・連続ログの解析** | `BinaryReader.from_mmap(path)` + `reader.iter_struct(Cls)` | ファイル全体を `read()` してメモリに載せる | OS のメモリマッピングを活用し、メモリ消費ほぼゼロ・高速ゼロコピーで構造体を 1 件ずつストリーミング復元。 |
+| **ビット単位のフラグ・制御レジスタ** | `@binary_struct(bits=16)` + `Bits[N]` | ビットシフト演算（`<<`, `>>`, `&`, `|`）を自前で実装 | ビット幅の合計チェックと型安全なパッキング・アンパッキングを自動化。通常構造体へのネストも可能。 |
+| **仕様書・多言語コードのエクスポート** | `Cls.write_html("spec.html")` / `Cls.to_code("rust")` | `Builder` や `BinaryWriter` を手動インスタンス化 | 構造体クラスから直接ワンライナーで出力可能。 |
+
+### 10.2 Do's and Don'ts for LLMs (AIが守るべきコーディング規約)
+
+#### ✅ DO (推奨される書き方)
+1. **可変長フィールドの前には `LengthOf` または `CountOf` を置く**:
+   可変長バイト列なら `LengthOf[UInt16, "payload"]` + `payload: Bytes`、可変長配列なら `CountOf[UInt16, "items"]` + `items: Array[Item]` を使用する。
+2. **`Magic` / `Constant` / `CRC*` は引数なしでインスタンス化する**:
+   `pkt = Packet(data=b"...")` のように、自動計算されるフィールドは `__init__` 引数に渡さない。
+3. **`Variant` のタグフィールドは必ず手前に宣言する**:
+   タグフィールドは `Variant` よりも先にクラス定義内に現れなければならない。
+4. **大容量データの読み込みには `from_mmap` + `iter_struct` を推奨する**:
+   ギガバイト級のバイナリや通信ログを解析するコードでは、常にメモリ効率の良いストリーミングコードを生成する。
+5. **多言語コードや仕様書の出力にはクラス直接メソッドを使う**:
+   `Cls.to_c()`, `Cls.to_rust()`, `Cls.write_html("spec.html")` を使用する。
+
+#### ❌ DON'T (避けるべきアンチパターン)
+1. **`Array[T]` を構造体の途中や先頭に置かない**:
+   `Array[T]` は EOF まで貪欲に読み込むため、後ろにフィールドがあるとデシリアライズ時に `EOFError` が発生する。途中に置く場合は必ず `CountOf` または `FixedArray` を使う。
+2. **自前でチェックサムや長さを計算して手動代入しない**:
+   `len(payload)` や `zlib.crc32(...)` を手動で計算して構造体に代入するコードは生成しない。`LengthOf` や `CRC32` を使えばライブラリが完全に自動処理する。
+3. **ビットフィールドクラスに通常プリミティブ（`UInt16` 等）を混在させない**:
+   `@binary_struct(bits=N)` で修飾されたクラス内には `Bits[K]` のみを定義し、全ビット幅の合計を `N` と完全に一致させる。
+4. **廃止された API を呼ばない**:
+   `write_manual`（廃止）は使用せず、`write_markdown` または `write_html` を使用する。
+
+---
+
+## 11. "How-To" Practical Recipes & Production Patterns ("こういうときはこうする！実践事例集")
+
+AIが実際のプロジェクトで即座に活用できる、本番水準の実践レシピ集。
+
+### Recipe 1: 通信パケット（Magic + LengthOf + Range + CRC32 + Footer）
+**【課題】**  
+可変長データを含むセンサーパケットで、ヘッダーの開始シグネチャ、温度などの値域チェック、データ長、フッター、そしてデータ破損を検知する CRC32 を安全に実装したい。
+
 ```python
 from binary_master import (
-    binary_struct, UInt8, UInt16, UInt32, Array, FixedArray,
-    sizeof, read_struct
+    binary_struct, Magic, Range, LengthOf, Bytes, CRC32,
+    UInt16, Int16, UInt8, ChecksumMismatchError
 )
 
 @binary_struct(endian="big")
-class NetworkPacket:
-    """Network frame with fixed header and trailing variable payload."""
-    preamble: FixedArray[UInt8, 2] # 0xAA, 0x55
-    msg_id: UInt16
-    checksum: UInt32
-    # Array[T] MUST be at the end of the struct as it consumes until EOF
-    payload: Array[UInt8]
+class TelemetryFrame:
+    """センサー通信フレーム（自動検証・CRC32自動計算付き）"""
+    magic: Magic[b"TLM\x01"]                       # 4B シグネチャ（自動付与・検証）
+    device_id: UInt16                             # 2B 端末ID
+    temp_celsius: Range[Int16, -40, 85]           # 2B 動作保証温度 (-40℃ 〜 85℃)
+    status_flags: Range[UInt8, 0, 15]             # 1B ステータスコード
+    payload_len: LengthOf[UInt16, "payload"]      # 2B ペイロード長（自動計算 & デシリアライズ制限）
+    payload: Bytes                                # 可変長ペイロード
+    footer: Magic[0xAA55]                         # 2B 終端識別子
+    checksum: CRC32                               # 4B 先頭〜フッターまでの CRC32 自動計算 & 検証
 
-# Instantiate
-pkt = NetworkPacket(
-    preamble=b"\xAA\x55",
-    msg_id=0x0102,
-    checksum=0x12345678,
-    payload=b"VARIABLE_LENGTH_PAYLOAD",
+# 1. 送信側（シリアライズ）: magic, payload_len, footer, checksum は完全自動！
+tx_frame = TelemetryFrame(
+    device_id=1001,
+    temp_celsius=25,
+    status_flags=1,
+    payload=b"PRESSURE=1013hPa;HUMIDITY=45%"
 )
-data = pkt.to_bytes()
-restored = NetworkPacket.from_bytes(data)
-assert bytes(restored.payload) == b"VARIABLE_LENGTH_PAYLOAD"
+data = tx_frame.to_bytes()  # payload_len や checksum が自動計算されてバイナリ化
+
+# 2. 受信側（デシリアライズ）: 整合性が自動検証される
+rx_frame = TelemetryFrame.from_bytes(data)
+assert rx_frame.device_id == 1001
+assert rx_frame.temp_celsius == 25
+assert rx_frame.payload == b"PRESSURE=1013hPa;HUMIDITY=45%"
+
+# 3. 破損データの自動検知（1バイト改ざん）
+corrupted_data = bytearray(data)
+corrupted_data[8] ^= 0xFF  # 温度フィールドを破壊
+try:
+    TelemetryFrame.from_bytes(bytes(corrupted_data))
+except ChecksumMismatchError as e:
+    print(f"破損データを正しく検知: {e}")
 ```
 
-### Pattern B: Procedural Header with Pointers to Payloads
+### Recipe 2: アーカイブ/コンテナ形式（CountOf + OffsetTable + 構造体）
+**【課題】**  
+ファイル先頭に目次（ファイル数とオフセット配列）があり、後方に各ファイル実体が配置されるアーカイブコンテナを構築・復元したい。
+
 ```python
-from binary_master import BinaryWriter
+from binary_master import (
+    binary_struct, Magic, CountOf, FixedString, UInt32, UInt16,
+    Offset, OffsetTable, Base
+)
+
+@binary_struct
+class FileContent:
+    """実ファイルデータブロック"""
+    content_id: UInt32
+    data_size: UInt32
+    data: FixedString[16]
+
+@binary_struct
+class ArchiveContainer:
+    """先頭にメタデータとオフセット配列を持つコンテナ"""
+    magic: Magic[b"ARCH"]
+    # 子エントリの数を自動算出
+    num_files: UInt16
+    # 構造体先頭（Base.SELF）からのオフセット配列
+    file_offsets: OffsetTable[2, UInt32, Base.SELF]
+    # 直後のファイル参照（Offset を使って自動バックパッチ）
+    primary_file: Offset[FileContent, UInt32, Base.SELF]
+
+f1 = FileContent(content_id=1, data_size=16, data="FILE_DATA_ALPHA_")
+f2 = FileContent(content_id=2, data_size=16, data="FILE_DATA_BETA__")
+
+# 書き込み: Offset / OffsetTable にオブジェクトを渡すだけで自動配置 & アドレス計算
+container = ArchiveContainer(
+    num_files=2,
+    file_offsets=[f1, f2],
+    primary_file=f1
+)
+archive_bytes = container.to_bytes()
+
+# 読み込み: ポインタ参照先が自動的に FileContent インスタンスとして復元される
+restored = ArchiveContainer.from_bytes(archive_bytes)
+assert restored.primary_file.content_id == 1
+assert restored.primary_file.data == "FILE_DATA_ALPHA_"
+```
+
+### Recipe 3: 階層化名前空間と同一オフセットの多重参照（NamedOffset + namespace）
+**【課題】**  
+複雑なフォーマットやループ処理で複数のチャンクを書き出す際、キー名の衝突を防ぎ、さらに「同じオフセット位置を複数のポインタから参照」させたい。
+
+```python
+from binary_master import BinaryWriter, NamedOffset, binary_struct, UInt16
+
+@binary_struct
+class BlockHeader:
+    block_id: UInt16
+    # 同一のキー "body" を2つのポインタが参照（同一キーの多重登録）
+    primary_body_offset: NamedOffset["body"]
+    mirror_body_offset: NamedOffset["body"]
 
 writer = BinaryWriter(default_endian="little")
 
-# 1. Header with table reserved
-writer.write_uint32(0x46494C45, name="magic") # 'FILE'
-writer.write_uint16(2, name="item_count")
-table = writer.write_offset_table(count=2, offset_size=4, name="item_offsets")
+# ループ内で同じキー名 "body" を使っても、namespace スコープで衝突しない！
+for i in range(3):
+    # auto_id=True により "block_0", "block_1", "block_2" が自動生成される
+    with writer.namespace("block", auto_id=True):
+        writer.write_struct(BlockHeader(block_id=i))
+        writer.write_string(f"Metadata padding for block {i}...")
+        
+        # 1回の write_named_offset で primary と mirror の両方が一括バックパッチされる！
+        writer.write_named_offset("body")
+        writer.write_string(f"Actual Body Content {i}")
 
-# 2. Write payloads and patch offsets
-table.write_target(0, b"First Payload Data")
-table.write_target(1, b"Second Payload Data")
+final_bytes = writer.to_bytes()
+```
 
-binary_data = writer.to_bytes()
+### Recipe 4: コマンドIDによる多態メッセージディスパッチ（Variant / Tagged Union）
+**【課題】**  
+単一の通信コネクション上で、メッセージ種別IDに応じて異なる構造体（Ping, LoginRequest, ChatMessage 等）を透過的に送受信したい。
+
+```python
+from binary_master import binary_struct, UInt8, UInt16, UInt32, FixedString, Variant
+
+# 各種別ごとのペイロード構造体
+@binary_struct
+class PingPayload:
+    sequence: UInt32
+
+@binary_struct
+class LoginRequest:
+    user_id: UInt16
+    username: FixedString[12]
+
+@binary_struct
+class ChatMessage:
+    channel: UInt8
+    text: FixedString[32]
+
+# 外側のエンベロープ構造体
+@binary_struct
+class MessageEnvelope:
+    # ⚠️ 重要: タグフィールドは必ず Variant より前に宣言する！
+    msg_type: UInt8
+    payload: Variant["msg_type", {
+        0x01: PingPayload,
+        0x02: LoginRequest,
+        0x03: ChatMessage,
+    }]
+
+# 1. 送信: メッセージ種別に応じたインスタンスをそのまま渡す
+msg = MessageEnvelope(msg_type=0x02, payload=LoginRequest(user_id=42, username="Alice"))
+data = msg.to_bytes()
+
+# 2. 受信: msg_type の値に基づいて自動的に LoginRequest としてデシリアライズされる
+restored = MessageEnvelope.from_bytes(data)
+assert restored.msg_type == 0x02
+assert isinstance(restored.payload, LoginRequest)
+assert restored.payload.user_id == 42
+assert restored.payload.username.strip() == "Alice"
+```
+
+### Recipe 5: 大容量バイナリのメモリマップド・ゼロコピー走査（mmap + iter_struct + peek）
+**【課題】**  
+GB単位の巨大なログファイルやキャプチャファイルから、メモリを枯渇させることなく、高速にレコードを 1 件ずつ走査・抽出したい。
+
+```python
+from binary_master import binary_struct, BinaryReader, UInt32, Float32, FixedString
+
+@binary_struct
+class LogRecord:
+    timestamp: UInt32
+    metric_value: Float32
+    tag: FixedString[8]
+
+def scan_large_log(file_path: str, target_tag: str):
+    """OS メモリマップを活用してメモリ消費ほぼゼロで走査"""
+    with BinaryReader.from_mmap(file_path) as reader:
+        # 先読みでシグネチャを検査（カーソルは進まない）
+        if reader.peek(4) != b"LOG\x00":
+            # 先頭にヘッダーがある場合はスキップ等の処理が可能
+            reader.skip(4)
+            
+        # iter_struct で EOF まで 1 レコードずつ省メモリに逐次デシリアライズ
+        for record in reader.iter_struct(LogRecord):
+            if record.tag.strip() == target_tag:
+                yield record
+
+# 使用例:
+# for match in scan_large_log("huge_production.log", "ERROR_1"):
+#     print(match.timestamp, match.metric_value)
+```
+
+### Recipe 6: ビットフィールドによるハードウェアレジスタ・制御フラグ（Bits + @binary_struct(bits=N)）
+**【課題】**  
+組込み通信や制御レジスタの 16bit / 32bit のビットフラグを、シフト演算やマスク演算を手書きせず型安全に定義・埋め込みたい。
+
+```python
+from binary_master import binary_struct, Bits, UInt8, UInt16
+
+# 1. 16bit のレジスタフラグ（Bits の合計幅が 16 になること）
+@binary_struct(bits=16)
+class ControlRegister:
+    rx_enable: Bits[1]     # bit 0: 受信有効
+    tx_enable: Bits[1]     # bit 1: 送信有効
+    mode: Bits[3]          # bit 2-4: 動作モード (0-7)
+    channel: Bits[4]       # bit 5-8: 通信チャネル (0-15)
+    reserved: Bits[7]      # bit 9-15: 予約領域 (計 1 + 1 + 3 + 4 + 7 = 16 bits)
+
+# 2. 通常の構造体にビットフィールドを自然に埋め込む
+@binary_struct
+class DeviceCommand:
+    command_id: UInt8
+    ctrl: ControlRegister
+    param: UInt16
+
+# 直感的なフィールド操作
+cmd = DeviceCommand(
+    command_id=0x10,
+    ctrl=ControlRegister(rx_enable=1, tx_enable=1, mode=2, channel=5, reserved=0),
+    param=1200
+)
+raw_bytes = cmd.to_bytes()
+
+# 復元時も各ビットフィールドに直接アクセス可能
+restored = DeviceCommand.from_bytes(raw_bytes)
+assert restored.ctrl.rx_enable == 1
+assert restored.ctrl.mode == 2
+assert restored.ctrl.channel == 5
+```
+
+### Recipe 7: 単一定義からの多言語コード生成 & インタラクティブ仕様書出力ワークフロー
+**【課題】**  
+Python で定義したバイナリ仕様から、組み込み C ヘッダー、Rust 構造体、およびブラウザで検証できる HTML 仕様書をワンライナーで出力したい。
+
+```python
+from binary_master import binary_struct, Magic, UInt16, Float32, CString, CRC32
+
+@binary_struct(endian="little")
+class SensorReport:
+    """IoT エッジデバイスからの定期センサー報告パケット"""
+    magic: Magic[b"SENS"]
+    node_id: UInt16
+    temp: Float32
+    location_name: CString
+    checksum: CRC32
+
+# 1. ブラウザで開けるインタラクティブ HTML 仕様書（Hex Inspector付き）
+SensorReport.write_html("sensor_spec.html", title="IoT センサーパケット仕様書")
+
+# 2. 組込み C 言語用ヘッダーファイルの自動生成
+c_code = SensorReport.to_c()
+# SensorReport.write_c("sensor_packet.h") で直接ファイル保存も可能
+
+# 3. Rust 構造体 & ゼロコピー実装コードの自動生成
+rust_code = SensorReport.to_rust()
+# SensorReport.write_code("sensor_packet.rs") で保存可能（言語は拡張子から自動推論）
 ```
 
 ---
 
-## 11. v0.2.0 & v0.3.0 Advanced Features Reference (LLM Quick Reference)
+## 12. Advanced Features Reference (LLM Quick Reference)
 
-### 11.1 CRC & Checksum Declarative Types
+### 12.1 CRC & Checksum Declarative Types
 - **Types**: `CRC32` (4B, IEEE 802.3), `CRC16` / `CRC16_CCITT` (2B, poly 0x1021), `CRC16_ARC` (2B, poly 0xA001), `Checksum8` (1B, sum mod 256), `Checksum16` (2B, sum mod 65536), `Fletcher16` (2B), `Adler32` (4B).
 - **Slice Range**: By default, covers `0` to the field position. Custom slice: `CRC32[4:20]`.
 - **Automatic Behavior**:
@@ -809,49 +1077,49 @@ binary_data = writer.to_bytes()
   - On mismatch, raises `ChecksumMismatchError(expected=..., actual=...)`.
 - **Procedural**: `with writer.checksum("crc32"): ...`, `writer.write_checksum("crc32")`, `reader.verify_checksum("crc32")`.
 
-### 11.2 Enums (`BinaryEnum` & `IntEnum`)
+### 12.2 Enums (`BinaryEnum` & `IntEnum`)
 - **Base Class**: Subclass `BinaryEnum` (subclasses `enum.IntEnum`).
 - **Explicit Sizing**: `MyEnum[UInt8]`, `MyEnum[UInt16]`, `MyEnum[UInt32]`, `MyEnum[UInt64]`.
 - **Automatic Sizing**: Bare `MyEnum` or standard `enum.IntEnum` auto-selects 1 byte (<=255), 2 bytes (<=65535), or 4 bytes.
 - **Deserialization**: `from_bytes` instantiates the Python `Enum` member directly.
 - **Validation**: If stream integer is not in enum, raises `InvalidEnumError(enum_cls, raw_val)`.
 
-### 11.3 Magic Numbers & Constant Constraints
+### 12.3 Magic Numbers & Constant Constraints
 - **Magic**: `Magic[b"PNG\r\n\x1a\n"]` or `Magic[0x12345678]`.
 - **Constant**: `Constant[UInt16, 20]`.
 - **Zero-Boilerplate Instantiation**: Fields typed as `Magic` or `Constant` do not require arguments in `__init__`.
 - **Validation on Read**: `from_bytes` verifies against expected value, raising `InvalidMagicError` or `InvalidConstantError`.
 
-### 11.4 JSON / Dict Interop
+### 12.4 JSON / Dict Interop
 - `instance.to_dict(bytes_format="hex"|"base64"|"list")` -> `dict`
 - `Cls.from_dict(d)` -> `Cls`
 - `instance.to_json(indent=None, bytes_format="hex"|"base64"|"list")` -> `str`
 - `Cls.from_json(json_str)` -> `Cls`
 - Hex format prefixes `"0x..."`. `from_dict` automatically parses both `"0x..."` and raw hex strings.
 
-### 11.5 Large File Streaming & Memory-Mapped Zero-Copy
+### 12.5 Large File Streaming & Memory-Mapped Zero-Copy
 - `reader.iter_struct(Cls)`: Generator yielding instances of `Cls` until EOF.
 - `BinaryReader.from_mmap(path, default_endian="little")`: Context manager utilizing OS memory-mapping (`mmap`) for zero-copy slice reads without loading whole files into memory.
 
-### 11.6 Variable-Length Integers (LEB128)
+### 12.6 Variable-Length Integers (LEB128)
 - **Types**: `VarUInt`, `VarInt`, `VarUInt32`, `VarInt32`, `VarUInt64`, `VarInt64`.
 - **Procedural Writer**: `writer.write_varuint(val)`, `writer.write_varint(val)`.
 - **Procedural Reader**: `reader.read_varuint()`, `reader.read_varint()`.
 - **Declarative Struct**: Can be used as field types in `@binary_struct`.
 
-### 11.7 Arbitrary Bitstream Manipulation
+### 12.7 Arbitrary Bitstream Manipulation
 - `BitWriter(stream=None, msb_first=True)`: `write_bits(value, bit_count)`, `flush_bits(pad_bit=0)`, `to_bytes()`.
 - `BitReader(data_or_stream, msb_first=True)`: `read_bits(bit_count)`, `peek_bits(bit_count)`, `align_to_byte()`.
 - `writer.write_bits(val, count)` & `reader.read_bits(count)`: Integrated directly into `BinaryWriter` and `BinaryReader`. Non-bit write methods automatically flush unaligned bits.
 
-### 11.8 CLI Binary Inspector
+### 12.8 CLI Binary Inspector
 `pyproject.toml` script entry point: `binary-master`.
 - `binary-master inspect <file>`: Formatted, annotated Hexdump.
 - `binary-master diff <file1> <file2>`: Visual byte diff.
 - `binary-master spec <module:Class> [-o output.md]`: Markdown protocol manual generation.
 - `binary-master export <module:Class> --lang <rust|c|cpp|csharp|go> [-o output]`: Multi-language code generation (pass `-o -` for stdout).
 
-### 11.9 Direct Struct Export & Descriptors
+### 12.9 Direct Struct Export & Descriptors
 `@binary_struct` classes and instances support direct specification and multi-language code export without instantiating `Builder` or `BinaryWriter`:
 - `Cls.to_markdown(title=None, **kwargs) -> str` / `inst.to_markdown(include_values=True, **kwargs) -> str`
 - `Cls.write_markdown(path, **kwargs) -> str` / `inst.write_markdown(path, **kwargs) -> str`
@@ -861,7 +1129,7 @@ binary_data = writer.to_bytes()
 - `Cls.write_code(path, lang=None, **kwargs) -> str` / `inst.write_code(path, **kwargs) -> str` (infers language from file extension if `lang` is omitted)
 - Individual language shortcuts: `Cls.to_c()`, `Cls.to_rust()`, `Cls.to_cpp()`, `Cls.to_csharp()`, `Cls.to_go()`.
 
-### 11.10 LengthOf & CountOf (Automatic Calculation & Bound Deserialization)
+### 12.10 LengthOf & CountOf (Automatic Calculation & Bound Deserialization)
 - **Declarative Syntax**: `LengthOf[Type, "target_field", delta=0]` and `CountOf[Type, "target_field", delta=0]`. (Also accepts `["target_field", Type]`).
 - **Serialization**: When writing, if the field value is `0` or omitted, it is automatically computed from the target field's byte length (`LengthOf`) or item count (`CountOf`).
 - **Deserialization**: When reading, `LengthOf` and `CountOf` values dynamically bind the number of bytes read by downstream `Bytes` / `Array[T]`, eliminating greedy buffer overconsumption.
@@ -879,7 +1147,7 @@ assert recovered.payload == b"hello"
 assert recovered.footer == 0xFF
 ```
 
-### 11.11 Value Range Validation (`Range[Type, min, max]`)
+### 12.11 Value Range Validation (`Range[Type, min, max]`)
 - **Declarative Syntax**: `Range[Type, min_val, max_val]`. Supports integer and floating-point types (`UInt8`, `Int32`, `Float32`, etc.).
 - **Validation**:
   - `to_bytes()` / `write_struct`: Validates that `min <= val <= max`. Raises `RangeValidationError(field_name, value, min, max)` if violated.
@@ -892,7 +1160,7 @@ class SensorPacket:
     humidity: Range[UInt8, 0, 100]
 ```
 
-### 11.12 Struct Fixed Size & Writer Padding (`total_size`, `pad_to`)
+### 12.12 Struct Fixed Size & Writer Padding (`total_size`, `pad_to`)
 - **Struct-Level Total Size**: `@binary_struct(total_size=64, pad_byte=b"\x00")`.
   - Serializes fields and automatically appends `pad_byte` until the struct reaches `total_size` bytes.
   - If field data exceeds `total_size`, raises `TotalSizeExceededError`.
@@ -902,7 +1170,7 @@ class SensorPacket:
   - Pads stream with `pad_byte` until `writer.tell() == target_offset`.
   - Raises `ValueError` if current stream offset is already past `target_offset`.
 
-### 11.13 Interactive Standalone HTML Documentation (`to_html()`, `write_html()`)
+### 12.13 Interactive Standalone HTML Documentation (`to_html()`, `write_html()`)
 - **Single-File Output**: Generates self-contained HTML specification manuals with responsive CSS, light/dark theme toggle, embedded Mermaid diagrams, and bitfield tables.
 - **Interactive Hex Inspector**:
   - Displays a 16-byte side-by-side hex dump and ASCII preview.
