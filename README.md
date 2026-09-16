@@ -41,73 +41,13 @@ packet.write_html("sensor_spec.html", title="センサー通信パケット仕�
 
 ---
 
-## 主な特徴
+## 主な機能
 
-- 🚀 **宣言的バイナリ構造体 (`@binary_struct`)**  
-  - Python の型ヒントとデータクラス記法を用いて、バイナリヘッダーやパケットフォーマットを直感的に定義可能。
-  - **双方向シリアライズ**: `instance.to_bytes()` による書き込みと `Cls.from_bytes(data)` による自動デシリアライズの両方に対応。
-  - **バイナリサイズ取得 (`Cls.binary_size`, `sizeof(Cls)`, `len(instance)`)**: クラス定義からの静的計算や、インスタンスからの動的バイト数取得に対応。
-  - **固定総サイズ保証 & パディング (`total_size=N`, `pad_byte=b"\x00"`)**: 構造体の総バイトサイズを固定保証。不足バイトを自動パディングし、超過時は `TotalSizeExceededError` を送出。
-  - **自動長さ/要素数計算 (`LengthOf`, `CountOf`)**: ペイロードのバイト長や配列要素数を書き込み時に自動計算し、読み込み時は連動して正確なバイト数／要素数のみを復元。
-  - **値の範囲検証 (`Range[Type, min, max]`)**: 許容範囲外の値をシリアライズ／デシリアライズ時に即時検知（`RangeValidationError`）。
-  - **ワンライナー仕様書 & 多言語コード直接出力 (`Cls.to_markdown()`, `Cls.to_html()`, `Cls.to_code("rust")`)**: Builder や Writer を介さず、構造体クラスや実データインスタンスから直接 Markdown 仕様書、インタラクティブ HTML 仕様書、Rust/C/C++/C#/Go コードを出力可能。
-  - **JSON & 辞書相互シリアライズ (`to_dict()`, `from_dict()`, `to_json()`, `from_json()`)**: Web API や設定ファイル連携のための完全な JSON/dict 双方向変換（16進文字列、Base64、数値配列のフォーマット選択可能）。
-  - **Docstring の仕様書自動反映**: クラスの docstring（`"""..."""`）が仕様書の概要やビットフィールド詳細にそのまま自動反映。
-  - **コメントの自動抽出**: コード上のインラインコメント（`# ...`）や `Annotated[Type, "説明"]` を自動抽出し、仕様書の `Description` 列に反映。
-  - **自動アライメント & パディング (`auto_align=True`, `align=N`)**: C言語の構造体アライメント規則に基づき、メンバ境界や構造体サイズのアライメントパディングを自動挿入。
-- 🌐 **スタンドアロン・インタラクティブ HTML 仕様書 (`to_html()`, `write_html()`)**  
-  - 単一ファイル完結（外部依存なし）で開けるレスポンシブ HTML 仕様書。ダーク/ライトテーマ対応。
-  - **Hex Inspector（ヘックスダンプ検査機構）**: 仕様表の行をホバーすると対応するバイト列が瞬時にハイライトされ、逆にヘックスバイトをホバーすると対応する構造体フィールドが浮き上がる双方向インスペクタを内蔵。
-  - **Mermaid 埋め込み**: フローチャートおよびパケット図をそのままブラウザで綺麗に描画。
-- 🧩 **高度な型サポート & 制約システム**  
-  - **シグネチャ & 定数制約 (`Magic[b"..."]`, `Constant[Type, Val]`)**: ヘッダーマジックや固定値のコンストラクタ自動補完とデシリアライズ時の自動不整合検知。
-  - **サイズ固定列挙型 (`BinaryEnum`)**: `MyEnum[UInt8]` や `size=1` など、バイナリサイズが明示された型安全な列挙型。
-  - **統合チェックサム (`CRC32`, `CRC16`, `CRC16_CCITT`, `CRC16_ARC`, `Adler32`, `Fletcher16`, `Checksum8`, `Checksum16`)**: ヘッダーやペイロードのチェックサム自動計算・検証。
-  - **LEB128 可変長整数 (`VarUInt`, `VarInt`)**: Protocol Buffers / WebAssembly 準拠の可変長整数（1〜10バイト動的サイズ）。
-  - **任意ビットストリーム (`BitWriter`, `BitReader`)**: バイト境界をまたぐ任意ビット幅（1〜64ビット）データの連続パッキング・アンパッキング。
-  - 符号付き / 符号なし整数（8, 16, 32, 64-bit）および浮動小数点数（Float16, Float32, Float64）
-  - **論理値 (`Bool` / `bool`)**: サイズ設定可能（`Bool[1]`, `Bool[2]`, `Bool[4]` 等、デフォルト1バイト）
-  - **ビットフィールド (`Bits[N]`)**: 1ビット単位のフラグ定義と自動パッキング・アンパッキング
-  - **文字列・バイト列型 (`Bytes[N]`, `FixedString[N]`, `CString`, `PrefixedString[N]`)**: 固定長バイト配列、Null終端文字列、長さプレフィックス文字列、固定長文字列を構造体メンバとして直接宣言可能
-  - **オフセット自動計算 & 解決 (`Offset[T, Size, BaseOffset]`)**: ヘッダーのオフセット値の自動バックパッチ（1, 2, 4, 8バイト指定可、`Base.SELF + 0x20` などの構造体先頭相対指定対応）および読み込み時の参照先自動インスタンス化。中間構造体なしの直接テーブル指定 (`Offset[OffsetTable[...]]`) にも対応。
-  - **名前付き遅延オフセット (`NamedOffset["key"]`)**: ヘッダー先行宣言と、後続の `writer.write_named_offset("key")` による位置確定・自動バックパッチ連携
-  - **オフセットテーブル (`OffsetTable[Count, Type, BaseOffset]`)**: 複数エントリのオフセット配列の予約・自動バックパッチ（`Base.SELF` などの相対指定対応）
-  - **多態チャンク & タグ付き共用体 (`Variant[TagField, Mapping]`)**: 種別IDに応じて切り替わる多態構造体の自動ディスパッチ
-  - 固定長配列 (`FixedArray[T, N]`) および可変長配列 (`Array[T]`)
-  - 構造体のネスト
-- ⚡ **ゼロコピー & 巨大ファイルストリーミング (`from_mmap`, `iter_struct`)**  
-  - **OS メモリマップによるゼロコピー読み込み (`BinaryReader.from_mmap()`)**: ギガバイト級の巨大ファイルでもメモリ消費ほぼゼロで超高速アクセス。
-  - **ジェネレータによる連続パケット復元 (`reader.iter_struct(Cls)`)**: ネットワークストリームやログファイルから構造体を 1 件ずつ省メモリに逐次デシリアライズ。
-- ✍️ **柔軟な手続き的ライター & リーダー (`BinaryWriter` / `BinaryReader`)**  
-  - **位置保存とオフセット指定書き込み (`with writer.preserve_position():`, `with writer.at_offset(off):`)**: ヘッダー長やサイズのバックパッチを安全・宣言的に実施
-  - **先読みと位置保存リード (`reader.peek()`, `peek_uint*()`, `with reader.preserve_position():`, `reader.is_eof`)**: ストリームのカーソルを進めずに次に来るデータや終端を検査
-  - **ワンストップ仕様書・多言語出力**: Builder 不要で `writer.to_markdown()` や `writer.to_c_header()`, `writer.to_rust()`, `writer.to_cpp()`, `writer.to_csharp()`, `writer.to_go()` を直接出力可能
-  - **チャンクの繰り返し (`spec_count`, `with writer.set_caption(...)`, `writer.write_repeated()`)**: 変数名（`spec_count="chunk_count"`）、固定回数（`spec_count=5`）、不定回数（`spec_count=-1`）を指定可能。仕様書上では重複テーブルを出さず1要素のテンプレート（相対オフセット `+0x00`）として美しく自動集約
-  - **多態バリアントの書き込み (`write_variant`, `writer.write_variant`)**: 候補構造体リスト（`candidates`）に対する厳格な型バリデーションおよび先行タグの一致チェック
-  - インメモリ（`BytesIO` / `bytes`）またはファイル/ストリームへの直接読み書き
-  - 厳格な境界・EOFチェック（オーバーフローや切り捨ての即時エラー検知）
-  - 各種文字列形式（C言語スタイルの Null 終端、Pascal スタイルの長さプレフィックス、固定長パディング）
-  - バイト境界アライメント（`align`）およびパディング（`pad`）
-  - メソッドチェーン対応ライター、カーソル操作（`seek`, `tell`, `skip`, `remaining`）
-  - **仕様書メタデータ統合管理 (`set_caption` / `section` / `subcaption`)**: セクションタイトル、詳細説明文（`desc`）、繰り返し回数・変数名（`spec_count="num_chunk"`）、多態バリアント候補（`variants`）を統合指定。`with` ブロックによるスコープ管理にも対応
-- 📐 **事前設計型プロトコルビルダー & 自動リーダー (`Builder` / `BinaryBuilder`)**  
-  - バイナリデータを実際に書き出すことなく、構造体クラス（`@binary_struct`）、説明文（`add_document`）、条件分岐（`condition`）、多態バリアント（`add_choice`）を事前定義して仕様書を生成（`builder.write_markdown("spec.md")`）。
-  - **双方向シリアライズ (`builder.to_bytes(data)`)**: 定義したスキーマに基づいて辞書データからバイナリ列への自動組み立てにも対応。
-  - 事前に定義したスキーマ情報をもとに、バイナリバイト列から各構造体・バリアントを自動判別して復元する **スキーマ駆動自動リーダー (`builder.read(data)`)** を提供。
-- 📊 **仕様書 & Mermaid 図の自動生成 (`writer.to_markdown` / `builder.write` / `Cls.to_markdown`)**  
-  - シリアライズされた全フィールドのオフセット（16進/10進）、サイズ、エンディアン、参照先ターゲット（`-> 0xXXXX`）を記録した Markdown ドキュメントを出力
-  - **Mermaid Flowchart**: 条件分岐ひし形ノード、バリアント選択ノード、サブグラフとオフセット参照矢印の描画（繰り返し領域は `🔁 xCount` で集約）
-  - **Mermaid packet-beta**: ネットワークパケット形式のビット/バイト配置図およびビットフィールド詳細図の生成
-  - **多態チャンク・バリアント仕様の自動展開**: 条件に応じて格納される候補構造体のレイアウト表と相対パケット図の自動生成
-- 🔍 **専用デバッグダンプ & バイナリ差分比較 (`hexdump` / `dump` / `diff`)**  
-  - **注釈付き Hexdump (`hexdump`)**: 16バイト標準ヘックスダンプ＋ASCII文字表示＋出力されたフィールド名・型・値の注釈表示
-  - **バイナリ差分比較 (`diff_dump` / `writer.diff`)**: 2つのバッファ間のバイト単位・フィールド単位の差異をビジュアル比較
-  - **ターミナル色分け表示 (`color=True`)**: ANSI カラーによるフィールド境界ごとの色分け、カーソル位置のハイライト
-  - **リーダー状態検査 (`reader.hexdump()`)**: 現在のカーソル位置（`--> CURSOR @ 0xXXXX`）、消費済み／残りバイト数の即時把握
-  - **表形式トレース (`dump("table")`)**: Offset, Size, Field Name, Type, Hex Bytes, Value, Caption を整然と表示するモノスペース表
-  - **構造化ダンプ (`dump("json")` / `dump("dict")`)**: ロギングやテスト検証のための辞書／JSON 配列エクスポート
-- 💻 **CLI バイナリインスペクター (`binary-master`)**  
-  - ターミナルから直接バイナリファイルの検査（`inspect`）、ファイル比較（`diff`）、仕様書生成（`spec`）、多言語コード生成（`export`）を実行可能。
+- 🚀 **宣言的バイナリ構造体 (`@binary_struct`)**: 型ヒントを使ってデータクラス感覚で定義し、`.to_bytes()` / `.from_bytes()` による双方向シリアライズに対応。
+- 📊 **仕様書・Mermaid 図の自動生成**: メモリ配置表、Mermaid パケット図、および Hex ダンプ連動のインタラクティブ HTML 仕様書をワンライナーで出力。
+- 🎯 **オフセットの自動計算 & バックパッチ**: ポインタオフセット（`Offset`）や遅延解決（`NamedOffset`、名前空間スコープ対応）の計算・書き戻しを自動化。
+- ✍️ **柔軟な手続き的ライター & リーダー (`BinaryWriter` / `BinaryReader`)**: ストリームの逐次構築、先読み（`peek`）、mmap によるゼロコピー高速読み込みに対応。
+- 🌐 **多言語コード生成**: 定義した構造体から C, Rust, C++, C#, Go のヘッダー・構造体定義コードを直接エクスポート。
 
 
 ---
