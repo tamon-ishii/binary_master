@@ -2347,10 +2347,11 @@ def write_struct(
                 offset_t, base_offset = _parse_offset_spec_args(args[1:])
 
             fmt_char, offset_size, offset_label = _normalize_offset_type(offset_t)
+            qualified_key = writer._qualify_name(key_name) if hasattr(writer, "_qualify_name") else key_name
             if offset_label != "UInt32":
-                type_label = f"NamedOffset[{key_name!r}, {offset_label}]"
+                type_label = f"NamedOffset[{qualified_key!r}, {offset_label}]"
             else:
-                type_label = f"NamedOffset[{key_name!r}]"
+                type_label = f"NamedOffset[{qualified_key!r}]"
 
             offset_placeholder_idx = len(writer._entries) if hasattr(writer, "_entries") else -1
             placeholder_pos = writer.tell()

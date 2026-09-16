@@ -509,6 +509,35 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
 - すでに解決済みのキーに対して誤って再度 `write_named_offset("key")` を呼び出した場合は、意図しない二重確定を防ぐため [`DuplicateNamedOffsetError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L101-L103) が発生します（明示的に上書き・再更新する場合は [`rewrite_named_offset("key")`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/writer.py) を使用します）。
 - `write_named_offset("key")` や `rewrite_named_offset("key")` で存在しないキーを指定した場合は、安全のため [`NamedOffsetNotFoundError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L106-L108) が発生します。
 
+#### 名前空間スコープ (`with writer.namespace(...)`)
+
+同じ構造体クラス（例: `ChunkHeader`）を複数のチャンクで繰り返し書き出す際、同一のキー名（例: `"payload"`）がグローバル空間でバッティングするのを防ぐため、`with writer.namespace(...)` コンテキストマネージャでスコープを分割できます。
+
+```python
+@binary_struct
+class ChunkHeader:
+    magic: UInt32
+    payload_offset: NamedOffset["payload"]  # 汎用的な名前のままでOK！
+
+writer = BinaryWriter()
+
+# チャンクAの名前空間
+with writer.namespace("chunk_a"):
+    writer.write_struct(ChunkHeader(magic=0xAAAA))
+    writer.write_string("metadata_A")
+    writer.write_named_offset("payload")  # "chunk_a/payload" として解決
+
+# チャンクBの名前空間（キーが衝突しない）
+with writer.namespace("chunk_b"):
+    writer.write_struct(ChunkHeader(magic=0xBBBB))
+    writer.write_string("metadata_B")
+    writer.write_named_offset("payload")  # "chunk_b/payload" として解決
+```
+
+- **ネスト（階層化）**: `with writer.namespace("sec"): with writer.namespace("sub"):` のようにネストすると `"sec/sub/key"` と連結されます。
+- **ルート脱出 (`/`)**: スコープ内から `NamedOffset["/global_footer"]` のように先頭にスラッシュを付けると、名前空間を脱出してルート直下のキーを参照します。
+- **自動採番 (`auto_id=True`)**: `with writer.namespace("chunk", auto_id=True):` とすると、`chunk_0`, `chunk_1`... と自動で連番が付与されます。
+
 ---
 
 ### 3.4 手続き的ライターでのオフセットテーブル予約 (`write_offset_table`)

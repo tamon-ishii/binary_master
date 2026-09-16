@@ -5,7 +5,8 @@ from __future__ import annotations
 import io
 from pathlib import Path
 import struct
-from typing import Any, IO, Iterable, Optional, Union
+from contextlib import contextmanager
+from typing import Any, IO, Iterable, Iterator, Optional, Union
 
 from binary_master.enums import Endian, EndianType, normalize_endian
 
@@ -212,6 +213,8 @@ class BinaryWriter:
         self._current_subcaption: Optional[str] = None
         self._current_subcaption_desc: str = ""
         self._named_offset_slots: dict[str, list[dict[str, Any]]] = {}
+        self._namespace_stack: list[str] = []
+        self._namespace_counters: dict[str, int] = {}
         if stream is None:
             self._stream = io.BytesIO()
             self._close_stream = auto_close if auto_close is not None else False
@@ -1063,6 +1066,59 @@ class BinaryWriter:
             self.pad(padding_needed, pad_byte=pad_byte, name=name, desc=desc or f"Pad to offset 0x{target_offset:X}")
         return self
 
+    @property
+    def current_namespace(self) -> str:
+        """Get the currently active namespace path (empty string if at root)."""
+        return "/".join(self._namespace_stack)
+
+    def _qualify_name(self, name: str) -> str:
+        """Qualify a named offset key with the active namespace stack.
+
+        If `name` starts with '/', it is treated as an absolute/root key
+        and the leading slash is stripped. Otherwise, if inside a namespace,
+        the active namespace path is prepended with '/'.
+        """
+        if name.startswith("/"):
+            return name[1:]
+        if self._namespace_stack:
+            return f"{'/'.join(self._namespace_stack)}/{name}"
+        return name
+
+    @contextmanager
+    def namespace(self, name: str = "", *, auto_id: bool = False) -> Iterator[str]:
+        """Create a scoped namespace context for NamedOffset keys.
+
+        Inside this block, relative NamedOffset keys are automatically qualified
+        with the namespace path (e.g. 'chunk_0/payload'). Absolute keys starting
+        with '/' bypass this prefix and resolve in the root namespace.
+
+        Args:
+            name: Scope segment name. If omitted and auto_id=True, defaults to 'scope'.
+            auto_id: If True, appends an incrementing counter (e.g. 'chunk_0', 'chunk_1').
+
+        Yields:
+            The fully-qualified active namespace path string.
+
+        Raises:
+            ValueError: If `name` is empty and `auto_id` is False.
+        """
+        prefix = name if name else ("scope" if auto_id else "")
+        if auto_id:
+            idx = self._namespace_counters.get(prefix, 0)
+            self._namespace_counters[prefix] = idx + 1
+            segment = f"{prefix}_{idx}" if prefix else str(idx)
+        else:
+            segment = prefix
+
+        if not segment:
+            raise ValueError("Namespace name cannot be empty unless auto_id=True.")
+
+        self._namespace_stack.append(segment)
+        try:
+            yield "/".join(self._namespace_stack)
+        finally:
+            self._namespace_stack.pop()
+
     def _register_named_offset_slot(
         self,
         name: str,
@@ -1071,11 +1127,14 @@ class BinaryWriter:
         endian: Optional[EndianType] = None,
         actual_base: int = 0,
         entry_idx: int = -1,
+        *,
+        _is_qualified: bool = False,
     ) -> None:
         """Internal method to register a placeholder slot for a named offset."""
-        if name not in self._named_offset_slots:
-            self._named_offset_slots[name] = []
-        self._named_offset_slots[name].append({
+        qualified_name = name if _is_qualified else self._qualify_name(name)
+        if qualified_name not in self._named_offset_slots:
+            self._named_offset_slots[qualified_name] = []
+        self._named_offset_slots[qualified_name].append({
             "pos": placeholder_pos,
             "fmt_char": fmt_char,
             "endian": endian or self._default_endian,
@@ -1098,6 +1157,7 @@ class BinaryWriter:
 
         Multiple slots can be registered under the same key name, all of which
         will be resolved to the target position when write_named_offset(name) is called.
+        Keys are qualified with the current namespace if inside a `with writer.namespace(...)` block.
 
         Args:
             name: The key identifier for this offset (e.g. 'ofs', 'chunk_payload').
@@ -1115,6 +1175,7 @@ class BinaryWriter:
             raise ValueError(f"offset_size must be 1, 2, 4, or 8, got {offset_size}")
         fmt_char = fmt_map[offset_size]
 
+        qualified_name = self._qualify_name(name)
         placeholder_pos = self.tell()
         order = normalize_endian(endian, self._default_endian)
         resolve_fn = getattr(base_offset, "resolve", None)
@@ -1122,24 +1183,25 @@ class BinaryWriter:
 
         self._stream.write(b"\x00" * offset_size)
         entry_idx = len(self._entries)
-        type_name = f"NamedOffset[{name!r}]"
+        type_name = f"NamedOffset[{qualified_name!r}]"
         self._record_entry(
             offset=placeholder_pos,
             size=offset_size,
             type_name=type_name,
             value=0,
-            name=field_name or f"named_offset_{name}",
+            name=field_name or f"named_offset_{name.lstrip('/')}",
             endian=order.name.capitalize(),
-            description=desc or f"Named offset '{name}'",
+            description=desc or f"Named offset '{qualified_name}'",
         )
 
         self._register_named_offset_slot(
-            name,
+            qualified_name,
             placeholder_pos=placeholder_pos,
             fmt_char=fmt_char,
             endian=order,
             actual_base=actual_base,
             entry_idx=entry_idx,
+            _is_qualified=True,
         )
         return placeholder_pos
 
@@ -1154,6 +1216,7 @@ class BinaryWriter:
         """Resolve and backpatch named offset placeholder for `name` to the current position (or target).
 
         If multiple slots were registered under `name`, all of them will be backpatched.
+        Keys are qualified with the current namespace if inside a `with writer.namespace(...)` block.
 
         Args:
             name: The key identifier for the named offset.
@@ -1168,14 +1231,15 @@ class BinaryWriter:
             NamedOffsetNotFoundError: If `name` was never registered.
             DuplicateNamedOffsetError: If `name` was already resolved (use rewrite_named_offset instead).
         """
-        if name not in self._named_offset_slots or not self._named_offset_slots[name]:
+        qualified_name = self._qualify_name(name)
+        if qualified_name not in self._named_offset_slots or not self._named_offset_slots[qualified_name]:
             from binary_master.exceptions import NamedOffsetNotFoundError
-            raise NamedOffsetNotFoundError(f"Named offset key {name!r} does not exist.")
+            raise NamedOffsetNotFoundError(f"Named offset key {qualified_name!r} does not exist.")
 
-        if not _allow_rewrite and any(slot.get("resolved") for slot in self._named_offset_slots[name]):
+        if not _allow_rewrite and any(slot.get("resolved") for slot in self._named_offset_slots[qualified_name]):
             from binary_master.exceptions import DuplicateNamedOffsetError
             raise DuplicateNamedOffsetError(
-                f"Named offset key {name!r} has already been resolved with write_named_offset. "
+                f"Named offset key {qualified_name!r} has already been resolved with write_named_offset. "
                 "Use rewrite_named_offset() to explicitly update it."
             )
 
@@ -1193,7 +1257,7 @@ class BinaryWriter:
                 target(self)
 
         return_pos = self.tell()
-        for slot in self._named_offset_slots[name]:
+        for slot in self._named_offset_slots[qualified_name]:
             placeholder_pos = slot["pos"]
             fmt_char = slot["fmt_char"]
             slot_endian = normalize_endian(slot["endian"], self._default_endian)
@@ -1228,6 +1292,7 @@ class BinaryWriter:
         """Rewrite/re-patch existing named offset placeholders for `name` with a new target offset or target object.
 
         If multiple slots were registered under `name`, all of them will be re-patched.
+        Keys are qualified with the current namespace if inside a `with writer.namespace(...)` block.
 
         Args:
             name: The key identifier for the named offset.
@@ -1241,16 +1306,17 @@ class BinaryWriter:
         Raises:
             NamedOffsetNotFoundError: If `name` does not exist in registered named offsets.
         """
-        if name not in self._named_offset_slots or not self._named_offset_slots[name]:
+        qualified_name = self._qualify_name(name)
+        if qualified_name not in self._named_offset_slots or not self._named_offset_slots[qualified_name]:
             from binary_master.exceptions import NamedOffsetNotFoundError
-            raise NamedOffsetNotFoundError(f"Named offset key {name!r} does not exist.")
+            raise NamedOffsetNotFoundError(f"Named offset key {qualified_name!r} does not exist.")
 
         if target is not None:
-            return self.write_named_offset(name, target=target, endian=endian, _allow_rewrite=True)
+            return self.write_named_offset(qualified_name, target=target, endian=endian, _allow_rewrite=True)
 
         resolved_target_pos = self.tell() if target_offset is None else target_offset
         return_pos = self.tell()
-        for slot in self._named_offset_slots[name]:
+        for slot in self._named_offset_slots[qualified_name]:
             placeholder_pos = slot["pos"]
             fmt_char = slot["fmt_char"]
             slot_endian = normalize_endian(slot["endian"], self._default_endian)

@@ -323,6 +323,22 @@ writer.write_named_offset("my_payload")
 # Calling write_named_offset more than once on the same key raises DuplicateNamedOffsetError (use rewrite_named_offset to re-patch).
 # Calling write_named_offset or rewrite_named_offset with unknown key raises NamedOffsetNotFoundError.
 ```
+
+##### Scoped Namespaces for NamedOffset (`with writer.namespace(...)`)
+Avoid key collisions across repeated chunks/sections without altering struct definitions:
+```python
+with writer.namespace("chunk_0"):
+    writer.write_struct(Header(magic=0x1111))
+    writer.write_named_offset("my_payload")  # Qualified as "chunk_0/my_payload"
+
+with writer.namespace("chunk_1"):
+    writer.write_struct(Header(magic=0x2222))
+    writer.write_named_offset("my_payload")  # Qualified as "chunk_1/my_payload" (no collision)
+
+# Supports nesting: with writer.namespace("sec"): with writer.namespace("sub"): ...
+# Root escape with leading slash: NamedOffset["/global_footer"] bypasses active namespace.
+# Auto-incrementing IDs: with writer.namespace("chunk", auto_id=True): (generates chunk_0, chunk_1...)
+```
 ```
 
 #### Polymorphic Tagged Union (`Variant`)
