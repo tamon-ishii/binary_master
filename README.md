@@ -2,14 +2,14 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-228%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-258%20passed-brightgreen.svg)]()
 
-**Binary Master** は、Python 3.14+ 向けの高機能な構造化バイナリ生成・読み込み（シリアライズ／デシリアライズ）＆仕様書自動生成ライブラリです。
+**Binary Master** は、Python 3.14+ 向けの宣言的バイナリ構造化＆仕様書自動生成ライブラリです。
 
-Python 標準の `struct` モジュールで生じがちなフォーマット文字列のミス、手作業でのオフセット計算、エンディアンの混在、バイト列の煩雑な結合・切り出し処理を排除し、**型安全・宣言的・直感的**にバイナリデータを読み書きできます。  
-さらに、書き込んだバイナリ構造から **Mermaid ダイアグラム（フローチャート／パケット図）付きの仕様書（Markdown / インタラクティブ HTML）** をワンライナーで自動生成する機能を備えています。
-
-もう `struct.pack('<4sHf...', ...)` の暗号のような書式文字列や、手作業でのオフセット計算・チェックサム算出に悩む必要はありません：
+### 🌟 Binary Master の 3 つの強み
+- **🛡️ `ctypes` に比べ安全**: ポインタ操作やバッファオーバーランのリスクを排除。厳格な境界チェック、値の範囲検証（`Range`）、チェックサム検証（`CRC32`等）を標準搭載し、クラッシュしない安全なバイナリ処理を実現。
+- **📊 仕様書の自動吐き出し**: コード・データから Mermaid パケット図／フローチャート付き Markdown や、Hex Inspector（バイト列ホバー連動）内蔵のインタラクティブ HTML 仕様書をワンライナーで即時生成。
+- **✨ 構文がモダン**: `struct.pack` の暗号のような書式文字列（`"<4sHf..."`）や `ctypes` の古い構文から脱却。Python 3.14+ の型アノテーションを活かした dataclass 感覚の記法で、IDE 補完や静的型チェック（mypy/pyright）も快適。
 
 ```python
 from binary_master import binary_struct, Magic, UInt16, Float32, CString, CRC32
