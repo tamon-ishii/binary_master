@@ -1624,6 +1624,13 @@ def _deserialize_dict_value(val: Any, ftype: Any) -> Any:
     if hasattr(ftype, "from_dict"):
         return ftype.from_dict(val)
 
+    # Check Magic / Constant
+    if isinstance(ftype, type):
+        if issubclass(ftype, MagicBase):
+            return getattr(ftype, "_value", val)
+        if issubclass(ftype, ConstantBase):
+            return getattr(ftype, "_value", val)
+
     # Check Enum
     if isinstance(ftype, type) and issubclass(ftype, enum.Enum):
         if isinstance(val, str) and hasattr(ftype, val):

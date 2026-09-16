@@ -1064,6 +1064,236 @@ rust_code = SensorReport.to_rust()
 # SensorReport.write_code("sensor_packet.rs") で保存可能（言語は拡張子から自動推論）
 ```
 
+### Recipe 8: TLV (Type-Length-Value) 形式の可変長ストリーム
+**【課題】**  
+Bluetooth LE、暗号通信、拡張ヘッダー等で頻出する「種別タグ・データ長・可変長バイト列」の TLV 要素を安全に構築・走査したい。
+
+**【ポイント】**  
+- `length` フィールドを `LengthOf[UInt16, "value"]` として宣言することで、書き込み時の長さ計算と、読み込み時のバッファ切り出しが完全自動化される。
+- `read_struct` や `BinaryReader` と組み合わせることで、任意の数の TLV レコードを順次パース可能。
+
+```python
+from binary_master import binary_struct, UInt8, UInt16, LengthOf, Bytes, BinaryReader, BinaryWriter
+
+@binary_struct
+class TLVRecord:
+    tag: UInt8
+    length: LengthOf[UInt16, "value"]
+    value: Bytes
+
+# 1. 複数の TLV レコードを書き込み
+writer = BinaryWriter()
+writer.write_struct(TLVRecord(tag=0x01, value=b"DeviceName"))
+writer.write_struct(TLVRecord(tag=0x02, value=b"\x12\x34\x56\x78"))
+stream_bytes = writer.to_bytes()
+
+# 2. ストリームから順次読み出し
+reader = BinaryReader(stream_bytes)
+records = []
+while not reader.is_eof:
+    record = reader.read_struct(TLVRecord)
+    records.append(record)
+
+assert records[0].tag == 0x01
+assert records[0].value == b"DeviceName"
+assert records[1].tag == 0x02
+assert records[1].value == b"\x12\x34\x56\x78"
+```
+
+### Recipe 9: 階層化ネスト構造体（ネットワークパケット: Ethernet + IPv4 + ペイロード）
+**【課題】**  
+Ethernet フレームの中に IPv4 ヘッダーがあり、その中にペイロードがあるような、階層的なプロトコルスタックを型安全にモデル化したい。
+
+**【ポイント】**  
+- `@binary_struct` を修飾したクラスは、他の `@binary_struct` のフィールド型としてそのまま使用できる。
+- エンディアン（`endian="big"`）は外側の構造体および内側のネスト構造体で一貫して適用される。
+
+```python
+from binary_master import binary_struct, UInt8, UInt16, FixedArray, LengthOf, Bytes
+
+@binary_struct(endian="big")
+class MacHeader:
+    dst_mac: FixedArray[UInt8, 6]
+    src_mac: FixedArray[UInt8, 6]
+    ethertype: UInt16  # 0x0800 = IPv4
+
+@binary_struct(endian="big")
+class Ipv4Header:
+    version_ihl: UInt8
+    tos: UInt8
+    total_len: UInt16
+    packet_id: UInt16
+    flags_frag: UInt16
+    ttl: UInt8
+    protocol: UInt8    # 6 = TCP, 17 = UDP
+    checksum: UInt16
+    src_ip: FixedArray[UInt8, 4]
+    dst_ip: FixedArray[UInt8, 4]
+
+@binary_struct(endian="big")
+class PacketFrame:
+    mac: MacHeader
+    ip: Ipv4Header
+    payload_len: LengthOf[UInt16, "payload"]
+    payload: Bytes
+
+frame = PacketFrame(
+    mac=MacHeader(dst_mac=b"\xFF"*6, src_mac=b"\x00\x11\x22\x33\x44\x55", ethertype=0x0800),
+    ip=Ipv4Header(
+        version_ihl=0x45, tos=0, total_len=40, packet_id=1, flags_frag=0,
+        ttl=64, protocol=6, checksum=0, src_ip=b"\xC0\xA8\x00\x01", dst_ip=b"\xC0\xA8\x00\x02"
+    ),
+    payload=b"TCP_PAYLOAD_DATA"
+)
+raw = frame.to_bytes()
+
+# 復元後、ネストしたメンバーへ直感的にアクセス可能
+restored = PacketFrame.from_bytes(raw)
+assert restored.mac.ethertype == 0x0800
+assert bytes(restored.ip.src_ip) == b"\xC0\xA8\x00\x01"
+assert restored.payload == b"TCP_PAYLOAD_DATA"
+```
+
+### Recipe 10: 文字列プール（String Table / String Pool）形式の構築
+**【課題】**  
+ゲームのアセットファイルやコンパイル済みバイナリで一般的な、ヘッダー部に文字列へのオフセット一覧を持ち、ファイル末尾に可変長文字列（Null終端等）を集約配置する形式を作りたい。
+
+**【ポイント】**  
+- `writer.write_offset_table(count, offset_size)` でヘッダー内にオフセット領域を予約。
+- 文字列実体を書き込む際に `table.write_target(index, string_bytes)` を呼ぶと、予約位置へ正確なオフセットが自動バックパッチされる。
+
+```python
+from binary_master import BinaryWriter
+
+writer = BinaryWriter(default_endian="little")
+
+# 1. ヘッダー情報の書き込み
+writer.write_uint32(0x53545247, name="magic")  # 'STRG'
+names = ["HeroCharacter", "FireSword", "HealthPotion"]
+writer.write_uint16(len(names), name="string_count")
+
+# 2. オフセットテーブルの予約（3件分の4バイトオフセット）
+table = writer.write_offset_table(count=len(names), offset_size=4, name="offsets")
+
+# 3. ファイル末尾の文字列プールに書き込み & オフセット解決
+for idx, name in enumerate(names):
+    # write_target で現在の書き込み位置が table[idx] に自動バックパッチされる
+    table.write_target(idx, name.encode("utf-8") + b"\x00")
+
+binary_data = writer.to_bytes()
+```
+
+### Recipe 11: 固定セクタ長パディング & JSON 相互変換（ゲームセーブデータ / ステータス連携）
+**【課題】**  
+ゲームセーブスロットなどの固定長（例: 256バイト）セクタ領域にデータを保存し、かつ Web API やデバッグ用に JSON 形式とも相互変換したい。
+
+**【ポイント】**  
+- `@binary_struct(total_size=256, pad_byte=b"\x00")` で固定セクタ長を保証。データが短ければ自動パディング、超過すれば `TotalSizeExceededError`。
+- `instance.to_dict()` / `to_json()` および `Cls.from_dict()` / `from_json()` で完全な双方向シリアライズが可能。
+
+```python
+from binary_master import binary_struct, Magic, Range, UInt8, UInt16, UInt32, FixedString
+
+@binary_struct(total_size=256, pad_byte=b"\x00")
+class SaveSlot:
+    magic: Magic[b"SAVE"]
+    slot_id: UInt8
+    level: Range[UInt16, 1, 99]
+    hp: UInt32
+    gold: UInt32
+    player_name: FixedString[16]
+
+# 1. データの作成とバイナリ化（自動でちょうど256バイトになる）
+save = SaveSlot(slot_id=1, level=45, hp=4500, gold=99999, player_name="Warrior")
+binary_data = save.to_bytes()
+assert len(binary_data) == 256
+
+# 2. Web API 連携用の JSON 変換
+json_string = save.to_json(indent=2)
+# {
+#   "magic": "0x53415645",
+#   "slot_id": 1,
+#   "level": 45,
+#   "hp": 4500,
+#   "gold": 99999,
+#   "player_name": "Warrior"
+# }
+
+# 3. JSON からの構造体インスタンス復元
+restored_from_json = SaveSlot.from_json(json_string)
+assert restored_from_json.hp == 4500
+assert restored_from_json.to_bytes() == binary_data
+```
+
+### Recipe 12: 任意ビット幅ストリームの直列パッキング（BitWriter / BitReader）
+**【課題】**  
+音声・映像コーデック、圧縮アルゴリズム、または超高密度パケットで、バイト境界に揃わない任意ビット数（3bit, 5bit, 12bit 等）を連続して詰め込み・復元したい。
+
+**【ポイント】**  
+- `BitWriter(msb_first=True)` でバイト境界を気にせず `write_bits(val, count)` を呼び出し、最後に `flush_bits()` でバイト境界に切り上げる。
+- `BitReader` で指定ビット数ずつ順次取り出し。
+
+```python
+from binary_master import BitWriter, BitReader
+
+# 1. ビットストリームの書き込み
+bw = BitWriter(msb_first=True)
+bw.write_bits(0b101, 3)     # 3 bits
+bw.write_bits(0b11001, 5)   # 5 bits (合計 8 bits = 1 byte 完了)
+bw.write_bits(0b1010, 4)    # 4 bits
+bw.write_bits(0b01, 2)      # 2 bits
+bw.flush_bits(pad_bit=0)    # 残り 2 bits を 0 で埋めてバイトアライメント
+stream = bw.to_bytes()
+assert len(stream) == 2
+
+# 2. ビットストリームの読み込み
+br = BitReader(stream, msb_first=True)
+assert br.read_bits(3) == 0b101
+assert br.read_bits(5) == 0b11001
+assert br.read_bits(4) == 0b1010
+assert br.read_bits(2) == 0b01
+```
+
+### Recipe 13: スキーマ先行プロトコル設計（Builder）による条件分岐フローチャート生成
+**【課題】**  
+バイナリ実データを書き出す前のプロトコル設計段階で、条件分岐や多態バリアントを含めた仕様書（Markdown + Mermaid）や多言語ヘッダーを出力したい。
+
+**【ポイント】**  
+- `Builder` を使用し、構造体登録、説明文、条件分岐ノード（`condition`）を宣言的に構築。
+- `builder.write("protocol_spec.md")` で Mermaid フローチャート付き仕様書をワンライナー生成。
+
+```python
+from binary_master import Builder, UInt16, UInt32, FixedString, binary_struct
+
+@binary_struct
+class Header:
+    magic: UInt32
+    version: UInt16
+
+@binary_struct
+class AuthRequest:
+    token: FixedString[32]
+
+@binary_struct
+class DataRequest:
+    query_id: UInt32
+
+# スキーマファーストでプロトコル仕様を定義
+builder = Builder(title="クライアント・サーバー間プロトコル仕様書")
+builder.add_struct(Header, desc="共通通信ヘッダー")
+
+# 仕様書に条件分岐ノードを追加
+builder.condition(
+    "version == 1",
+    then_fn=lambda b: b.add_struct(AuthRequest, desc="認証リクエスト（v1）"),
+    else_fn=lambda b: b.add_struct(DataRequest, desc="データ問い合わせリクエスト（v2）"),
+)
+
+# Markdown 仕様書（Mermaid フローチャート付き）および C ヘッダーを出力
+builder.write("protocol_spec.md")
+builder.write_c("protocol_types.h")
+```
+
 ---
 
 ## 12. Advanced Features Reference (LLM Quick Reference)

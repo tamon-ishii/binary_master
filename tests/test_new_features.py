@@ -421,3 +421,21 @@ class TestCLI:
         cli_main(["export", "tests.test_new_features:CliTestHeader", "--lang", "rust", "-o", "-"])
         captured = capsys.readouterr()
         assert "struct CliTestHeader" in captured.out or "pub struct" in captured.out
+
+    def test_to_dict_from_dict_with_magic_and_constant(self):
+        @binary_struct
+        class ConfigPacket:
+            magic: Magic[b"CONF"]
+            version: Constant[UInt8, 2]
+            val: UInt32
+
+        pkt = ConfigPacket(val=999)
+        d = pkt.to_dict()
+        assert d["magic"] == "0x434f4e46"
+        assert d["version"] == 2
+        assert d["val"] == 999
+
+        restored = ConfigPacket.from_dict(d)
+        assert restored.val == 999
+        assert restored.to_bytes() == pkt.to_bytes()
+
