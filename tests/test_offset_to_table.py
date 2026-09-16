@@ -219,49 +219,64 @@ def test_named_offset_with_target_struct():
     assert restored.rel_offset == 20
 
 
-def test_named_offset_duplicate_struct_write_raises():
-    """Writing a struct containing NamedOffset twice must raise DuplicateNamedOffsetError."""
-    from binary_master import BinaryWriter, NamedOffset, DuplicateNamedOffsetError
+def test_named_offset_duplicate_struct_write_allowed():
+    """Writing a struct containing NamedOffset twice is allowed; resolving backpatches both."""
+    from binary_master import BinaryWriter, NamedOffset, UInt16
 
     @binary_struct
     class Header:
         num: UInt16
         offset: NamedOffset["ofs"]
 
-    h = Header()
+    h1 = Header(num=1)
+    h2 = Header(num=2)
     writer = BinaryWriter()
-    writer.write_struct(h)
+    writer.write_struct(h1)  # offset at byte 2..6
+    writer.write_struct(h2)  # offset at byte 8..12
+    writer.write_string("padding")  # len 7 -> total 19
+    writer.write_named_offset("ofs")  # points to 19
 
-    with pytest.raises(DuplicateNamedOffsetError) as exc_info:
-        writer.write_struct(h)
+    raw = writer.to_bytes()
+    assert len(raw) == 19
+    # h1.offset at byte 2..6
+    val1 = struct.unpack("<I", raw[2:6])[0]
+    # h2.offset at byte 8..12
+    val2 = struct.unpack("<I", raw[8:12])[0]
+    assert val1 == 19
+    assert val2 == 19
 
-    assert "ofs" in str(exc_info.value)
-    assert isinstance(exc_info.value, ValueError)
 
-
-def test_named_offset_duplicate_key_raises():
-    """Registering duplicate key via different structs or reserve_named_offset must raise."""
-    from binary_master import BinaryWriter, NamedOffset, DuplicateNamedOffsetError
+def test_named_offset_multiple_keys_shared_point():
+    """Multiple different structs and manual reservations can share the same key to point to the same target."""
+    from binary_master import BinaryWriter, NamedOffset, Base, UInt16, UInt32
 
     @binary_struct
     class First:
-        offset1: NamedOffset["shared_key"]
+        offset1: NamedOffset["shared_key", UInt32, Base.SELF]
 
     @binary_struct
     class Second:
-        offset2: NamedOffset["shared_key"]
+        offset2: NamedOffset["shared_key", UInt16, 0]
 
     writer = BinaryWriter()
+    # First at 0: offset1 at 0..4, base is 0 (Base.SELF at pos 0)
     writer.write_struct(First())
+    # Second at 4: offset2 at 4..6, base is 0
+    writer.write_struct(Second())
+    # Manual reservation at 6: 4 bytes, base_offset = 2
+    pos3 = writer.reserve_named_offset("shared_key", offset_size=4, base_offset=2)
 
-    with pytest.raises(DuplicateNamedOffsetError):
-        writer.write_struct(Second())
+    writer.write_bytes(b"\xaa" * 10)  # 10 bytes -> pos 20
+    # Resolve shared_key at pos 20
+    writer.write_named_offset("shared_key")
 
-    # Direct reserve_named_offset duplicate check
-    writer2 = BinaryWriter()
-    writer2.reserve_named_offset("manual_key")
-    with pytest.raises(DuplicateNamedOffsetError):
-        writer2.reserve_named_offset("manual_key")
+    raw = writer.to_bytes()
+    # offset1 at 0..4: target(20) - base(0) = 20
+    assert struct.unpack("<I", raw[0:4])[0] == 20
+    # offset2 at 4..6 (UInt16): target(20) - base(0) = 20
+    assert struct.unpack("<H", raw[4:6])[0] == 20
+    # manual reservation at 6..10: target(20) - base(2) = 18
+    assert struct.unpack("<I", raw[6:10])[0] == 18
 
 
 def test_write_named_offset_missing_key_raises():

@@ -211,7 +211,7 @@ class BinaryWriter:
         self._current_caption_spec_count: Optional[Union[int, str, bool]] = None
         self._current_subcaption: Optional[str] = None
         self._current_subcaption_desc: str = ""
-        self._named_offset_slots: dict[str, dict[str, Any]] = {}
+        self._named_offset_slots: dict[str, list[dict[str, Any]]] = {}
         if stream is None:
             self._stream = io.BytesIO()
             self._close_stream = auto_close if auto_close is not None else False
@@ -1073,10 +1073,9 @@ class BinaryWriter:
         entry_idx: int = -1,
     ) -> None:
         """Internal method to register a placeholder slot for a named offset."""
-        if name in self._named_offset_slots:
-            from binary_master.exceptions import DuplicateNamedOffsetError
-            raise DuplicateNamedOffsetError(f"Named offset key {name!r} is already registered. Duplicate keys are not allowed.")
-        self._named_offset_slots[name] = {
+        if name not in self._named_offset_slots:
+            self._named_offset_slots[name] = []
+        self._named_offset_slots[name].append({
             "pos": placeholder_pos,
             "fmt_char": fmt_char,
             "endian": endian or self._default_endian,
@@ -1084,7 +1083,7 @@ class BinaryWriter:
             "entry_idx": entry_idx,
             "resolved": False,
             "target_offset": None,
-        }
+        })
 
     def reserve_named_offset(
         self,
@@ -1097,6 +1096,9 @@ class BinaryWriter:
     ) -> int:
         """Reserve a named offset slot in the stream.
 
+        Multiple slots can be registered under the same key name, all of which
+        will be resolved to the target position when write_named_offset(name) is called.
+
         Args:
             name: The key identifier for this offset (e.g. 'ofs', 'chunk_payload').
             offset_size: Byte size of offset (1, 2, 4, 8, default: 4).
@@ -1107,14 +1109,7 @@ class BinaryWriter:
 
         Returns:
             The byte position where the placeholder was written.
-
-        Raises:
-            DuplicateNamedOffsetError: If `name` is already registered.
         """
-        if name in self._named_offset_slots:
-            from binary_master.exceptions import DuplicateNamedOffsetError
-            raise DuplicateNamedOffsetError(f"Named offset key {name!r} is already registered. Duplicate keys are not allowed.")
-
         fmt_map = {1: "B", 2: "H", 4: "I", 8: "Q"}
         if offset_size not in fmt_map:
             raise ValueError(f"offset_size must be 1, 2, 4, or 8, got {offset_size}")
@@ -1157,6 +1152,8 @@ class BinaryWriter:
     ) -> int:
         """Resolve and backpatch named offset placeholder for `name` to the current position (or target).
 
+        If multiple slots were registered under `name`, all of them will be backpatched.
+
         Args:
             name: The key identifier for the named offset.
             target: Optional target object (struct, bytes, string, or callable) to write at current position.
@@ -1168,7 +1165,7 @@ class BinaryWriter:
         Raises:
             NamedOffsetNotFoundError: If `name` was never registered.
         """
-        if name not in self._named_offset_slots:
+        if name not in self._named_offset_slots or not self._named_offset_slots[name]:
             from binary_master.exceptions import NamedOffsetNotFoundError
             raise NamedOffsetNotFoundError(f"Named offset key {name!r} does not exist.")
 
@@ -1185,27 +1182,27 @@ class BinaryWriter:
             elif callable(target):
                 target(self)
 
-        slot = self._named_offset_slots[name]
-        placeholder_pos = slot["pos"]
-        fmt_char = slot["fmt_char"]
-        slot_endian = normalize_endian(slot["endian"], self._default_endian)
-        actual_base = slot["actual_base"]
-        stored_val = target_pos - actual_base
-        if stored_val < 0 and fmt_char in ("B", "H", "I", "Q"):
-            raise ValueError(f"Offset value {stored_val} is negative (target={target_pos}, base={actual_base})")
-
         return_pos = self.tell()
-        self.seek(placeholder_pos)
-        self._stream.write(struct.pack(f"{slot_endian.value}{fmt_char}", stored_val))
-        entry_idx = slot.get("entry_idx", -1)
-        if 0 <= entry_idx < len(self._entries):
-            self._entries[entry_idx].value = stored_val
-            self._entries[entry_idx].target_offset = target_pos
+        for slot in self._named_offset_slots[name]:
+            placeholder_pos = slot["pos"]
+            fmt_char = slot["fmt_char"]
+            slot_endian = normalize_endian(slot["endian"], self._default_endian)
+            actual_base = slot["actual_base"]
+            stored_val = target_pos - actual_base
+            if stored_val < 0 and fmt_char in ("B", "H", "I", "Q"):
+                raise ValueError(f"Offset value {stored_val} is negative (target={target_pos}, base={actual_base})")
+
+            self.seek(placeholder_pos)
+            self._stream.write(struct.pack(f"{slot_endian.value}{fmt_char}", stored_val))
+            entry_idx = slot.get("entry_idx", -1)
+            if 0 <= entry_idx < len(self._entries):
+                self._entries[entry_idx].value = stored_val
+                self._entries[entry_idx].target_offset = target_pos
+
+            slot["resolved"] = True
+            slot["target_offset"] = target_pos
 
         self.seek(return_pos)
-        slot["resolved"] = True
-        slot["target_offset"] = target_pos
-
         return target_pos
 
     mark_named_offset = write_named_offset
@@ -1218,7 +1215,9 @@ class BinaryWriter:
         target: Any = None,
         endian: Optional[EndianType] = None,
     ) -> int:
-        """Rewrite/re-patch an existing named offset placeholder with a new target offset or target object.
+        """Rewrite/re-patch existing named offset placeholders for `name` with a new target offset or target object.
+
+        If multiple slots were registered under `name`, all of them will be re-patched.
 
         Args:
             name: The key identifier for the named offset.
@@ -1232,7 +1231,7 @@ class BinaryWriter:
         Raises:
             NamedOffsetNotFoundError: If `name` does not exist in registered named offsets.
         """
-        if name not in self._named_offset_slots:
+        if name not in self._named_offset_slots or not self._named_offset_slots[name]:
             from binary_master.exceptions import NamedOffsetNotFoundError
             raise NamedOffsetNotFoundError(f"Named offset key {name!r} does not exist.")
 
@@ -1240,26 +1239,27 @@ class BinaryWriter:
             return self.write_named_offset(name, target=target, endian=endian)
 
         resolved_target_pos = self.tell() if target_offset is None else target_offset
-        slot = self._named_offset_slots[name]
-        placeholder_pos = slot["pos"]
-        fmt_char = slot["fmt_char"]
-        slot_endian = normalize_endian(slot["endian"], self._default_endian)
-        actual_base = slot["actual_base"]
-        stored_val = resolved_target_pos - actual_base
-        if stored_val < 0 and fmt_char in ("B", "H", "I", "Q"):
-            raise ValueError(f"Offset value {stored_val} is negative (target={resolved_target_pos}, base={actual_base})")
-
         return_pos = self.tell()
-        self.seek(placeholder_pos)
-        self._stream.write(struct.pack(f"{slot_endian.value}{fmt_char}", stored_val))
-        entry_idx = slot.get("entry_idx", -1)
-        if 0 <= entry_idx < len(self._entries):
-            self._entries[entry_idx].value = stored_val
-            self._entries[entry_idx].target_offset = resolved_target_pos
+        for slot in self._named_offset_slots[name]:
+            placeholder_pos = slot["pos"]
+            fmt_char = slot["fmt_char"]
+            slot_endian = normalize_endian(slot["endian"], self._default_endian)
+            actual_base = slot["actual_base"]
+            stored_val = resolved_target_pos - actual_base
+            if stored_val < 0 and fmt_char in ("B", "H", "I", "Q"):
+                raise ValueError(f"Offset value {stored_val} is negative (target={resolved_target_pos}, base={actual_base})")
+
+            self.seek(placeholder_pos)
+            self._stream.write(struct.pack(f"{slot_endian.value}{fmt_char}", stored_val))
+            entry_idx = slot.get("entry_idx", -1)
+            if 0 <= entry_idx < len(self._entries):
+                self._entries[entry_idx].value = stored_val
+                self._entries[entry_idx].target_offset = resolved_target_pos
+
+            slot["resolved"] = True
+            slot["target_offset"] = resolved_target_pos
 
         self.seek(return_pos)
-        slot["resolved"] = True
-        slot["target_offset"] = resolved_target_pos
         return resolved_target_pos
 
     def write_offset_table(

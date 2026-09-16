@@ -642,8 +642,8 @@ restored = read_struct(Header, raw)
 print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
 ```
 
-- **例外安全性**:
-  - `NamedOffset` を含む構造体を誤って 2 回 `write_struct()` したり、同じキー名を重複登録した場合は、安全のため [`DuplicateNamedOffsetError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L101-L103) が発生します。
+- **同一キーの多重登録と例外安全性**:
+  - 同じキー名の `NamedOffset` を複数のフィールドや構造体で宣言した場合、同一キーの多重登録が許可されます。`writer.write_named_offset("key")` を呼び出すと、そのキーに紐づくすべてのオフセットスロットが同じターゲット位置へと一括でバックパッチされます（複数のポインタが同一ペイロードを指す構造に対応）。
   - `write_named_offset("key")` や `rewrite_named_offset("key")` で存在しないキーを指定した場合は、安全のため [`NamedOffsetNotFoundError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L106-L108) が発生します。
 
 
