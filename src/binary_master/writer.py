@@ -1149,6 +1149,7 @@ class BinaryWriter:
         target: Any = None,
         *,
         endian: Optional[EndianType] = None,
+        _allow_rewrite: bool = False,
     ) -> int:
         """Resolve and backpatch named offset placeholder for `name` to the current position (or target).
 
@@ -1158,16 +1159,25 @@ class BinaryWriter:
             name: The key identifier for the named offset.
             target: Optional target object (struct, bytes, string, or callable) to write at current position.
             endian: Optional endianness override when serializing target struct.
+            _allow_rewrite: Internal flag to allow rewriting already resolved slots.
 
         Returns:
             The resolved target offset in the stream.
 
         Raises:
             NamedOffsetNotFoundError: If `name` was never registered.
+            DuplicateNamedOffsetError: If `name` was already resolved (use rewrite_named_offset instead).
         """
         if name not in self._named_offset_slots or not self._named_offset_slots[name]:
             from binary_master.exceptions import NamedOffsetNotFoundError
             raise NamedOffsetNotFoundError(f"Named offset key {name!r} does not exist.")
+
+        if not _allow_rewrite and any(slot.get("resolved") for slot in self._named_offset_slots[name]):
+            from binary_master.exceptions import DuplicateNamedOffsetError
+            raise DuplicateNamedOffsetError(
+                f"Named offset key {name!r} has already been resolved with write_named_offset. "
+                "Use rewrite_named_offset() to explicitly update it."
+            )
 
         target_pos = self.tell()
 
@@ -1236,7 +1246,7 @@ class BinaryWriter:
             raise NamedOffsetNotFoundError(f"Named offset key {name!r} does not exist.")
 
         if target is not None:
-            return self.write_named_offset(name, target=target, endian=endian)
+            return self.write_named_offset(name, target=target, endian=endian, _allow_rewrite=True)
 
         resolved_target_pos = self.tell() if target_offset is None else target_offset
         return_pos = self.tell()

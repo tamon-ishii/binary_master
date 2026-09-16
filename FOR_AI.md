@@ -320,6 +320,7 @@ writer.write_string("variable length padding or metadata...")
 # Backpatch "my_payload" offset to current position (or write target struct):
 writer.write_named_offset("my_payload") 
 # Multiple offsets can share the same key (e.g. multiple pointers referencing the same payload); all will be backpatched.
+# Calling write_named_offset more than once on the same key raises DuplicateNamedOffsetError (use rewrite_named_offset to re-patch).
 # Calling write_named_offset or rewrite_named_offset with unknown key raises NamedOffsetNotFoundError.
 ```
 ```

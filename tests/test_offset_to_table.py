@@ -324,6 +324,52 @@ def test_rewrite_named_offset_success():
     assert struct.unpack("<I", writer.to_bytes()[4:8])[0] == 100
 
 
+def test_write_named_offset_duplicate_call_raises():
+    """Calling write_named_offset more than once on the same key must raise DuplicateNamedOffsetError."""
+    from binary_master import BinaryWriter, NamedOffset, DuplicateNamedOffsetError
+
+    @binary_struct
+    class Header:
+        ofs: NamedOffset["key"]
+
+    writer = BinaryWriter()
+    writer.write_struct(Header())
+    writer.write_named_offset("key")  # first call succeeds
+
+    with pytest.raises(DuplicateNamedOffsetError) as exc_info:
+        writer.write_named_offset("key")  # second call raises
+
+    assert "key" in str(exc_info.value)
+    assert "rewrite_named_offset" in str(exc_info.value)
+
+    # But rewrite_named_offset is explicitly permitted
+    writer.rewrite_named_offset("key", 123)
+    assert struct.unpack("<I", writer.to_bytes()[0:4])[0] == 123
+
+
+def test_rewrite_named_offset_with_target_struct_after_resolve():
+    """rewrite_named_offset with target struct succeeds even after initial resolution."""
+    from binary_master import BinaryWriter, NamedOffset
+
+    @binary_struct
+    class Payload:
+        x: UInt16
+
+    @binary_struct
+    class Header:
+        ofs: NamedOffset["key"]
+
+    writer = BinaryWriter()
+    writer.write_struct(Header())  # 0..4
+    writer.write_named_offset("key")  # initial pos 4
+
+    # Now rewrite with target payload
+    p = Payload(x=0x55AA)
+    writer.rewrite_named_offset("key", target=p)
+    assert struct.unpack("<I", writer.to_bytes()[0:4])[0] == 4
+    assert writer.to_bytes()[4:6] == b"\xaa\x55"
+
+
 def test_user_snippet_data_uint8_default_zero():
     """Verify user snippet: Data() without arguments or '= 0' initializes data to 0."""
     @binary_struct
