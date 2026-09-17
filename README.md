@@ -105,6 +105,7 @@ from binary_master import (
     UInt16,
     UInt32,
     binary_struct,
+    sizeof,
 )
 
 # 1バイト（8ビット）のビットフィールド
@@ -129,13 +130,13 @@ class Header:
     flags: HeaderFlags
     image_offset: Offset[Image]  # オフセット位置は自動計算されます
 
-# データの構築
+# データの構築（ヘッダーを先に宣言し、後から実体データをセット）
 header = Header(
     magic=0x474E5089,
     version=1,
     flags=HeaderFlags(compressed=1, encrypted=0, reserved=0),
-    image_offset=Image(width=1920, height=1080, pixels=[255, 0, 0, 255]),
 )
+header.image_offset = Image(width=1920, height=1080, pixels=[255, 0, 0, 255])
 
 # バイト列に変換
 data: bytes = header.to_bytes()
