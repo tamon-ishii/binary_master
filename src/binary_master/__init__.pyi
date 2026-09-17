@@ -1,4 +1,6 @@
 from typing import Literal as Literal
+type L[*Ts] = Literal[*Ts]
+
 from .binary_struct import (
     UInt8 as UInt8,
     UInt16 as UInt16,

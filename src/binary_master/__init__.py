@@ -1,5 +1,8 @@
 from typing import Literal
 
+L = Literal
+
+
 from .enums import Endian, EndianType, normalize_endian
 
 from .writer import BinaryWriter, Writer, OffsetTableHandle
@@ -244,6 +247,7 @@ __all__ = [
     "dump_json",
     "dump_dict",
     "Literal",
+    "L",
 ]
 
 
