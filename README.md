@@ -100,6 +100,7 @@ from binary_master import (
     BinaryWriter,
     Bits,
     FixedArray,
+    L,
     Offset,
     UInt8,
     UInt16,
@@ -120,7 +121,7 @@ class HeaderFlags:
 class Image:
     width: UInt16
     height: UInt16
-    pixels: FixedArray[UInt8, 4]
+    pixels: FixedArray[UInt8, L[4]]  # 静的型チェッカー準拠の L[4]（または Literal[4]）
 
 # メインヘッダー（Image へのオフセットを保持）
 @binary_struct
@@ -128,7 +129,7 @@ class Header:
     magic: UInt32
     version: UInt16
     flags: HeaderFlags
-    image_offset: Offset[Image]  # オフセット位置は自動計算されます
+    image_offset: Offset[Image] = None  # オフセット位置は自動計算されます
 
 # データの構築（ヘッダーを先に宣言し、後から実体データをセット）
 header = Header(
@@ -141,6 +142,11 @@ header.image_offset = Image(width=1920, height=1080, pixels=[255, 0, 0, 255])
 # バイト列に変換
 data: bytes = header.to_bytes()
 print(f"Serialized {len(data)} bytes: {data.hex()}")
+
+# デシリアライズ（復元された restored.image_offset は IDE でメンバが自動補完されます）
+restored = Header.from_bytes(data)
+assert restored.image_offset is not None
+print(f"Restored width: {restored.image_offset.width}")  # .width や .height が自動補完される！
 
 # バイナリサイズの取得 (sizeof / binary_size / len)
 print(Header.binary_size)   # クラス定義から静的サイズを取得 -> 11 バイト
@@ -607,7 +613,11 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
 
 #### 配列 (`FixedArray` & `Array`)
 - `FixedArray[Type, Size]`: 固定長配列（サイズ不足時は自動パディング、サイズ超過時はエラー検知）。
+  - **型安全性・IDE補完**: Python 公式の型仕様（PEP 484/526）に準拠し、最新の型チェッカー（`ty` / PyCharm / mypy）で型警告（`invalid-type-form`）を出さない記法として、要素数に `L[N]` または `Literal[N]` の指定を推奨します（例: `FixedArray[UInt8, L[4]]`）。
+  - 短縮形 `L` は `from binary_master import L` から直接インポート可能です。
+  - 従来の `FixedArray[UInt8, 4]` のような生の数値も実行時に自動アンラップされるため、そのまま完全動作します。
 - `Array[Type]`: 可変長配列。
+
 
 #### 自動アライメント & パディング (`auto_align`, `align`)
 C言語の構造体のように、各メンバ型のサイズに合わせた自然境界アライメント（または指定バイト境界アライメント）に自動でパディングを挟むことができます。
@@ -702,6 +712,18 @@ class ChunkContainer:
 構造体がバイナリストリームの任意の位置（例: `0x0100`〜）や入れ子構造の中に配置されても、その構造体の開始位置を動的な基準として自動計算されます。
 また、オフセットフィールド自身の位置を基準とする `Base.FIELD` や、手続き的ライターでの固定位置指定（`write_offset_table(..., base_offset=pos)`）も可能です。
 ※ 仕様書（Markdown）出力時は、Value列に計算後の相対オフセット値（`target - base`）が表示され、参照先マーカー（`-> 0xXXXX`）や Mermaid 矢印は実際の格納先（絶対アドレス）を正確に指し示します。
+
+#### 型安全性と IDE 自動補完 (PEP 561 / スタブ提供)
+`binary_master` は **PEP 561 に準拠した型スタブ（`py.typed`, `.pyi`）** を標準同梱しており、PyCharm、VSCode、`ty`、`mypy` などの最新静的解析環境で妥協のない型体験を提供します：
+
+1. **`Offset[Target]` の自動型推論 & IDE 補完**:
+   - クラス定義で `image_offset: Offset[ImagePayload] = None` と書くと、IDE はこのフィールドの型を `ImagePayload | None` として認識します。
+   - そのため、ヘッダー先行代入 `header.image_offset = payload` で型警告が出ず、デシリアライズ後（`restored.image_offset.`）で **`ImagePayload` の各フィールド（`width`, `height` 等）が 100% 自動補完** されます。
+2. **プリミティブ型代入の完全許容**:
+   - `UInt8`〜`UInt64`、`Int8`〜`Int64` は IDE 上で `int` として扱われるため、`magic=0x42494E59` や `width=100` などの整数値リテラルを直接渡しても型不一致警告が出ません。
+3. **固定長配列の型指定 (`L[N]` / `Literal[N]`)**:
+   - Python の型仕様（PEP 484/526）により、型式の Generic 引数に生の数値を書くと型チェッカーから警告が出ます。`FixedArray[UInt8, L[4]]` のように `L[N]` または `Literal[N]` で囲むことで、警告ゼロの完全な型安全性を得られます。
+
 
 #### 多態チャンク（タグ付き共用体 / バリアント）とサブキャプション
 チャンク形式のバイナリなど、**「同じオフセット位置に、種別タグやフラグに応じて異なる種類の構造体が格納される」** ケースを強力にサポートしています。

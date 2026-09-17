@@ -13,6 +13,7 @@ from binary_master import (
     Base,
     BinaryWriter,
     FixedArray,
+    L,
     NamedOffset,
     Offset,
     OffsetTable,
@@ -33,7 +34,8 @@ class TextureData:
     width: UInt16
     height: UInt16
     format: UInt8
-    raw_pixels: FixedArray[UInt8, 8]
+    raw_pixels: FixedArray[UInt8, L[8]]
+
 
 
 # Container using relative offsets and dynamic offset tables

@@ -134,8 +134,10 @@ class PlayerProfile:
 - **プリミティブ型**: `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Int8`, `Int16`, `Int32`, `Int64`, `Float16`, `Float32`, `Float64`, `Bool` などを直接指定できます。
 - **固定長文字列 & バイト列**: `FixedString[N]` や `Bytes[N]` により、固定長テキストや生バイト列を Python の `str` / `bytes` として直感的に扱えます。
 - **固定長配列**: `FixedArray[Type, Length]` で任意型の固定長配列を定義できます。
+  - **型安全性・IDE補完**: Python 公式の型仕様（PEP 484/526）に準拠し、最新の型チェッカー（`ty` / PyCharm / mypy）で型警告（`invalid-type-form`）を出さない記法として、要素数に `L[N]` または `Literal[N]` の指定を推奨します（例: `FixedArray[UInt8, L[4]]`）。短縮形 `L` は `from binary_master import L` から直接インポート可能です。従来の `FixedArray[UInt8, 4]` のような生の数値も実行時に自動アンラップされて完全動作します。
 - **初期値（デフォルト値）の自由配置**: Python 標準の `@dataclass` の制限（「初期値ありフィールドの後に初期値なしフィールドを置けない」）を排除しており、**先頭や途中のフィールドにも自由に初期値（`magic: UInt32 = 0x504B5401`）を設定可能** です。
 - **Docstring とインラインコメント**: クラス docstring や `# コメント` は、後述する仕様書生成時に自動抽出され、マニュアルの「説明」に反映されます。
+
 
 ```python
 # 初期値付き構造体の定義例（先頭の magic や version に初期値を指定可能）
@@ -431,6 +433,12 @@ container.aux_offset     = TextureData(width=128, height=128, format=1, raw_pixe
 
 # to_bytes() だけでヘッダーと各実体データが順番に書き出され、オフセットが自動計算されます
 binary_package = container.to_bytes()
+
+# --- デシリアライズと IDE 自動補完 ---
+restored = AssetContainer.from_bytes(binary_package)
+# PEP 561 スタブにより、IDE は primary_offset を TextureData 型と正しく認識します。
+# ドットを入力すると .width や .height、.raw_pixels が 100% 自動補完されます！
+print(f"Primary texture: {restored.primary_offset.width}x{restored.primary_offset.height}")
 ```
 
 ---

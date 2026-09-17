@@ -38,11 +38,12 @@ type CString = str
 type PrefixedString = str
 
 # 2. Arrays & Offsets
+L = Literal
 type FixedArray[T, *Args] = bytes | list[T]
 type Array[T] = list[T]
 type Offset[Target, *Args] = Target | None
 type NamedOffset[Key, *Args] = Any
-type OffsetTable[Count, *Args] = list[int]
+type OffsetTable[Count, *Args] = list[Any] | None
 type Bits[Width] = int
 type Variant[Tag, Mapping, *Args] = Any
 
@@ -68,7 +69,9 @@ Struct = BinaryStruct
 
 def to_bytes(obj: Any, endian: Any = ...) -> bytes: ...
 def from_bytes[T](cls: type[T], data: bytes, endian: Any = ...) -> T: ...
+def read_struct[T](cls: type[T], data: bytes | Any = ..., reader: Any = ..., endian: Any = ...) -> T: ...
 def sizeof(cls_or_obj: Any) -> int: ...
+
 def binary_size(cls_or_obj: Any) -> int: ...
 def offsetof(cls_or_obj: Any, field_name: str) -> int: ...
 def bit_offsetof(cls_or_obj: Any, field_name: str) -> int: ...

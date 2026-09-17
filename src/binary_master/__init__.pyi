@@ -1,5 +1,5 @@
 from typing import Literal as Literal
-type L[*Ts] = Literal[*Ts]
+L = Literal
 
 from .binary_struct import (
     UInt8 as UInt8,
@@ -34,6 +34,7 @@ from .binary_struct import (
     Struct as Struct,
     to_bytes as to_bytes,
     from_bytes as from_bytes,
+    read_struct as read_struct,
     sizeof as sizeof,
     binary_size as binary_size,
     offsetof as offsetof,
@@ -47,3 +48,5 @@ from .binary_struct import (
 from .writer import BinaryWriter as BinaryWriter, Writer as Writer, OffsetTableHandle as OffsetTableHandle
 from .reader import BinaryReader as BinaryReader, Reader as Reader
 from .enums import Endian as Endian, EndianType as EndianType, normalize_endian as normalize_endian
+from .manual import generate_manual as generate_manual
+

@@ -54,8 +54,11 @@ from binary_master import (
     Variant,             # Variant[tag_field_name, {tag_val: StructCls, ...}]
     Array,               # Array[T]: Dynamic length sequence
     FixedArray,          # FixedArray[T, N]: Static N-element array
+    Literal,             # typing.Literal re-export for PEP-compliant type parameters
+    L,                   # Short alias for Literal: FixedArray[UInt8, L[4]]
     Base,                # Base.SELF, Base.STRUCT, Base.FIELD origin markers
     RelativeBase,        # Result of Base + delta arithmetic
+
 
     # v0.2.0 & v0.3.0 Declarative Types & Constraints
     BinaryEnum,          # IntEnum with explicit sizing: MyEnum[UInt8]
@@ -729,8 +732,11 @@ md = generate_manual(
 - `Base.FIELD` resolves to the byte position of the offset field itself.
 - You can apply offsets using Python operators: `Base.SELF + 0x20` or `Base.FIELD - 4`.
 
-### ⚠️ RULE 6: Python 3.14+ Type Annotations
-- `binary-master` supports Python 3.14+ deferred annotations (`from __future__ import annotations`). All type hints in `@binary_struct` are lazily evaluated and normalized.
+### ⚠️ RULE 6: Python 3.14+ Type Annotations, PEP 561 & IDE Completion
+- `binary-master` ships with PEP 561 compliant type stubs (`py.typed`, `.pyi`).
+- **`Offset[Target]` Completion**: Statically resolves to `Target | None`. Setting `field: Offset[Target] = None` allows clean header-first assignment (`header.field = payload`) without type warnings, and deserialized access (`restored.field.attr`) provides full IDE auto-completion.
+- **FixedArray Size Parameter (`L[N]` / `Literal[N]`)**: Standard Python typing specifications forbid bare numeric literals (like `FixedArray[UInt8, 4]`) in type expressions. Use `FixedArray[UInt8, L[4]]` or `FixedArray[UInt8, Literal[4]]` for strict 0-diagnostic type checking in `ty`, PyCharm, and `mypy`. `L` is exported directly from `binary_master`. (Bare numbers are still accepted and automatically unwrapped at runtime for backward compatibility).
+
 
 ### ⚠️ RULE 7: `Array[T]` Consumes Stream to EOF (Tail Field Only)
 - In `@binary_struct`, `Array[T]` (such as `Array[UInt8]`) has no explicit length prefix and consumes **all remaining bytes until EOF** during `read_struct` / `from_bytes`.
