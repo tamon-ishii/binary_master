@@ -7,7 +7,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from typing import Annotated, Any, Callable, Generic, Optional, TypeVar, Union, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, Callable, Generic, Optional, TypeVar, Union, dataclass_transform, get_args, get_origin, get_type_hints
 
 from binary_master.enums import Endian, EndianType, normalize_endian
 from binary_master.exceptions import (
@@ -851,12 +851,17 @@ def _parse_offset_spec_args(args: tuple[Any, ...]) -> tuple[Any, Any]:
     return first, second
 
 
-class Offset(Generic[T]):
+class Offset:
     """シリアライズ時に自動計算されるオフセット: Offset[Target, OffsetType=UInt32, BaseOffset=0]"""
 
     def __init__(self, target: Any = None, offset: Optional[int] = None):
         self.target = target
         self.offset = offset
+
+    def __getattr__(self, name: str) -> Any:
+        if self.target is not None and hasattr(self.target, name):
+            return getattr(self.target, name)
+        raise AttributeError(f"'Offset' object has no attribute '{name}'")
 
     def __class_getitem__(cls, args):
         if isinstance(args, tuple):
@@ -877,7 +882,7 @@ class Offset(Generic[T]):
         return f"Offset(target={self.target!r}, offset={self.offset!r})"
 
 
-class NamedOffset(Generic[T]):
+class NamedOffset:
     """名前キーで参照される遅延解決オフセット: NamedOffset["key", OffsetType=UInt32, BaseOffset=0]"""
 
     def __init__(self, offset: Optional[int] = None):
@@ -897,14 +902,14 @@ class NamedOffset(Generic[T]):
         return f"NamedOffset(offset={self.offset!r})"
 
 
-class Array(Generic[T]):
+class Array:
     """可変長配列"""
 
     def __class_getitem__(cls, item):
         return cls, item
 
 
-class FixedArray(Generic[T]):
+class FixedArray:
     """固定長配列"""
 
     def __class_getitem__(cls, args):
@@ -918,7 +923,7 @@ class Bits:
         return cls, width
 
 
-class OffsetTable(Generic[T]):
+class OffsetTable:
     """オフセットテーブル型: OffsetTable[Count, OffsetType, BaseOffset] または OffsetTable[Count, OffsetType] または OffsetTable[Count]"""
 
     def __class_getitem__(cls, args):
@@ -932,7 +937,7 @@ class OffsetTable(Generic[T]):
         return cls, count, offset_t, base_offset
 
 
-class Variant(Generic[T]):
+class Variant:
     """タグフィールドの値に応じて型が切り替わるバリアント型 (Tagged Union / Chunk Variants)"""
 
     def __init__(
@@ -1702,6 +1707,7 @@ def from_json_method(cls: type[T], json_str: str) -> T:
     return cls.from_dict(json.loads(json_str))
 
 
+@dataclass_transform()
 def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_align=False, total_size=None, pad_byte=b"\x00"):
 
     def wrapper(target_cls):
