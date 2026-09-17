@@ -590,9 +590,9 @@ table = writer.write_offset_table(
     spec_count="num_chunks",
 )
 
-# 各チャンクの書き込みとオフセットの登録
+# 各チャンクの書き込みとオフセットの登録（第2引数を省略すると現在位置が自動セットされる）
 for i in range(10):
-    table[i] = writer.tell()
+    table.set_offset(i)  # 第2引数は省略可能（writer.tell() が自動的に記録されます）
     writer.write_cstring(f"Payload #{i}", name=f"chunk_{i}")
 ```
 

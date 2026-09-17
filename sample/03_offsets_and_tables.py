@@ -116,8 +116,8 @@ def main():
 
     # Write each chunk payload and record its start offset in the table
     for i in range(3):
-        pos = pw.tell()
-        table[i] = pos
+        # set_offset(i) の第2引数を省略すると、現在位置 pw.tell() が自動セットされます
+        table.set_offset(i)
         pw.write_cstring(f"Payload data for chunk #{i}", name=f"chunk_data_{i}")
 
     pdata = pw.to_bytes()

@@ -644,10 +644,14 @@ class Container:
     # 先行フィールド 'num_chunk' の個数分だけオフセット配列を展開
     chunk_offsets: OffsetTable["num_chunk", UInt32]
 
-c1 = ChunkHeader(chunk_id=10)
-c2 = ChunkHeader(chunk_id=20)
-# 対象構造体を渡すと、自動的にオフセットが計算されてテーブルに書き込まれます
-container = Container(magic=0x12345678, num_chunk=2, chunk_offsets=[c1, c2])
+# 1. ヘッダーを先に宣言（num_chunk や chunk_offsets は省略可能）
+container = Container(magic=0x12345678)
+
+# 2. 後から実体リストを代入（num_chunk はリストの長さから自動計算・設定されます）
+container.chunk_offsets = [
+    ChunkHeader(chunk_id=10),
+    ChunkHeader(chunk_id=20),
+]
 ```
 
 **2. `BinaryWriter` 手続き的利用 (`write_offset_table`)**
@@ -660,17 +664,18 @@ writer = BinaryWriter()
 # 3エントリ・各4バイト(32bit)のオフセットテーブル枠を予約
 table = writer.write_offset_table(count=3, offset_size=4, name="section_offsets")
 
-# 方法A: 戻り値の write_offset() で現在位置をセット
-table.write_offset(0)
+# 方法A: set_offset(index) で現在位置を記録（第2引数は省略可能！）
+# ※ 第2引数を省略すると現在位置（writer.tell()）が自動的にセットされます
+table.set_offset(0)
 writer.write_cstring("Section 0 Data")
 
-# 方法B: 戻り値の set_offset(index, offset) で明示的にセット
-pos1 = writer.tell()
-table.set_offset(1, pos1)
+# 方法B: write_offset(index) で現在位置を記録（set_offset の同義語）
+table.write_offset(1)
 writer.write_cstring("Section 1 Data")
 
-# 方法C: インデックス代入 table[index] = offset
-table[2] = writer.tell()
+# 方法C: 明示的なオフセット指定（第2引数にアドレスを指定、またはインデックス代入）
+pos2 = writer.tell()
+table.set_offset(2, pos2)  # または table[2] = pos2
 writer.write_cstring("Section 2 Data")
 
 # 方法D: write_target(index, object) で現在オフセット記録＋対象の書き込みを一括実行
