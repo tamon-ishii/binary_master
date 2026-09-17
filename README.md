@@ -590,8 +590,18 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
   - すでに解決済みのキーに対して誤って再度 `write_named_offset("key")` を呼び出した場合は、意図しない二重確定を防ぐため [`DuplicateNamedOffsetError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L101-L103) が発生します（明示的に上書き・再更新する場合は [`rewrite_named_offset("key")`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/writer.py) を使用します）。
   - `write_named_offset("key")` や `rewrite_named_offset("key")` で存在しないキーを指定した場合は、安全のため [`NamedOffsetNotFoundError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L106-L108) が発生します。
 - **名前空間スコープ (`with writer.namespace(...)`)**:
-  - 同じ構造体クラスをループや複数チャンクで使い回す場合、`with writer.namespace("chunk_a"):` で囲むことでキーの衝突を防ぎます。
-  - スコープ内の相対キーは自動的に `"chunk_a/payload"` のように階層化され、ネスト（入れ子）や `auto_id=True` による自動採番（`chunk_0`, `chunk_1`...）にも対応しています。
+  同じ構造体クラスをループや複数チャンクで使い回す場合、`with writer.namespace(...)` で囲むことで同一キー名（例: `"payload"`）の衝突を完全に防止できます。
+  ```python
+  # auto_id=True で "chunk_0", "chunk_1"... と自動で名前空間を分離
+  for i in range(2):
+      with writer.namespace("chunk", auto_id=True):
+          writer.write_struct(ChunkHeader(chunk_id=i))
+          writer.write_string(f"metadata_{i}...")
+          # "chunk_i/payload" として安全にバックパッチ！
+          writer.write_named_offset("payload", ChunkPayload(width=100, height=200))
+  ```
+  - スコープ内の相対キーは自動的に `"chunk_0/payload"` のように階層化されます。
+  - ネスト（入れ子）や `auto_id=True` による自動採番（`chunk_0`, `chunk_1`...）に対応。
   - スコープ内から先頭スラッシュ `/` 付きキー（例: `NamedOffset["/global_footer"]`）を指定すると、ルート名前空間を直接参照できます。
 
 

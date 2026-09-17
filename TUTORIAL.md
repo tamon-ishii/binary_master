@@ -526,29 +526,49 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
 同じ構造体クラス（例: `ChunkHeader`）を複数のチャンクで繰り返し書き出す際、同一のキー名（例: `"payload"`）がグローバル空間でバッティングするのを防ぐため、`with writer.namespace(...)` コンテキストマネージャでスコープを分割できます。
 
 ```python
+from binary_master import (
+    BinaryWriter,
+    NamedOffset,
+    UInt16,
+    UInt32,
+    binary_struct,
+    read_struct,
+)
+
+@binary_struct
+class ChunkPayload:
+    width: UInt16
+    height: UInt16
+
 @binary_struct
 class ChunkHeader:
-    magic: UInt32
-    payload_offset: NamedOffset["payload"]  # 汎用的な名前のままでOK！
+    chunk_id: UInt16
+    payload_offset: NamedOffset["payload"]  # 汎用的なキー名で定義
 
 writer = BinaryWriter()
 
-# チャンクAの名前空間
-with writer.namespace("chunk_a"):
-    writer.write_struct(ChunkHeader(magic=0xAAAA))
-    writer.write_string("metadata_A")
-    writer.write_named_offset("payload")  # "chunk_a/payload" として解決
+# auto_id=True を使うと、"chunk_0", "chunk_1"... と自動連番でスコープ化されます
+for i in range(2):
+    with writer.namespace("chunk", auto_id=True):
+        # 1. ヘッダーを書き込み（payload_offset は仮値が書き込まれる）
+        writer.write_struct(ChunkHeader(chunk_id=i + 1))
+        # 2. 任意の可変長メタデータを挟む
+        writer.write_string(f"metadata_{i}...")
+        # 3. ペイロード実体を書き込みつつ、"chunk_i/payload" を自動バックパッチ！
+        writer.write_named_offset("payload", ChunkPayload(width=(i + 1) * 100, height=(i + 1) * 200))
 
-# チャンクBの名前空間（キーが衝突しない）
-with writer.namespace("chunk_b"):
-    writer.write_struct(ChunkHeader(magic=0xBBBB))
-    writer.write_string("metadata_B")
-    writer.write_named_offset("payload")  # "chunk_b/payload" として解決
+data = writer.to_bytes()
+
+# 読み込み検証: ヘッダーのオフセットから直接ペイロードをデシリアライズ可能
+h0 = read_struct(ChunkHeader, data[:6])
+p0 = read_struct(ChunkPayload, data[h0.payload_offset:h0.payload_offset + 4])
+print(f"Chunk 1 payload: {p0.width}x{p0.height}")  # => 100x200
 ```
 
+- **自動採番 (`auto_id=True`)**: ループ内で `with writer.namespace("chunk", auto_id=True):` とすると、`chunk_0`, `chunk_1`... と自動で連番が付与されます。
+- **明示的な名前空間**: `with writer.namespace("chunk_a"):` のように任意の文字列でスコープを指定することも可能です。
 - **ネスト（階層化）**: `with writer.namespace("sec"): with writer.namespace("sub"):` のようにネストすると `"sec/sub/key"` と連結されます。
 - **ルート脱出 (`/`)**: スコープ内から `NamedOffset["/global_footer"]` のように先頭にスラッシュを付けると、名前空間を脱出してルート直下のキーを参照します。
-- **自動採番 (`auto_id=True`)**: `with writer.namespace("chunk", auto_id=True):` とすると、`chunk_0`, `chunk_1`... と自動で連番が付与されます。
 
 ---
 
