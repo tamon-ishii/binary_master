@@ -410,19 +410,26 @@ class AssetContainer(BinaryStruct):
     # オフセット基準位置にバイアスを付与 (Base.SELF + 0x20)
     aux_offset: Offset[TextureData, Base.SELF + 0x20, UInt32]
 
-# 1. 実体オブジェクトを作成
-tex_main = TextureData(width=256, height=256, format=1, raw_pixels=b"MAIN_TEX")
-tex_aux  = TextureData(width=128, height=128, format=1, raw_pixels=b"AUX__TEX")
+# --- データのセット方法 ---
 
-# 2. ヘッダーに実体オブジェクトを渡してインスタンス化
+# パターン 1: ヘッダーを先に宣言して後からセット（直感的でおすすめ）
+# Offset フィールドは初期化時に省略できるため、ヘッダーを先に作成できます
 container = AssetContainer(
     magic=0x54535341,  # 'ASST'
     version=1,
-    primary_offset=tex_main,
-    aux_offset=tex_aux,
 )
+container.primary_offset = TextureData(width=256, height=256, format=1, raw_pixels=b"MAIN_TEX")
+container.aux_offset     = TextureData(width=128, height=128, format=1, raw_pixels=b"AUX__TEX")
 
-# 3. to_bytes() だけでヘッダーと各実体データが順番に書き出され、オフセットが自動計算されます
+# パターン 2: コンストラクタ引数で一括指定
+# container = AssetContainer(
+#     magic=0x54535341,
+#     version=1,
+#     primary_offset=TextureData(width=256, height=256, format=1, raw_pixels=b"MAIN_TEX"),
+#     aux_offset=TextureData(width=128, height=128, format=1, raw_pixels=b"AUX__TEX"),
+# )
+
+# to_bytes() だけでヘッダーと各実体データが順番に書き出され、オフセットが自動計算されます
 binary_package = container.to_bytes()
 ```
 
@@ -466,15 +473,20 @@ class DirectTableContainer(BinaryStruct):
     # 中間構造体なしで OffsetTable へのオフセットを直接指定！
     table_offset: Offset[OffsetTable["num_items", UInt32, Base.SELF], Base.SELF]
 
-# Python リストを直接渡すだけで OK（num_items は省略しても自動的に 2 が設定されます）
-container = DirectTableContainer(
-    magic=0x524F4F54,
-    table_offset=[LeafItem(item_id=1, val=100), LeafItem(item_id=2, val=200)],
-)
+# 1. ヘッダーを先に宣言（num_items や table_offset は省略可能）
+container = DirectTableContainer(magic=0x524F4F54)
 
+# 2. 後からペイロードのリストを代入
+# （num_items は渡されたリストの長さから自動計算・補完されます）
+container.table_offset = [
+    LeafItem(item_id=1, val=100),
+    LeafItem(item_id=2, val=200),
+]
+
+# 3. シリアライズ
 raw = container.to_bytes()
 restored = DirectTableContainer.from_bytes(raw)
-print(restored.num_items)     # => 2
+print(restored.num_items)     # => 2 (自動設定)
 print(restored.table_offset)  # => [8, 14] (各 LeafItem への相対オフセット)
 ```
 

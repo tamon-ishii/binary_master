@@ -269,16 +269,14 @@ class FileContainer:
     num_chunks: UInt16
     chunk_table: OffsetTable[2, UInt32, Base.SELF]
 
-# Writing: write_struct automatically writes child structs at the end and patches offsets
-c1 = ChunkPayload(width=10, height=20, pixels=b"12345678")
-c2 = ChunkPayload(width=30, height=40, pixels=b"87654321")
-container = FileContainer(
-    magic=0x12345678,
-    primary_offset=c1,
-    aux_offset=c2,
-    num_chunks=2,
-    chunk_table=[c1, c2]
-)
+# Writing: declare container header first, then set payloads
+container = FileContainer(magic=0x12345678)
+container.primary_offset = ChunkPayload(width=10, height=20, pixels=b"12345678")
+container.aux_offset = ChunkPayload(width=30, height=40, pixels=b"87654321")
+container.chunk_table = [
+    ChunkPayload(width=10, height=20, pixels=b"12345678"),
+    ChunkPayload(width=30, height=40, pixels=b"87654321"),
+]
 data = container.to_bytes()
 
 # Reading: read_struct dereferences pointers automatically!
@@ -296,11 +294,12 @@ class DirectTableContainer:
     num_items: UInt16
     table_offset: Offset[OffsetTable["num_items", UInt32, Base.SELF], Base.SELF]
 
-# Automatically derives num_items=2, serializes table and items at the end:
-container = DirectTableContainer(
-    magic=0x524F4F54,
-    table_offset=[ChunkPayload(width=1, height=2, pixels=b"A"*8), ChunkPayload(width=3, height=4, pixels=b"B"*8)],
-)
+# Declare header first, assign list afterwards (num_items=2 derived automatically):
+container = DirectTableContainer(magic=0x524F4F54)
+container.table_offset = [
+    ChunkPayload(width=1, height=2, pixels=b"A"*8),
+    ChunkPayload(width=3, height=4, pixels=b"B"*8),
+]
 raw = container.to_bytes()
 ```
 

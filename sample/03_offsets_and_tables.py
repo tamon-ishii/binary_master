@@ -62,19 +62,21 @@ def main():
     # Part 1: Declarative OffsetTable with @binary_struct
     # -------------------------------------------------------------
     print("\n--- Part 1: Declarative @binary_struct OffsetTable ---")
-    tex_main = TextureData(width=256, height=256, format=1, raw_pixels=b"MAIN_TEX")
-    tex_aux = TextureData(width=128, height=128, format=2, raw_pixels=b"AUX__TEX")
-    tex_extra1 = TextureData(width=64, height=64, format=1, raw_pixels=b"ICON_001")
-    tex_extra2 = TextureData(width=32, height=32, format=1, raw_pixels=b"ICON_002")
-
+    # 1. ヘッダーを先に宣言（Offset / OffsetTable / 要素数カウントはすべて省略可能）
     container = AssetContainer(
         magic=0x54535341,  # 'ASST'
         version=1,
-        primary_offset=tex_main,
-        aux_offset=tex_aux,
-        num_textures=2,
-        texture_table=[tex_extra1, tex_extra2],
     )
+
+    # 2. 実体オブジェクトを作成して後からセット
+    container.primary_offset = TextureData(width=256, height=256, format=1, raw_pixels=b"MAIN_TEX")
+    container.aux_offset = TextureData(width=128, height=128, format=2, raw_pixels=b"AUX__TEX")
+
+    # 3. OffsetTable にもリストを直接代入（num_textures はリストの長さから自動補完）
+    container.texture_table = [
+        TextureData(width=64, height=64, format=1, raw_pixels=b"ICON_001"),
+        TextureData(width=32, height=32, format=1, raw_pixels=b"ICON_002"),
+    ]
 
     # Serialize through BinaryWriter which resolves and patches all offsets automatically
     writer = BinaryWriter()

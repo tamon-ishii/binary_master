@@ -485,14 +485,22 @@ class FileHeader:
     # 4. 2バイトオフセット (UInt16)
     small_offset: Offset[FileBody, UInt16, Base.SELF]
 
-# 実体オブジェクトを渡して初期化するだけ
-header = FileHeader(
-    magic=0x12345678,
-    body_offset=FileBody(data_length=128, raw_data=b"\xAA" * 128),
-    data_offset=FileBody(data_length=64, raw_data=b"\xBB" * 64),
-    short_offset=FileBody(data_length=32, raw_data=b"\xCC" * 32),
-    small_offset=FileBody(data_length=16, raw_data=b"\xDD" * 16),
-)
+# パターン 1: ヘッダーを先に宣言して後から実体をセット（直感的でおすすめ）
+# Offset フィールドは省略可能（0初期化）なため、ヘッダーを先に定義できます
+header = FileHeader(magic=0x12345678)
+header.body_offset  = FileBody(data_length=128, raw_data=b"\xAA" * 128)
+header.data_offset  = FileBody(data_length=64, raw_data=b"\xBB" * 64)
+header.short_offset = FileBody(data_length=32, raw_data=b"\xCC" * 32)
+header.small_offset = FileBody(data_length=16, raw_data=b"\xDD" * 16)
+
+# パターン 2: コンストラクタ引数で一括初期化
+# header = FileHeader(
+#     magic=0x12345678,
+#     body_offset=FileBody(data_length=128, raw_data=b"\xAA" * 128),
+#     data_offset=FileBody(data_length=64, raw_data=b"\xBB" * 64),
+#     short_offset=FileBody(data_length=32, raw_data=b"\xCC" * 32),
+#     small_offset=FileBody(data_length=16, raw_data=b"\xDD" * 16),
+# )
 
 # シリアライズ時に各 FileBody がヘッダー直後に順次書き出され、各オフセットが自動バックパッチされます
 data = header.to_bytes()
@@ -536,15 +544,20 @@ class DirectTableContainer:
     # 中間構造体なしで OffsetTable へのオフセットを直接指定！
     table_offset: Offset[OffsetTable["num_items", UInt32, Base.SELF], Base.SELF]
 
-# Python リストを直接渡すだけで OK（num_items は省略しても自動的に 2 が設定されます）
-container = DirectTableContainer(
-    magic=0x524F4F54,
-    table_offset=[LeafItem(item_id=1, val=100), LeafItem(item_id=2, val=200)],
-)
+# 1. ヘッダーを先に宣言（num_items や table_offset は省略可能）
+container = DirectTableContainer(magic=0x524F4F54)
 
+# 2. 後からペイロードのリストを代入
+# （num_items はリストの長さから自動計算・補完されます）
+container.table_offset = [
+    LeafItem(item_id=1, val=100),
+    LeafItem(item_id=2, val=200),
+]
+
+# 3. シリアライズ
 raw = container.to_bytes()
 restored = DirectTableContainer.from_bytes(raw)
-print(restored.num_items)     # => 2
+print(restored.num_items)     # => 2 (自動補完)
 print(restored.table_offset)  # => [8, 14] (各 LeafItem への相対オフセット)
 ```
 
