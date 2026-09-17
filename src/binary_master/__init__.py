@@ -1,6 +1,7 @@
-"""Binary Master: High-level binary writing library."""
+from typing import Literal
 
 from .enums import Endian, EndianType, normalize_endian
+
 from .writer import BinaryWriter, Writer, OffsetTableHandle
 from .reader import BinaryReader, Reader
 from .binary_struct import (
@@ -242,6 +243,7 @@ __all__ = [
     "dump_table",
     "dump_json",
     "dump_dict",
+    "Literal",
 ]
 
 

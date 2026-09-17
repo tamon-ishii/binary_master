@@ -7,7 +7,16 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from typing import Annotated, Any, Callable, Generic, Optional, TypeVar, Union, dataclass_transform, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, Callable, Generic, Literal, Optional, TypeVar, Union, dataclass_transform, get_args, get_origin, get_type_hints
+
+def _unwrap_literal_int(val: Any) -> Any:
+    """Extracts int value if val is a Literal[int], else returns val."""
+    if get_origin(val) is Literal:
+        args = get_args(val)
+        if args and isinstance(args[0], int):
+            return args[0]
+    return val
+
 
 from binary_master.enums import Endian, EndianType, normalize_endian
 from binary_master.exceptions import (
@@ -918,14 +927,16 @@ class FixedArray(Generic[T1, T2]):
     """固定長配列"""
 
     def __class_getitem__(cls, args):
-        element_type, count = args
-        return cls, element_type, count
+        if isinstance(args, tuple) and len(args) == 2:
+            element_type, count = args
+            return cls, element_type, _unwrap_literal_int(count)
+        return cls, args
 
 
 class Bits(Generic[T1]):
 
     def __class_getitem__(cls, width):
-        return cls, width
+        return cls, _unwrap_literal_int(width)
 
 
 class OffsetTable(Generic[T1, T2, T3]):
@@ -933,13 +944,14 @@ class OffsetTable(Generic[T1, T2, T3]):
 
     def __class_getitem__(cls, args):
         if isinstance(args, tuple):
-            count = args[0]
+            count = _unwrap_literal_int(args[0])
             offset_t, base_offset = _parse_offset_spec_args(args[1:])
         else:
-            count = args
+            count = _unwrap_literal_int(args)
             offset_t = UInt32
             base_offset = 0
         return cls, count, offset_t, base_offset
+
 
 
 class Variant(Generic[T1, T2, T3]):
