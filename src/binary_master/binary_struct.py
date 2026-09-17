@@ -851,7 +851,12 @@ def _parse_offset_spec_args(args: tuple[Any, ...]) -> tuple[Any, Any]:
     return first, second
 
 
-class Offset:
+T1 = TypeVar("T1")
+T2 = TypeVar("T2", default=Any)
+T3 = TypeVar("T3", default=Any)
+
+
+class Offset(Generic[T1, T2, T3]):
     """シリアライズ時に自動計算されるオフセット: Offset[Target, OffsetType=UInt32, BaseOffset=0]"""
 
     def __init__(self, target: Any = None, offset: Optional[int] = None):
@@ -882,7 +887,7 @@ class Offset:
         return f"Offset(target={self.target!r}, offset={self.offset!r})"
 
 
-class NamedOffset:
+class NamedOffset(Generic[T1, T2, T3]):
     """名前キーで参照される遅延解決オフセット: NamedOffset["key", OffsetType=UInt32, BaseOffset=0]"""
 
     def __init__(self, offset: Optional[int] = None):
@@ -902,14 +907,14 @@ class NamedOffset:
         return f"NamedOffset(offset={self.offset!r})"
 
 
-class Array:
+class Array(Generic[T]):
     """可変長配列"""
 
     def __class_getitem__(cls, item):
         return cls, item
 
 
-class FixedArray:
+class FixedArray(Generic[T1, T2]):
     """固定長配列"""
 
     def __class_getitem__(cls, args):
@@ -917,13 +922,13 @@ class FixedArray:
         return cls, element_type, count
 
 
-class Bits:
+class Bits(Generic[T1]):
 
     def __class_getitem__(cls, width):
         return cls, width
 
 
-class OffsetTable:
+class OffsetTable(Generic[T1, T2, T3]):
     """オフセットテーブル型: OffsetTable[Count, OffsetType, BaseOffset] または OffsetTable[Count, OffsetType] または OffsetTable[Count]"""
 
     def __class_getitem__(cls, args):
@@ -937,7 +942,7 @@ class OffsetTable:
         return cls, count, offset_t, base_offset
 
 
-class Variant:
+class Variant(Generic[T1, T2, T3]):
     """タグフィールドの値に応じて型が切り替わるバリアント型 (Tagged Union / Chunk Variants)"""
 
     def __init__(
