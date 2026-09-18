@@ -1016,8 +1016,8 @@ builder.write_markdown("telemetry_protocol_spec.md", diagram_direction="TD")
 
 生成される Markdown には以下が含まれます：
 - 目次・ドキュメント章
-- プロトコルの **Mermaid Flowchart**（条件分岐や多態バリアントのひし形ノード付き）
-- 各構造体の **Mermaid packet-beta** 配置図
+- プロトコルの **Mermaid Flowchart**（構造関連図。条件分岐や多態バリアントのひし形ノード付き）
+- 各構造体セクションごとの **Mermaid packet-beta** レイアウト図（※複数構造体がある場合は冒頭がフローチャート「## 構造図」としてすっきりと整理され、各構造体ごとにパケット図が配置されます）
 - 詳細なオフセット・サイズ・型・説明テーブル
 
 ### 5.4 多言語ヘッダー出力 (C, Rust, Modern C++, C#, Go)

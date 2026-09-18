@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-259%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-271%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの宣言的バイナリ構造化＆仕様書自動生成ライブラリです。
 
@@ -1002,12 +1002,14 @@ class NetworkPacket:
 # 仕様書出力オプション例（構造体クラス、インスタンス、Writer、Builder すべてで共通）
 pkt.write_markdown(
     "spec.md",
-    diagram_type="both",            # 'flowchart' | 'packet' | 'both' | 'none'
+    diagram_type="both",            # 'flowchart' | 'packet' | 'both' | 'none'（デフォルト: 'both'）
     diagram_direction="TD",         # フローチャートの方向 ('TD': 上下, 'LR': 左右)
     bits_per_row=32,                # パケット図の1行のビット幅 (8, 16, 32, 64)
     bit_width=50,                   # パケット図の1ビットあたりの横幅 (px)
     include_bitfield_diagram=True,  # ビットフィールドの詳細パケット図を含めるか
     include_values=True,            # 実データの値をダイアグラムのラベルに併記するか
+    full_packet_diagram=False,      # 複数構造体時、冒頭に全体のパケット図も含めるか（デフォルト: False）
+    large_data_threshold=64,        # パケット図で要約表示するバイト数の閾値（デフォルト: 64）
 )
 
 # スタンドアロン HTML 仕様書の出力
@@ -1021,12 +1023,15 @@ pkt.write_html(
 
 | オプション | デフォルト | 選択肢 / 説明 |
 |---|---|---|
-| `diagram_type` | `"flowchart"` | `"flowchart"`（構造関連図）、`"packet"`（RFC風ビットレイアウト）、`"both"`（両方並記）、`"none"`（ダイアグラム省略） |
+| `diagram_type` | `"both"` | `"both"`（構造図＆パケット図）、`"flowchart"`（構造関連図のみ）、`"packet"`（RFC風ビットレイアウトのみ）、`"none"`（ダイアグラム省略）。<br>※`"both"` 指定時、複数構造体やセクションがある場合は冒頭がすっきりとしたフローチャート「## 構造図」となり、各構造体セクション下に詳細パケット図が自動配置されます。 |
+| `full_packet_diagram` | `False` | 複数構造体やセクションが存在する場合でも、冒頭に全体のパケット図を含めるかどうか。 |
 | `bits_per_row` | `32` | パケット図の1行あたりのビット幅。`32`（RFC標準・32ビット境界）、`16`（組込み16ビットワード）、`8`（1バイト幅） |
 | `diagram_direction` | `"TD"` | フローチャートの描画方向。`"TD"`（Top-Down: 上から下）、`"LR"`（Left-to-Right: 左から右） |
 | `bit_width` | 自動 | パケット図のセル横幅。小さくコンパクトにしたい場合や横幅を広げたい場合にピクセル値で指定 |
 | `include_bitfield_diagram` | `True` | ビットフィールド（`Bits[N]`）の独立した詳細パケット図を末尾に含めるか |
 | `include_values` | `False` | サンプルインスタンスの実データ値（`0x5047534D` 等）をダイアグラムのノード名に併記するか |
+| `include_section_offsets` | `False` | セクション見出しやフローチャートのサブグラフにオフセット範囲（`0x0000 - 0x0020, 32B`）を付与するか |
+| `large_data_threshold` | `64` | パケット図で大きなデータ配列や未割り当て領域を要約表示する閾値（バイト数） |
 
 ### 4. バイナリの読み込みとデシリアライズ (`BinaryReader` / `from_bytes`)
 

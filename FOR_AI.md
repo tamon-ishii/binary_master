@@ -1431,4 +1431,15 @@ class SensorPacket:
   - `builder.to_html(**kwargs) -> str` / `builder.write_html(path, **kwargs) -> str`
   - `generate_html(entries, sample_data=None, **kwargs) -> str` / `write_html(entries, path, **kwargs) -> str`
 
+### 12.14 Specification Diagrams & Manual Generation Options
+- **`diagram_type`**: `"both"` (default), `"flowchart"`, `"packet"`, `"none"`.
+  - When `diagram_type="both"`: If multiple structures or sections exist, the top overview renders a clean `## 構造図` (`## Structure Diagram`) flowchart, and redundant overall packet diagrams are omitted from the top. Instead, per-struct detailed packet diagrams (`packet-beta`) are automatically rendered under each struct section (`### StructName`).
+  - `full_packet_diagram=True`: Forces the overall packet diagram at the top even when multiple sections/structs exist. Default is `False`.
+- **`large_data_threshold`** (default `64`): Summarizes large byte arrays or unallocated padding blocks in packet diagrams (e.g. `payload (10000B)` or `padding (128B)`).
+- **`include_section_offsets`** (default `False`): Appends `(0xXXXX - 0xYYYY, ZZB)` byte ranges to section headings and flowchart subgraphs.
+- **Offset Table & Repetition Aggregation**:
+  - `OffsetTable[N, T]` is rendered as a single aggregated node in flowcharts and a single slice in packet diagrams, eliminating repetitive `...` noise.
+  - Arrays and repeated structs are summarized as `StructName 🔁 xN (TotalBytes)`.
+
+
 
