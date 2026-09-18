@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import io
-from typing import BinaryIO, Optional
+from typing import BinaryIO, IO, Optional, Union
 
 
 class BitWriter:
     """Bit-level writer for packing arbitrary bit counts across byte boundaries."""
 
-    def __init__(self, stream: Optional[BinaryIO] = None, msb_first: bool = True):
+    def __init__(self, stream: Optional[Union[BinaryIO, IO[bytes]]] = None, msb_first: bool = True):
         self._stream = stream
         self._buffer = bytearray()
         self._accumulator = 0

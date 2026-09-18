@@ -6,9 +6,13 @@ import io
 from pathlib import Path
 import struct
 from contextlib import contextmanager
-from typing import Any, IO, Iterable, Iterator, Literal, Optional, Union
+from typing import Any, IO, Iterable, Iterator, Literal, Optional, TYPE_CHECKING, Union
+
+if TYPE_CHECKING:
+    from binary_master.bitstream import BitWriter
 
 from binary_master.enums import Endian, EndianType, normalize_endian
+
 
 # Integer boundary constants
 INT8_MIN, INT8_MAX = -128, 127
@@ -208,7 +212,8 @@ class BinaryWriter:
         self._struct_classes: list[type] = []
         self._variants: list[dict[str, Any]] = []
         self._expected_variant: Optional[dict[str, Any]] = None
-        self._elements_log: list[tuple[str, Any]] = []
+        self._elements_log: list[tuple[Any, ...]] = []
+        self._bit_writer: Optional[BitWriter] = None
         self._current_caption: Optional[str] = None
         self._current_caption_desc: str = ""
         self._current_caption_variants: Optional[list] = None
@@ -474,7 +479,16 @@ class BinaryWriter:
         """Return the accumulated binary data as a mutable bytearray (in-memory writers only)."""
         return bytearray(self.to_bytes())
 
+    def __bytes__(self) -> bytes:
+        """Return the accumulated binary data as immutable bytes (in-memory writers only)."""
+        return self.to_bytes()
+
+    def __len__(self) -> int:
+        """Return the total length of accumulated binary data."""
+        return len(self.to_bytes())
+
     def __enter__(self) -> BinaryWriter:
+
         return self
 
     def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
@@ -596,8 +610,9 @@ class BinaryWriter:
         struct_name: Optional[str] = None,
         struct_doc: Optional[str] = None,
     ) -> BinaryWriter:
-        if getattr(self, "_bit_writer", None) is not None and self._bit_writer.has_unaligned_bits:
+        if self._bit_writer is not None and self._bit_writer.has_unaligned_bits:
             self.flush_bits()
+
         order = normalize_endian(endian, self._default_endian)
         data = struct.pack(f"{order.value}{fmt_char}", value)
         offset = self.tell()

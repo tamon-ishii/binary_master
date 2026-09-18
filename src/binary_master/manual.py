@@ -603,7 +603,7 @@ def generate_packet_diagram(
 
 
 def generate_manual(
-    entries: List[LayoutEntry],
+    entries: Any,
     default_endian: str = "little",
     title: str = "Binary Specification Manual",
     diagram_direction: Literal["TD", "LR"] = "TD",

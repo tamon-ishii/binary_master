@@ -69,8 +69,36 @@ Struct = BinaryStruct
 
 def to_bytes(obj: Any, endian: Any = ...) -> bytes: ...
 def from_bytes[T](cls: type[T], data: bytes, endian: Any = ...) -> T: ...
+def write_struct(
+    instance: Any,
+    writer: Any = ...,
+    endian: Any = ...,
+    parent_field_name: str = ...,
+    parent_struct_name: Optional[str] = ...,
+    desc: str = ...,
+    section: str = ...,
+    spec_count: Any = ...,
+    repeat: Any = ...,
+    **kwargs: Any,
+) -> Any: ...
+def write_variant(
+    data: Any,
+    candidates: Any = ...,
+    writer: Any = ...,
+    tag_field: Optional[str] = ...,
+    name: str = ...,
+    desc: str = ...,
+    condition: Optional[str] = ...,
+    endian: Any = ...,
+    section: str = ...,
+    spec_count: Any = ...,
+    repeat: Any = ...,
+    **kwargs: Any,
+) -> Any: ...
+
 def read_struct[T](cls: type[T], data: bytes | Any = ..., reader: Any = ..., endian: Any = ...) -> T: ...
 def sizeof(cls_or_obj: Any) -> int: ...
+
 
 def binary_size(cls_or_obj: Any) -> int: ...
 def offsetof(cls_or_obj: Any, field_name: str) -> int: ...
