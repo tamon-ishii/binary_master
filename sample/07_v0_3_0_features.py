@@ -142,8 +142,10 @@ def main():
         print(f"Generated standalone HTML manual with Hex Inspector: {html_path.name}")
         html_content = html_path.read_text(encoding="utf-8")
         assert "<!DOCTYPE html>" in html_content
-        assert "Interactive Hex Inspector" in html_content
+        assert ("Interactive Hex Inspector" in html_content) or ("ヘックスインスペクター" in html_content)
         assert "mermaid" in html_content
+
+
         print(f"HTML size: {len(html_content)} characters (self-contained, ready for browser)")
 
     print("\n=== Sample 07 Completed Successfully! ===")

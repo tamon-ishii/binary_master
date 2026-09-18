@@ -1,14 +1,14 @@
 # Procedural Binary Protocol Specification
 
-## Overview
+## 概要
 
 Configuration header parameters.
 
-- **Total Size**: 98 bytes (`0x0062`)
-- **Default Endianness**: Little
-- **Total Fields**: 19
+- **合計サイズ**: 98 バイト (`0x0062`)
+- **デフォルトエンディアン**: リトルエンディアン (Little)
+- **合計フィールド数**: 19
 
-## Structure Diagram
+## 構造図 (フローチャート)
 
 ```mermaid
 flowchart TD
@@ -47,13 +47,47 @@ flowchart TD
     N11 --> N12
 ```
 
-## Memory Layout Table
+## 構造図 (パケット図)
+
+```mermaid
+packet-beta
+title Procedural Binary Protocol Specification レイアウト
+0-31: "magic (UInt32)"
+32-47: "version_major (UInt16)"
+48-63: "version_minor (UInt16)"
+64-183: "app_name (CString)"
+184-367: "doc_title (PrefixedString[2])"
+368-431: "author_tag (FixedString[8])"
+432-447: "chunk_type (UInt16)"
+448-463: "protocol_version (UInt16)"
+464-479: "flags (UInt16)"
+480-495: "num_records (UInt16)"
+496-527: "record_id (UInt32)"
+528-559: "timestamp (UInt32)"
+560-591: "value (Float32)"
+592-623: "record_id (UInt32)"
+624-655: "timestamp (UInt32)"
+656-687: "value (Float32)"
+688-719: "record_id (UInt32)"
+720-751: "timestamp (UInt32)"
+752-783: "value (Float32)"
+```
+
+## メモリレイアウト表
 
 ### File Header (0x0000 - 0x0008, 8B)
 
 Container header identifying format and version
 
-| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Description |
+```mermaid
+packet-beta
+title File Header レイアウト
+0-31: "magic (UInt32)"
+32-47: "version_major (UInt16)"
+48-63: "version_minor (UInt16)"
+```
+
+| オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|---|
 | `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | Magic 'FILE' |
 | `0x0004` | 4 | 2 | `version_major` | `UInt16` | Little | Major version |
@@ -63,7 +97,15 @@ Container header identifying format and version
 
 Textual metadata and application properties
 
-| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Description |
+```mermaid
+packet-beta
+title Metadata レイアウト
+0-119: "app_name (CString)"
+120-303: "doc_title (PrefixedString[2])"
+304-367: "author_tag (FixedString[8])"
+```
+
+| オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|---|
 | `0x0008` | 8 | 15 | `app_name` | `CString` | - | App Name |
 | `0x0017` | 23 | 23 | `doc_title` | `PrefixedString[2]` | Little | Doc Title |
@@ -73,7 +115,16 @@ Textual metadata and application properties
 
 Dynamic payload dispatched by chunk_type
 
-| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Description |
+```mermaid
+packet-beta
+title Dynamic Payload レイアウト
+0-15: "chunk_type (UInt16)"
+16-31: "protocol_version (UInt16)"
+32-47: "flags (UInt16)"
+48-63: "num_records (UInt16)"
+```
+
+| オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|---|
 | `0x0036` | 54 | 2 | `chunk_type` | `UInt16` | Little | 1=HeaderChunk, 2=TextChunk |
 | `0x0038` | 56 | 2 | `protocol_version` | `UInt16` | Little | - |
@@ -82,20 +133,34 @@ Dynamic payload dispatched by chunk_type
 
 この領域には、条件（種別タグ等）に応じて以下のいずれかの構造体が格納されます。
 
-#### [Variant] Tag `0x0001`: `HeaderChunk`
+#### [バリアント] Tag `0x0001`: `HeaderChunk`
 
 Configuration header parameters.
 
-| Relative Offset | Size (B) | Field Name | Type | Endian | Description |
+```mermaid
+packet-beta
+title HeaderChunk Layout
+0-15: "protocol_version (UInt16)"
+16-31: "flags (UInt16)"
+```
+
+| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|
 | `+0x00` | 2 | `protocol_version` | `UInt16` | Little | - |
 | `+0x02` | 2 | `flags` | `UInt16` | Little | - |
 
-#### [Variant] Tag `0x0002`: `TextChunk`
+#### [バリアント] Tag `0x0002`: `TextChunk`
 
 Text data chunk payload.
 
-| Relative Offset | Size (B) | Field Name | Type | Endian | Description |
+```mermaid
+packet-beta
+title TextChunk Layout
+0-15: "length (UInt16)"
+16-143: "content (FixedArray[UInt8, 16])"
+```
+
+| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|
 | `+0x00` | 2 | `length` | `UInt16` | Little | - |
 | `+0x02` | 16 | `content` | `FixedArray[UInt8, 16]` | Little | - |
@@ -105,10 +170,18 @@ Text data chunk payload.
 Repeating measurement data records
 
 - 🔁 **繰り返し**: `num_records` 回
-- **1要素サイズ**: `12` bytes (0xC)
-- **サンプルデータ**: 3 件 (合計 `36` bytes)
+- **1要素サイズ**: `12` バイト (0xC)
+- **サンプルデータ**: 3 件 (合計 `36` バイト)
 
-| Relative Offset | Size (B) | Field Name | Type | Endian | Description |
+```mermaid
+packet-beta
+title DataRecord (1要素の構造)
+0-31: "record_id (UInt32)"
+32-63: "timestamp (UInt32)"
+64-95: "value (Float32)"
+```
+
+| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|
 | `+0x00` | 4 | `record_id` | `UInt32` | Little | - |
 | `+0x04` | 4 | `timestamp` | `UInt32` | Little | - |

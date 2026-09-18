@@ -1,13 +1,13 @@
 # Network Telemetry Protocol Specification
 
-## Overview
+## 概要
 
 Unified binary messaging format supporting text messages and sensor telemetry packets.
 
-- **Version**: `1.0.0`
-- **Default Endianness**: Little
-- **Defined Structures**: 2
-- **Choice / Branch Points**: 1
+- **バージョン**: `1.0.0`
+- **デフォルトエンディアン**: リトルエンディアン (Little)
+- **定義された構造体数**: 2
+- **条件分岐数**: 1
 
 ## Protocol Overview & Scope
 
@@ -21,7 +21,7 @@ which payload structure immediately follows:
 
 If bit 0 of `flags` is set (`flags & 0x01 != 0`), a 4-byte `ChecksumFooter` is appended.
 
-## Structure Diagram (Flowchart)
+## 構造図 (フローチャート)
 
 ```mermaid
 flowchart TD
@@ -45,19 +45,29 @@ flowchart TD
     end
 ```
 
-## Data Structures & Layout
+## データ構造とレイアウト
 
-### Section: Header Section
+### セクション: Header Section
 
 Fixed container identification header
 
-### Struct `header` (PacketHeader)
+### 構造体 `header` (PacketHeader)
 
 Fixed 14-byte packet header
 
-- **Total Size**: 14 bytes (`0x000E`)
+- **合計サイズ**: 14 バイト (`0x000E`)
 
-| Relative Offset | Size (B) | Field Name | Type | Endian | Description |
+```mermaid
+packet-beta
+title header レイアウト
+0-31: "magic (UInt32)"
+32-47: "version (UInt16)"
+48-63: "msg_type (UInt16)"
+64-95: "payload_size (UInt32)"
+96-111: "flags (UInt16)"
+```
+
+| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|
 | `+0x00` | 4 | `magic` | `UInt32` | Little | Signature: 0x4D534750 ('MSGP') |
 | `+0x04` | 2 | `version` | `UInt16` | Little | Protocol version |
@@ -65,56 +75,79 @@ Fixed 14-byte packet header
 | `+0x08` | 4 | `payload_size` | `UInt32` | Little | Length of following payload |
 | `+0x0C` | 2 | `flags` | `UInt16` | Little | Bit 0: Has Checksum Footer |
 
-### Section: Payload Section
+### セクション: Payload Section
 
 Polymorphic payload block
 
-### Choice Branch: `payload`
+### 条件分岐: `payload`
 
-Dispatched by field: `msg_type`
+判定フィールド: `msg_type`
 
 Dynamic payload dispatched by PacketHeader.msg_type
 
-Depending on the tag value, one of the following variant structures is used:
+タグ値に応じて、以下のいずれかの構造体が使用されます:
 
-#### [Variant] Tag `0x01`: `TextMessage`
+#### [バリアント] Tag `0x01`: `TextMessage`
 
 Human-readable plaintext message payload
 
-- **Variant Size**: 20 bytes (`0x0014`)
+- **バリアントサイズ**: 20 バイト (`0x0014`)
 
-| Relative Offset | Size (B) | Field Name | Type | Endian | Description |
+```mermaid
+packet-beta
+title TextMessage レイアウト
+0-15: "encoding (UInt16)"
+16-31: "text_len (UInt16)"
+32-159: "content (FixedArray[UInt8, 16])"
+```
+
+| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|
 | `+0x00` | 2 | `encoding` | `UInt16` | Little | 1 = UTF-8, 2 = ASCII |
 | `+0x02` | 2 | `text_len` | `UInt16` | Little | Length of text in bytes |
 | `+0x04` | 16 | `content` | `FixedArray[UInt8, 16]` | Little | Fixed buffer for text |
 
-#### [Variant] Tag `0x02`: `SensorReport`
+#### [バリアント] Tag `0x02`: `SensorReport`
 
 Multi-channel environmental sensor readings
 
-- **Variant Size**: 16 bytes (`0x0010`)
+- **バリアントサイズ**: 16 バイト (`0x0010`)
 
-| Relative Offset | Size (B) | Field Name | Type | Endian | Description |
+```mermaid
+packet-beta
+title SensorReport レイアウト
+0-31: "sensor_id (UInt32)"
+32-63: "temperature (Float32)"
+64-95: "pressure (Float32)"
+96-127: "humidity (Float32)"
+```
+
+| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|
 | `+0x00` | 4 | `sensor_id` | `UInt32` | Little | Unique sensor ID |
 | `+0x04` | 4 | `temperature` | `Float32` | Little | Temperature in Celsius |
 | `+0x08` | 4 | `pressure` | `Float32` | Little | Pressure in hPa |
 | `+0x0C` | 4 | `humidity` | `Float32` | Little | Relative humidity (0.0 - 100.0) |
 
-### Section: Footer Section
+### セクション: Footer Section
 
 Optional trailing integrity verification
 
-### Struct `footer` (ChecksumFooter)
+### 構造体 `footer` (ChecksumFooter)
 
 > [!NOTE]
-> **Condition**: `flags & 0x01 != 0`
+> **適用条件**: `flags & 0x01 != 0`
 
 Trailing CRC32 checksum verification
 
-- **Total Size**: 4 bytes (`0x0004`)
+- **合計サイズ**: 4 バイト (`0x0004`)
 
-| Relative Offset | Size (B) | Field Name | Type | Endian | Description |
+```mermaid
+packet-beta
+title footer レイアウト
+0-31: "crc32 (UInt32)"
+```
+
+| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|
 | `+0x00` | 4 | `crc32` | `UInt32` | Little | IEEE 802.3 CRC32 checksum |
