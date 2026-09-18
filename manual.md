@@ -8,7 +8,7 @@
 - **デフォルトエンディアン**: リトルエンディアン (Little)
 - **合計フィールド数**: 41
 
-## 構造図 (フローチャート)
+## 構造図
 
 ```mermaid
 flowchart TD
@@ -26,16 +26,6 @@ flowchart TD
     N11 --> N12
     N12 --> N13
     N1 -.->|"offset: 0x0018"| N11
-```
-
-## 構造図 (パケット図)
-
-```mermaid
-packet-beta
-title バイナリ仕様書 レイアウト
-0-31: "magic (UInt32)"
-32-191: "offset_table (OffsetTable[10, UInt16], 20B)"
-192-831: "ImagePayload 🔁 x10 (80B)"
 ```
 
 ## メモリレイアウト表

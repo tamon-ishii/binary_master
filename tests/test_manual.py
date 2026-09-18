@@ -211,10 +211,18 @@ def test_generate_manual_diagram_types():
     assert "## Structure Diagram (Packet)" in md_packet
     assert "packet-beta" in md_packet
 
-    # diagram_type="both"
+    # diagram_type="both" (default full_packet_diagram=False suppresses top packet diagram when sections exist)
     md_both = generate_manual(writer.entries, diagram_type="both")
-    assert "## Structure Diagram (Flowchart)" in md_both
-    assert "## Structure Diagram (Packet)" in md_both
+    assert "## Structure Diagram\n" in md_both
+    assert "## Structure Diagram (Packet)" not in md_both
+    # Each section still has its own packet diagram
+    assert "### Header" in md_both
+    assert "### Image" in md_both
+
+    # diagram_type="both" with full_packet_diagram=True retains the top packet diagram
+    md_both_full = generate_manual(writer.entries, diagram_type="both", full_packet_diagram=True)
+    assert "## Structure Diagram (Flowchart)" in md_both_full
+    assert "## Structure Diagram (Packet)" in md_both_full
 
     # include_bitfield_diagram=False
     md_no_bf = generate_manual(writer.entries, include_bitfield_diagram=False)
@@ -558,6 +566,50 @@ def test_packet_diagram_large_data_summarization():
     # 6. Manual generation integration
     md = w.to_markdown(diagram_type="packet")
     assert '32-80031: "payload (10000B)"' in md
+
+
+def test_full_packet_diagram_and_section_packets():
+    """Test that when multiple structs/sections exist, the top packet diagram is omitted by default
+
+    while per-struct packet diagrams are preserved under section headings.
+    """
+    writer = BinaryWriter(lang="ja")
+    writer.caption("ヘッダー部", desc="ヘッダー説明")
+    writer.write_uint32(0x12345678, name="magic")
+
+    writer.caption("ボディ部", desc="ボディ説明")
+    writer.write_uint16(100, name="length")
+    writer.write_uint16(200, name="checksum")
+
+    # 1. Default (full_packet_diagram=False):
+    # Top has flowchart with title "## 構造図", no top packet diagram.
+    md_default = writer.to_markdown(diagram_type="both")
+    assert "## 構造図\n" in md_default
+    assert "## 構造図 (フローチャート)" not in md_default
+    assert "## 構造図 (パケット図)" not in md_default
+
+    # Both sections must retain their own packet diagrams
+    assert "### ヘッダー部" in md_default
+    assert "### ボディ部" in md_default
+    assert "title ヘッダー部 レイアウト" in md_default
+    assert "title ボディ部 レイアウト" in md_default
+
+    # 2. full_packet_diagram=True:
+    # Top retains both flowchart and packet diagrams.
+    md_full = writer.to_markdown(diagram_type="both", full_packet_diagram=True)
+    assert "## 構造図 (フローチャート)\n" in md_full
+    assert "## 構造図 (パケット図)\n" in md_full
+    assert "title バイナリ仕様書 レイアウト" in md_full
+    assert "### ヘッダー部" in md_full
+    assert "title ヘッダー部 レイアウト" in md_full
+
+    # 3. HTML output with full_packet_diagram=False / True
+    html_default = writer.to_html(diagram_type="both", full_packet_diagram=False)
+    assert "バイナリ仕様書 レイアウト" not in html_default
+
+    html_full = writer.to_html(diagram_type="both", full_packet_diagram=True)
+    assert "バイナリ仕様書 レイアウト" in html_full
+
 
 
 

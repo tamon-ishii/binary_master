@@ -1759,6 +1759,7 @@ class BinaryWriter:
         lang: Optional[Literal["auto", "en", "ja"]] = None,
         include_section_offsets: bool = False,
         large_data_threshold: int = 64,
+        full_packet_diagram: bool = False,
         **kwargs: Any,
     ) -> str:
         """Generate a complete Markdown specification manual from this writer.
@@ -1778,6 +1779,7 @@ class BinaryWriter:
             lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
             include_section_offsets: Whether to append offset ranges to section titles and diagrams. Default is False.
             large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
+            full_packet_diagram: Whether to include the full packet diagram at the top when diagram_type is 'both' even if sections/structs exist. Default is False.
             **kwargs: Extra options forwarded to generate_manual.
 
         Returns:
@@ -1804,6 +1806,7 @@ class BinaryWriter:
             lang=target_lang,
             include_section_offsets=include_section_offsets,
             large_data_threshold=large_data_threshold,
+            full_packet_diagram=full_packet_diagram,
             **kwargs,
         )
 
@@ -1824,6 +1827,7 @@ class BinaryWriter:
         lang: Optional[Literal["auto", "en", "ja"]] = None,
         include_section_offsets: bool = False,
         large_data_threshold: int = 64,
+        full_packet_diagram: bool = False,
         **kwargs: Any,
     ) -> str:
         """Generate specification markdown and write it to a file or stream.
@@ -1844,6 +1848,7 @@ class BinaryWriter:
             lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
             include_section_offsets: Whether to append offset ranges to section titles and diagrams. Default is False.
             large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
+            full_packet_diagram: Whether to include the full packet diagram at the top when diagram_type is 'both' even if sections/structs exist. Default is False.
             **kwargs: Extra options forwarded to to_markdown.
 
         Returns:
@@ -1864,6 +1869,7 @@ class BinaryWriter:
             lang=lang,
             include_section_offsets=include_section_offsets,
             large_data_threshold=large_data_threshold,
+            full_packet_diagram=full_packet_diagram,
             **kwargs,
         )
         if isinstance(path_or_file, (str, Path)):
@@ -1889,6 +1895,7 @@ class BinaryWriter:
         lang: Optional[Literal["auto", "en", "ja"]] = None,
         include_section_offsets: bool = False,
         large_data_threshold: int = 64,
+        full_packet_diagram: bool = False,
         **kwargs: Any,
     ) -> str:
         """Generate an interactive HTML specification manual with hex inspector.
@@ -1905,6 +1912,7 @@ class BinaryWriter:
             lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
             include_section_offsets: Whether to append offset ranges to section titles and diagrams. Default is False.
             large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
+            full_packet_diagram: Whether to include the full packet diagram when diagram_type is 'both' even if sections/structs exist. Default is False.
             **kwargs: Extra options forwarded to generate_html.
 
         Returns:
@@ -1928,6 +1936,7 @@ class BinaryWriter:
             lang=target_lang,
             include_section_offsets=include_section_offsets,
             large_data_threshold=large_data_threshold,
+            full_packet_diagram=full_packet_diagram,
             **kwargs,
         )
 
@@ -1945,6 +1954,7 @@ class BinaryWriter:
         lang: Optional[Literal["auto", "en", "ja"]] = None,
         include_section_offsets: bool = False,
         large_data_threshold: int = 64,
+        full_packet_diagram: bool = False,
         **kwargs: Any,
     ) -> str:
         """Generate specification HTML and write it to a file or stream.
@@ -1962,6 +1972,7 @@ class BinaryWriter:
             lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
             include_section_offsets: Whether to append offset ranges to section titles and diagrams. Default is False.
             large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
+            full_packet_diagram: Whether to include the full packet diagram when diagram_type is 'both' even if sections/structs exist. Default is False.
             **kwargs: Extra options forwarded to to_html.
 
         Returns:
@@ -1979,6 +1990,7 @@ class BinaryWriter:
             lang=lang,
             include_section_offsets=include_section_offsets,
             large_data_threshold=large_data_threshold,
+            full_packet_diagram=full_packet_diagram,
             **kwargs,
         )
         if isinstance(path_or_file, (str, Path)):

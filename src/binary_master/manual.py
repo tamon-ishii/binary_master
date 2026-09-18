@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, IO, List, Literal, Optional, Union
+from typing import Any, Dict, IO, List, Literal, Optional, Union
 
 
 def resolve_language(lang: Optional[str] = "auto") -> Literal["en", "ja"]:
@@ -902,6 +902,7 @@ def generate_manual(
     lang: Literal["auto", "en", "ja"] = "auto",
     include_section_offsets: bool = False,
     large_data_threshold: int = 64,
+    full_packet_diagram: bool = False,
     **kwargs: Any,
 ) -> str:
     """Generate a comprehensive Markdown specification manual with Mermaid diagrams.
@@ -922,6 +923,7 @@ def generate_manual(
         lang: Output language ("auto", "en", or "ja"). Default is "auto" (detected from system locale).
         include_section_offsets: Whether to append (0xXXXX - 0xYYYY, ZZB) offset ranges to section titles. Default is False.
         large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
+        full_packet_diagram: Whether to include the full packet diagram at the top when diagram_type is 'both' even if sections/structs exist. Default is False.
 
     Returns:
         Complete Markdown document string.
@@ -973,6 +975,16 @@ def generate_manual(
         sections.append(f"- **Default Endianness**: {default_endian.capitalize()}")
         sections.append(f"- **Total Fields**: {len(entries)}\n")
 
+    distinct_struct_names: List[str] = []
+    for e in entries:
+        if e.struct_name and (not distinct_struct_names or distinct_struct_names[-1] != e.struct_name):
+            distinct_struct_names.append(e.struct_name)
+
+    has_captions = any(e.caption for e in entries)
+    has_multiple_structs = len(distinct_struct_names) > 1
+    has_sections = has_captions or has_multiple_structs
+    want_section_packets = section_packet_diagrams or (has_sections and diagram_type in ("packet", "both"))
+
     # 2. Structure Diagram
     if entries:
         diag_title = f"{resolved_title} レイアウト" if is_ja else f"{resolved_title} Layout"
@@ -996,36 +1008,31 @@ def generate_manual(
             )
             sections.append("")
         elif diagram_type == "both":
-            sections.append("## 構造図 (フローチャート)\n" if is_ja else "## Structure Diagram (Flowchart)\n")
-            sections.append(generate_mermaid_diagram(entries, direction=diagram_direction, include_section_offsets=include_section_offsets, lang=lang))
-            sections.append("")
-            sections.append("## 構造図 (パケット図)\n" if is_ja else "## Structure Diagram (Packet)\n")
-            sections.append(
-                generate_packet_diagram(
-                    entries,
-                    title=diag_title,
-                    bits_per_row=bits_per_row,
-                    expand_bitfields=expand_bitfields,
-                    font_size=font_size,
-                    bit_width=bit_width,
-                    include_values=include_values,
-                    large_data_threshold=large_data_threshold,
+            if has_sections and not full_packet_diagram:
+                sections.append("## 構造図\n" if is_ja else "## Structure Diagram\n")
+                sections.append(generate_mermaid_diagram(entries, direction=diagram_direction, include_section_offsets=include_section_offsets, lang=lang))
+                sections.append("")
+            else:
+                sections.append("## 構造図 (フローチャート)\n" if is_ja else "## Structure Diagram (Flowchart)\n")
+                sections.append(generate_mermaid_diagram(entries, direction=diagram_direction, include_section_offsets=include_section_offsets, lang=lang))
+                sections.append("")
+                sections.append("## 構造図 (パケット図)\n" if is_ja else "## Structure Diagram (Packet)\n")
+                sections.append(
+                    generate_packet_diagram(
+                        entries,
+                        title=diag_title,
+                        bits_per_row=bits_per_row,
+                        expand_bitfields=expand_bitfields,
+                        font_size=font_size,
+                        bit_width=bit_width,
+                        include_values=include_values,
+                        large_data_threshold=large_data_threshold,
+                    )
                 )
-            )
-            sections.append("")
+                sections.append("")
 
     # 3. Layout Table
     sections.append("## メモリレイアウト表\n" if is_ja else "## Memory Layout Table\n")
-
-    distinct_struct_names: List[str] = []
-    for e in entries:
-        if e.struct_name and (not distinct_struct_names or distinct_struct_names[-1] != e.struct_name):
-            distinct_struct_names.append(e.struct_name)
-
-    has_captions = any(e.caption for e in entries)
-    has_multiple_structs = len(distinct_struct_names) > 1
-    has_sections = has_captions or has_multiple_structs
-    want_section_packets = section_packet_diagrams or (has_sections and diagram_type in ("packet", "both"))
 
     def _inspect_struct_layout(struct_cls: type) -> List[LayoutEntry]:
         return inspect_struct_layout(struct_cls)
@@ -1586,6 +1593,7 @@ def generate_html(
     lang: Literal["auto", "en", "ja"] = "auto",
     include_section_offsets: bool = False,
     large_data_threshold: int = 64,
+    full_packet_diagram: bool = False,
     **kwargs: Any,
 ) -> str:
     """Generate a standalone, interactive HTML specification manual with an embedded hex inspector.
@@ -1609,6 +1617,7 @@ def generate_html(
         lang: Output language ("auto", "en", or "ja"). Default is "auto" (detected from system locale).
         include_section_offsets: Whether to append offset ranges to section titles and diagrams. Default is False.
         large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
+        full_packet_diagram: Whether to include the full packet diagram when diagram_type is 'both' even if sections/structs exist. Default is False.
 
     Returns:
         Complete standalone HTML document as a string.
@@ -1663,6 +1672,15 @@ def generate_html(
             root_doc = e.struct_doc
             break
 
+    distinct_struct_names: List[str] = []
+    for e in entries_list:
+        if e.struct_name and (not distinct_struct_names or distinct_struct_names[-1] != e.struct_name):
+            distinct_struct_names.append(e.struct_name)
+
+    has_captions = any(e.caption for e in entries_list)
+    has_multiple_structs = len(distinct_struct_names) > 1
+    has_sections = has_captions or has_multiple_structs
+
     # Prepare Mermaid Diagram content
     mermaid_blocks: List[str] = []
     if diagram_type in ("flowchart", "both") and entries_list:
@@ -1670,7 +1688,10 @@ def generate_html(
         # Strip code fences
         clean_f = re.sub(r"^```mermaid\s*", "", f_diag).rstrip("`\n")
         mermaid_blocks.append(clean_f)
-    if diagram_type in ("packet", "both") and entries_list:
+    should_include_packet = (diagram_type == "packet") or (
+        diagram_type == "both" and (not has_sections or full_packet_diagram)
+    )
+    if should_include_packet and entries_list:
         p_diag = generate_packet_diagram(
             entries_list,
             title=f"{resolved_title} レイアウト" if is_ja else f"{resolved_title} Layout",

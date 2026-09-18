@@ -689,6 +689,7 @@ class BinaryBuilder:
         section_packet_diagrams: bool = False,
         lang: Optional[Literal["auto", "en", "ja"]] = None,
         large_data_threshold: int = 64,
+        full_packet_diagram: bool = False,
         **kwargs: Any,
     ) -> str:
         """Build and return the formatted Markdown specification manual.
@@ -704,6 +705,7 @@ class BinaryBuilder:
             section_packet_diagrams: Whether to include packet diagrams per struct.
             lang: Output language ('auto', 'en', or 'ja'). Defaults to builder's lang setting (default 'auto').
             large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
+            full_packet_diagram: Whether to include full packet diagram when diagram_type is 'both'.
             **kwargs: Extra options forwarded to internal renderers.
 
         Returns:
