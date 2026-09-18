@@ -101,7 +101,9 @@ from .manual import (
     generate_packet_diagram,
     generate_bitfield_packet_diagram,
     inspect_struct_layout,
+    resolve_language,
 )
+
 from .builder import BinaryBuilder, Builder, BuilderReadResult
 from .c_header import to_c_header, write_c_header, to_c_struct
 from .code_gen import (
@@ -224,7 +226,9 @@ __all__ = [
     "generate_packet_diagram",
     "generate_bitfield_packet_diagram",
     "inspect_struct_layout",
+    "resolve_language",
     "BinaryBuilder",
+
     "Builder",
     "BuilderReadResult",
     "to_c_header",

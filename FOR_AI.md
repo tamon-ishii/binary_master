@@ -122,8 +122,10 @@ from binary_master import (
     generate_packet_diagram,
     generate_bitfield_packet_diagram,
     inspect_struct_layout,
+    resolve_language,
     LayoutEntry,
 )
+
 ```
 
 ---
@@ -685,35 +687,44 @@ print(diff_text)
 ## 8. Specification & Manual Generation (`manual`)
 
 ```python
-from binary_master import generate_manual
+from binary_master import generate_manual, generate_html, write_html
 
 # 1. Direct from BinaryWriter (Preferred for data-driven pipelines):
+# Generates both flowchart & packet diagram by default; lang="auto" resolves by OS locale
 writer.write_markdown("protocol_spec.md")
-md_str = writer.to_markdown()
+writer.write_html("protocol_spec.html")
+md_str = writer.to_markdown(lang="ja")          # Explicit Japanese
+html_str = writer.to_html(theme="dark")         # Interactive Hex Inspector
 
 # 2. From Builder (For static schemas without dummy data):
 builder.write("protocol_spec.md")
+builder.write_html("protocol_spec.html")
 
-# 3. Direct low-level generation from writer entries:
+# 3. Direct low-level generation from writer entries or @binary_struct:
 md = generate_manual(
     writer.entries,
     title="Protocol Specification",
     default_endian="little",
-    diagram_type="flowchart",       # "flowchart" | "packet"
+    diagram_type="both",            # "both" (default) | "flowchart" | "packet" | "none"
     diagram_direction="TD",         # "TD" | "LR"
     bits_per_row=32,                # for packet diagram
     include_bitfield_diagram=True,  # generates detail packet diagrams for bitfields
+    lang="auto",                    # "auto" (default: OS locale) | "en" | "ja"
 )
 ```
+
 
 ---
 
 ## 9. Critical Rules, Constraints & Anti-Patterns (MUST READ FOR AI)
 
-### ⚠️ RULE 1: `write_manual` is Replaced by `write_markdown` / `builder.write`
+### ⚠️ RULE 1: `write_manual` is Replaced by `write_markdown` / `builder.write` / `write_html`
 - **DO NOT** call `writer.write_manual(...)` or `builder.write_manual(...)` (deprecated / removed).
-- **DO** call `writer.write_markdown("path.md")` (or `writer.to_markdown()`) for procedural writers.
-- **DO** call `builder.write("path.md")` for schema-first builders.
+- **DO** call `writer.write_markdown("path.md")` (or `writer.to_markdown()`) for Markdown specifications.
+- **DO** call `writer.write_html("path.html")` (or `writer.to_html()`) for interactive HTML manuals with Hex Inspector.
+- **DO** call `builder.write("path.md")` (or `builder.write_html("path.html")`) for schema-first builders.
+- **DO** use `lang="auto"` (default, auto-detects OS locale: Japanese in `ja_JP`, English otherwise) or pass `lang="ja"` / `lang="en"` explicitly.
+
 
 ### ⚠️ RULE 2: `Variant` Tag Field Placement
 - In `@binary_struct`, the field referenced by `Variant["tag_name", ...]` **MUST be declared before** the `Variant` field itself in the class definition. Deserialization relies on previously unpacked kwargs.

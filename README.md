@@ -278,15 +278,29 @@ flowchart TD
 
 ---
 
-#### 🌐 インタラクティブ HTML 仕様書（Hex Inspector 内蔵）
+#### 🌐 インタラクティブ HTML 仕様書（Hex Inspector 内蔵） & 多言語対応
 
-`pkt.write_html("spec.html")` または `writer.write_html("spec.html")` を実行すると、**外部依存ライブラリなし（スタンドアロン）でブラウザですぐ開ける HTML 仕様書** が生成されます。
+`pkt.write_html("spec.html")` または `writer.write_html("spec.html")`、`builder.write_html("spec.html")` を実行すると、**外部依存ライブラリなし（スタンドアロン）でブラウザですぐ開ける HTML 仕様書** が生成されます。
 
 - **双方向 Hex Inspector**:
   - メモリレイアウト表の行にマウスカーソルを合わせると、Hexdump 上の**該当バイト列が即座にハイライト**されます。
   - 逆に Hexdump のバイト列にカーソルを合わせると、**対応する構造体フィールド名・型・オフセットがフローティングバーに表示**され、表の該当行が強調表示されます。
 - **ダーク / ライトテーマ対応**: 閲覧環境に応じた快適な視認性。
 - **Mermaid 図のネイティブ描画**: ブラウザ側でフローチャートやパケット図が美しく描画されます。
+- **マルチ言語ローカライズ (`lang="auto"`, `"ja"`, `"en"`)**:
+  - デフォルト（`lang="auto"`）で OS / システムロケールを自動判別し、日本語環境では見出し（`概要`、`メモリレイアウト表`、`ビットフィールド詳細` など）や表ヘッダー、ツールチップが完全日本語化されます。
+  - 明示的に `lang="ja"` や `lang="en"` を指定することも可能です（IDE 入力補完対応）。
+
+```python
+# 日本語ロケール環境では自動的に日本語マニュアル / HTML が出力されます
+pkt.write_markdown("manual.md")               # Markdown 仕様書
+pkt.write_html("spec.html")                   # HTML 仕様書 (Hex Inspector 付)
+
+# 言語を明示指定する場合
+pkt.write_markdown("manual_en.md", lang="en") # 英語出力
+pkt.write_html("spec_ja.html", lang="ja")     # 日本語出力
+```
+
 
 ---
 
@@ -1600,9 +1614,13 @@ class Packet:
     name: PrefixedString[1] = "SENSOR_A"
 
 pkt = Packet()
-# ブラウザで直接開けるリッチな HTML 仕様書を出力
+# ブラウザで直接開けるリッチな HTML 仕様書を出力（ロケール自動判別 lang="auto" がデフォルト）
 pkt.write_html("packet_manual.html", title="センサー通信パケット仕様書")
+
+# 言語を明示指定する場合: lang="ja" / lang="en"
+pkt.write_html("packet_manual_en.html", lang="en")
 ```
+
 
 ---
 

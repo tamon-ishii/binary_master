@@ -48,5 +48,10 @@ from .binary_struct import (
 from .writer import BinaryWriter as BinaryWriter, Writer as Writer, OffsetTableHandle as OffsetTableHandle
 from .reader import BinaryReader as BinaryReader, Reader as Reader
 from .enums import Endian as Endian, EndianType as EndianType, normalize_endian as normalize_endian
-from .manual import generate_manual as generate_manual
+from .manual import (
+    generate_manual as generate_manual,
+    generate_html as generate_html,
+    write_html as write_html,
+    resolve_language as resolve_language,
+)
 

@@ -12,6 +12,7 @@ from typing import (
     Dict,
     IO,
     List,
+    Literal,
     Optional,
     Tuple,
     Union,
@@ -23,8 +24,10 @@ from binary_master.manual import (
     generate_bitfield_packet_diagram,
     generate_packet_diagram,
     inspect_struct_layout,
+    resolve_language,
 )
 from binary_master.reader import BinaryReader
+
 
 
 @dataclass
@@ -257,11 +260,14 @@ class BinaryBuilder:
         default_endian: str = "little",
         version: Optional[str] = None,
         description: str = "",
+        lang: Literal["auto", "en", "ja"] = "auto",
     ) -> None:
         self.title = title
         self.default_endian = default_endian
         self.version = version
         self.description = description
+        self.lang = lang
+
         self.elements: List[
             Union[DocumentElement, StructElement, ChoiceElement, SectionElement, FieldElement]
         ] = []
@@ -672,47 +678,68 @@ class BinaryBuilder:
 
     def build(
         self,
-        diagram_direction: str = "TD",
-        diagram_type: str = "flowchart",
+        diagram_direction: Literal["TD", "LR"] = "TD",
+        diagram_type: Literal["both", "flowchart", "packet", "none"] = "both",
         bits_per_row: int = 32,
         include_bitfield_diagram: bool = True,
         expand_bitfields: bool = False,
         font_size: Optional[str] = None,
         bit_width: Optional[int] = None,
         section_packet_diagrams: bool = False,
+        lang: Optional[Literal["auto", "en", "ja"]] = None,
     ) -> str:
         """Build and return the formatted Markdown specification manual.
 
         Args:
-            diagram_direction: Direction for Mermaid flowchart ('TD' or 'LR').
-            diagram_type: Diagram types to include ('flowchart', 'packet', 'both', or 'none').
+            diagram_direction: Direction for Mermaid flowchart ('TD' or 'LR'). Default is 'TD'.
+            diagram_type: Diagram types to include ('both', 'flowchart', 'packet', or 'none'). Default is 'both'.
             bits_per_row: Packet diagram width in bits.
             include_bitfield_diagram: Whether to render bitfield diagrams.
             expand_bitfields: Whether to expand bitfields in packet diagrams.
             font_size: Optional font size for diagrams.
             bit_width: Optional bit width for packet diagrams.
             section_packet_diagrams: Whether to include packet diagrams per struct.
+            lang: Output language ('auto', 'en', or 'ja'). Defaults to builder's lang setting (default 'auto').
 
         Returns:
             The complete Markdown document as a string.
         """
+        is_ja = resolve_language(lang or getattr(self, "lang", "auto")) == "ja"
+
         sections: List[str] = []
         sections.append(f"# {self.title}\n")
 
-        # Overview
-        sections.append("## Overview\n")
-        if self.description:
-            sections.append(f"{self.description.strip()}\n")
-        if self.version:
-            sections.append(f"- **Version**: `{self.version}`")
-        sections.append(f"- **Default Endianness**: {self.default_endian.capitalize()}")
 
-        struct_count = sum(1 for e in self.elements if isinstance(e, StructElement))
-        choice_count = sum(1 for e in self.elements if isinstance(e, ChoiceElement))
-        sections.append(f"- **Defined Structures**: {struct_count}")
-        if choice_count > 0:
-            sections.append(f"- **Choice / Branch Points**: {choice_count}")
-        sections.append("")
+        # Overview
+        if is_ja:
+            sections.append("## 概要\n")
+            if self.description:
+                sections.append(f"{self.description.strip()}\n")
+            if self.version:
+                sections.append(f"- **バージョン**: `{self.version}`")
+            endian_disp = "リトルエンディアン (Little)" if self.default_endian.lower() == "little" else "ビッグエンディアン (Big)"
+            sections.append(f"- **デフォルトエンディアン**: {endian_disp}")
+
+            struct_count = sum(1 for e in self.elements if isinstance(e, StructElement))
+            choice_count = sum(1 for e in self.elements if isinstance(e, ChoiceElement))
+            sections.append(f"- **定義された構造体数**: {struct_count}")
+            if choice_count > 0:
+                sections.append(f"- **条件分岐数**: {choice_count}")
+            sections.append("")
+        else:
+            sections.append("## Overview\n")
+            if self.description:
+                sections.append(f"{self.description.strip()}\n")
+            if self.version:
+                sections.append(f"- **Version**: `{self.version}`")
+            sections.append(f"- **Default Endianness**: {self.default_endian.capitalize()}")
+
+            struct_count = sum(1 for e in self.elements if isinstance(e, StructElement))
+            choice_count = sum(1 for e in self.elements if isinstance(e, ChoiceElement))
+            sections.append(f"- **Defined Structures**: {struct_count}")
+            if choice_count > 0:
+                sections.append(f"- **Choice / Branch Points**: {choice_count}")
+            sections.append("")
 
         # Document elements registered at the top before any structs
         elem_idx = 0
@@ -727,12 +754,12 @@ class BinaryBuilder:
         # Structure Diagram
         if any(not isinstance(e, DocumentElement) for e in self.elements):
             if diagram_type in ("flowchart", "both"):
-                sections.append("## Structure Diagram (Flowchart)\n")
+                sections.append("## 構造図 (フローチャート)\n" if is_ja else "## Structure Diagram (Flowchart)\n")
                 sections.append(self.generate_flowchart(direction=diagram_direction))
                 sections.append("")
 
         # Memory Layout & Structure Specifications
-        sections.append("## Data Structures & Layout\n")
+        sections.append("## データ構造とレイアウト\n" if is_ja else "## Data Structures & Layout\n")
 
         all_bitfields: List[LayoutEntry] = []
 
@@ -747,7 +774,8 @@ class BinaryBuilder:
             elif isinstance(elem, SectionElement):
                 if getattr(elem, "is_end", False):
                     continue
-                sections.append(f"### Section: {elem.title}\n")
+                sec_lbl = "セクション" if is_ja else "Section"
+                sections.append(f"### {sec_lbl}: {elem.title}\n")
                 if elem.desc:
                     sections.append(f"{elem.desc}\n")
 
@@ -757,26 +785,32 @@ class BinaryBuilder:
                 entries = inspect_struct_layout(elem.struct_cls)
                 total_size = sum(e.size for e in entries)
 
-                sections.append(f"### Struct `{disp_name}` ({cls_name})\n")
+                st_lbl = "構造体" if is_ja else "Struct"
+                sections.append(f"### {st_lbl} `{disp_name}` ({cls_name})\n")
                 if elem.condition:
-                    sections.append(f"> [!NOTE]\n> **Condition**: `{elem.condition}`\n")
+                    cond_lbl = "適用条件" if is_ja else "Condition"
+                    sections.append(f"> [!NOTE]\n> **{cond_lbl}**: `{elem.condition}`\n")
                 if elem.count is not None:
-                    sections.append(f"> [!NOTE]\n> **Repetition Count**: `{elem.count}`\n")
+                    rep_lbl = "繰り返し回数" if is_ja else "Repetition Count"
+                    sections.append(f"> [!NOTE]\n> **{rep_lbl}**: `{elem.count}`\n")
 
                 doc = elem.desc or getattr(elem.struct_cls, "__doc__", "") or ""
                 if doc:
                     sections.append(f"{inspect.cleandoc(doc)}\n")
 
-                sections.append(f"- **Total Size**: {total_size} bytes (`0x{total_size:04X}`)\n")
+                if is_ja:
+                    sections.append(f"- **合計サイズ**: {total_size} バイト (`0x{total_size:04X}`)\n")
+                else:
+                    sections.append(f"- **Total Size**: {total_size} bytes (`0x{total_size:04X}`)\n")
 
                 for e in entries:
                     if e.subfields:
                         all_bitfields.append(e)
 
-                if section_packet_diagrams and entries:
+                if (section_packet_diagrams or diagram_type in ("packet", "both")) and entries:
                     p_diag = generate_packet_diagram(
                         entries,
-                        title=f"{disp_name} Layout",
+                        title=f"{disp_name} レイアウト" if is_ja else f"{disp_name} Layout",
                         bits_per_row=bits_per_row,
                         expand_bitfields=expand_bitfields,
                         font_size=font_size,
@@ -787,24 +821,33 @@ class BinaryBuilder:
                         sections.append(p_diag)
                         sections.append("")
 
-                self._render_struct_table(entries, sections)
+                self._render_struct_table(entries, sections, is_ja=is_ja)
 
             elif isinstance(elem, ChoiceElement):
-                sections.append(f"### Choice Branch: `{elem.name}`\n")
+                ch_lbl = "条件分岐" if is_ja else "Choice Branch"
+                sections.append(f"### {ch_lbl}: `{elem.name}`\n")
                 tag_name = elem.tag_field if isinstance(elem.tag_field, str) else "tag_field"
-                sections.append(f"Dispatched by field: `{tag_name}`\n")
+                if is_ja:
+                    sections.append(f"判定フィールド: `{tag_name}`\n")
+                else:
+                    sections.append(f"Dispatched by field: `{tag_name}`\n")
                 if elem.condition:
-                    sections.append(f"> [!NOTE]\n> **Condition**: `{elem.condition}`\n")
+                    cond_lbl = "適用条件" if is_ja else "Condition"
+                    sections.append(f"> [!NOTE]\n> **{cond_lbl}**: `{elem.condition}`\n")
                 if elem.desc:
                     sections.append(f"{elem.desc}\n")
 
-                sections.append("Depending on the tag value, one of the following variant structures is used:\n")
+                if is_ja:
+                    sections.append("タグ値に応じて、以下のいずれかの構造体が使用されます:\n")
+                else:
+                    sections.append("Depending on the tag value, one of the following variant structures is used:\n")
                 norm_vars = _normalize_variants(elem.variants)
 
                 for tag, v_cls, v_desc in norm_vars:
                     v_cls_name = getattr(v_cls, "__name__", str(v_cls))
                     tag_str = f"Tag `0x{tag:02X}`" if isinstance(tag, int) else (f"Tag `{tag}`" if tag != "-" else "")
-                    header = f"#### [Variant] {tag_str + ': ' if tag_str else ''}`{v_cls_name}`\n"
+                    var_prefix = "#### [バリアント]" if is_ja else "#### [Variant]"
+                    header = f"{var_prefix} {tag_str + ': ' if tag_str else ''}`{v_cls_name}`\n"
                     sections.append(header)
 
                     doc_text = v_desc or getattr(v_cls, "__doc__", "") or ""
@@ -818,11 +861,14 @@ class BinaryBuilder:
 
                     if v_entries:
                         v_total = sum(e.size for e in v_entries)
-                        sections.append(f"- **Variant Size**: {v_total} bytes (`0x{v_total:04X}`)\n")
-                        if section_packet_diagrams:
+                        if is_ja:
+                            sections.append(f"- **バリアントサイズ**: {v_total} バイト (`0x{v_total:04X}`)\n")
+                        else:
+                            sections.append(f"- **Variant Size**: {v_total} bytes (`0x{v_total:04X}`)\n")
+                        if section_packet_diagrams or diagram_type in ("packet", "both"):
                             v_diag = generate_packet_diagram(
                                 v_entries,
-                                title=f"{v_cls_name} Layout",
+                                title=f"{v_cls_name} レイアウト" if is_ja else f"{v_cls_name} Layout",
                                 bits_per_row=bits_per_row,
                                 expand_bitfields=expand_bitfields,
                                 font_size=font_size,
@@ -832,23 +878,31 @@ class BinaryBuilder:
                             if v_diag:
                                 sections.append(v_diag)
                                 sections.append("")
-                        self._render_struct_table(v_entries, sections)
+                        self._render_struct_table(v_entries, sections, is_ja=is_ja)
 
             elif isinstance(elem, FieldElement):
-                sections.append(f"### Field `{elem.name}`\n")
+                f_lbl = "フィールド" if is_ja else "Field"
+                sections.append(f"### {f_lbl} `{elem.name}`\n")
                 if elem.condition:
-                    sections.append(f"> [!NOTE]\n> **Condition**: `{elem.condition}`\n")
+                    cond_lbl = "適用条件" if is_ja else "Condition"
+                    sections.append(f"> [!NOTE]\n> **{cond_lbl}**: `{elem.condition}`\n")
                 if elem.desc:
                     sections.append(f"{elem.desc}\n")
-                sections.append(f"- **Type**: `{elem.type_name}`")
-                sections.append(f"- **Size**: {elem.size} bytes")
-                if elem.endian:
-                    sections.append(f"- **Endianness**: {elem.endian}")
+                if is_ja:
+                    sections.append(f"- **型**: `{elem.type_name}`")
+                    sections.append(f"- **サイズ**: {elem.size} バイト")
+                    if elem.endian:
+                        sections.append(f"- **エンディアン**: {elem.endian}")
+                else:
+                    sections.append(f"- **Type**: `{elem.type_name}`")
+                    sections.append(f"- **Size**: {elem.size} bytes")
+                    if elem.endian:
+                        sections.append(f"- **Endianness**: {elem.endian}")
                 sections.append("")
 
         # Aggregated Bitfield Details if any exist
         if include_bitfield_diagram and all_bitfields:
-            sections.append("## Bitfield Details\n")
+            sections.append("## ビットフィールド詳細\n" if is_ja else "## Bitfield Details\n")
             seen_bitfields = set()
             for bf in all_bitfields:
                 bf_name = bf.name or bf.type_name
@@ -856,7 +910,8 @@ class BinaryBuilder:
                     continue
                 seen_bitfields.add(bf_name)
 
-                sections.append(f"### `{bf_name}` (Size: {bf.size}B)\n")
+                sz_lbl = "サイズ:" if is_ja else "Size:"
+                sections.append(f"### `{bf_name}` ({sz_lbl} {bf.size}B)\n")
                 if bf.struct_doc:
                     sections.append(f"{bf.struct_doc}\n")
 
@@ -865,22 +920,30 @@ class BinaryBuilder:
                     sections.append(diag)
                     sections.append("")
 
-                sections.append("| Bit Range | Field Name | Width | Description |")
-                sections.append("|---|---|---|---|")
+                if is_ja:
+                    sections.append("| ビット範囲 | フィールド名 | ビット幅 | 説明 |")
+                    sections.append("|---|---|---|---|")
+                else:
+                    sections.append("| Bit Range | Field Name | Width | Description |")
+                    sections.append("|---|---|---|---|")
                 for sub in (bf.subfields or []):
                     bit_range = f"`[{sub.get('bit_start', 0)}:{sub.get('bit_end', 0)}]`"
                     sub_name = f"`{sub.get('name', '-')}`"
-                    width_str = f"{sub.get('width', 1)} bit(s)"
+                    width_str = f"{sub.get('width', 1)} bit" if is_ja else f"{sub.get('width', 1)} bit(s)"
                     sub_desc = sub.get("description") or "-"
                     sections.append(f"| {bit_range} | {sub_name} | {width_str} | {sub_desc} |")
                 sections.append("")
 
         return "\n".join(sections)
 
-    def _render_struct_table(self, entries: List[LayoutEntry], sec_list: List[str]) -> None:
+    def _render_struct_table(self, entries: List[LayoutEntry], sec_list: List[str], is_ja: bool = False) -> None:
         """Render a layout table for struct fields with relative offsets."""
-        sec_list.append("| Relative Offset | Size (B) | Field Name | Type | Endian | Description |")
-        sec_list.append("|---|---|---|---|---|---|")
+        if is_ja:
+            sec_list.append("| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |")
+            sec_list.append("|---|---|---|---|---|---|")
+        else:
+            sec_list.append("| Relative Offset | Size (B) | Field Name | Type | Endian | Description |")
+            sec_list.append("|---|---|---|---|---|---|")
         for entry in entries:
             rel_off = f"`+0x{entry.offset:02X}`"
             size_str = str(entry.size)
@@ -894,25 +957,94 @@ class BinaryBuilder:
             sec_list.append(f"| {rel_off} | {size_str} | {name_str} | {type_str} | {endian_str} | {desc_str} |")
         sec_list.append("")
 
-    def to_markdown(self, **kwargs) -> str:
-        """Alias for build()."""
-        return self.build(**kwargs)
+    def to_markdown(
+        self,
+        diagram_direction: Literal["TD", "LR"] = "TD",
+        diagram_type: Literal["both", "flowchart", "packet", "none"] = "both",
+        bits_per_row: int = 32,
+        include_bitfield_diagram: bool = True,
+        expand_bitfields: bool = False,
+        font_size: Optional[str] = None,
+        bit_width: Optional[int] = None,
+        section_packet_diagrams: bool = False,
+        lang: Optional[Literal["auto", "en", "ja"]] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Alias for build().
+
+        Args:
+            diagram_direction: Direction for Mermaid flowchart ('TD' or 'LR'). Default is 'TD'.
+            diagram_type: Diagram types to include ('both', 'flowchart', 'packet', or 'none'). Default is 'both'.
+            bits_per_row: Packet diagram width in bits. Default is 32.
+            include_bitfield_diagram: Whether to render bitfield diagrams. Default is True.
+            expand_bitfields: Whether to expand bitfields in packet diagrams. Default is False.
+            font_size: Optional CSS font size for diagrams.
+            bit_width: Optional pixel width per bit in packet diagrams.
+            section_packet_diagrams: Whether to include packet diagrams per struct. Default is False.
+            lang: Output language ('auto', 'en', or 'ja'). Defaults to builder's lang setting (default 'auto').
+            **kwargs: Extra options forwarded to build().
+
+        Returns:
+            The complete Markdown document as a string.
+        """
+        return self.build(
+            diagram_direction=diagram_direction,
+            diagram_type=diagram_type,
+            bits_per_row=bits_per_row,
+            include_bitfield_diagram=include_bitfield_diagram,
+            expand_bitfields=expand_bitfields,
+            font_size=font_size,
+            bit_width=bit_width,
+            section_packet_diagrams=section_packet_diagrams,
+            lang=lang,
+            **kwargs,
+        )
 
     def write(
         self,
         path_or_file: Optional[Union[str, Path, IO[str]]] = None,
-        **kwargs,
+        diagram_direction: Literal["TD", "LR"] = "TD",
+        diagram_type: Literal["both", "flowchart", "packet", "none"] = "both",
+        bits_per_row: int = 32,
+        include_bitfield_diagram: bool = True,
+        expand_bitfields: bool = False,
+        font_size: Optional[str] = None,
+        bit_width: Optional[int] = None,
+        section_packet_diagrams: bool = False,
+        lang: Optional[Literal["auto", "en", "ja"]] = None,
+        **kwargs: Any,
     ) -> str:
         """Generate specification markdown and optionally write it to a file or stream.
 
         Args:
             path_or_file: File path string, Path object, or writable text stream.
+            diagram_direction: Direction for Mermaid flowchart ('TD' or 'LR'). Default is 'TD'.
+            diagram_type: Diagram types to include ('both', 'flowchart', 'packet', or 'none'). Default is 'both'.
+            bits_per_row: Packet diagram width in bits. Default is 32.
+            include_bitfield_diagram: Whether to render bitfield diagrams. Default is True.
+            expand_bitfields: Whether to expand bitfields in packet diagrams. Default is False.
+            font_size: Optional CSS font size for diagrams.
+            bit_width: Optional pixel width per bit in packet diagrams.
+            section_packet_diagrams: Whether to include packet diagrams per struct. Default is False.
+            lang: Output language ('auto', 'en', or 'ja'). Defaults to builder's lang setting (default 'auto').
             **kwargs: Options forwarded to build().
+
 
         Returns:
             The complete Markdown document as a string.
         """
-        content = self.build(**kwargs)
+        content = self.build(
+            diagram_direction=diagram_direction,
+            diagram_type=diagram_type,
+            bits_per_row=bits_per_row,
+            include_bitfield_diagram=include_bitfield_diagram,
+            expand_bitfields=expand_bitfields,
+            font_size=font_size,
+            bit_width=bit_width,
+            section_packet_diagrams=section_packet_diagrams,
+            lang=lang,
+            **kwargs,
+        )
         if path_or_file is not None:
             if isinstance(path_or_file, (str, Path)):
                 p = Path(path_or_file)
@@ -927,18 +1059,48 @@ class BinaryBuilder:
     def write_markdown(
         self,
         path_or_file: Union[str, Path, IO[str]],
-        **kwargs,
+        diagram_direction: Literal["TD", "LR"] = "TD",
+        diagram_type: Literal["both", "flowchart", "packet", "none"] = "both",
+        bits_per_row: int = 32,
+        include_bitfield_diagram: bool = True,
+        expand_bitfields: bool = False,
+        font_size: Optional[str] = None,
+        bit_width: Optional[int] = None,
+        section_packet_diagrams: bool = False,
+        lang: Optional[Literal["auto", "en", "ja"]] = None,
+        **kwargs: Any,
     ) -> str:
         """Generate specification markdown and write it to a file or stream.
 
         Args:
             path_or_file: File path string, Path object, or writable text stream.
-            **kwargs: Options forwarded to to_markdown().
+            diagram_direction: Direction for Mermaid flowchart ('TD' or 'LR'). Default is 'TD'.
+            diagram_type: Diagram types to include ('both', 'flowchart', 'packet', or 'none'). Default is 'both'.
+            bits_per_row: Packet diagram width in bits. Default is 32.
+            include_bitfield_diagram: Whether to render bitfield diagrams. Default is True.
+            expand_bitfields: Whether to expand bitfields in packet diagrams. Default is False.
+            font_size: Optional CSS font size for diagrams.
+            bit_width: Optional pixel width per bit in packet diagrams.
+            section_packet_diagrams: Whether to include packet diagrams per struct. Default is False.
+            lang: Output language ('auto', 'en', or 'ja'). Defaults to builder's lang setting (default 'auto').
+            **kwargs: Options forwarded to write().
 
         Returns:
             The complete Markdown document as a string.
         """
-        return self.write(path_or_file=path_or_file, **kwargs)
+        return self.write(
+            path_or_file=path_or_file,
+            diagram_direction=diagram_direction,
+            diagram_type=diagram_type,
+            bits_per_row=bits_per_row,
+            include_bitfield_diagram=include_bitfield_diagram,
+            expand_bitfields=expand_bitfields,
+            font_size=font_size,
+            bit_width=bit_width,
+            section_packet_diagrams=section_packet_diagrams,
+            lang=lang,
+            **kwargs,
+        )
 
     @property
     def entries(self) -> List[LayoutEntry]:
@@ -950,16 +1112,23 @@ class BinaryBuilder:
                 all_entries.extend(inspect_struct_layout(elem.struct_cls))
         return all_entries
 
-    def to_html(self, **kwargs: Any) -> str:
+    def to_html(self, lang: Optional[Literal["auto", "en", "ja"]] = None, **kwargs: Any) -> str:
         """Generate a complete standalone HTML specification manual."""
         from binary_master.manual import generate_html
         kwargs.setdefault("title", self.title)
         kwargs.setdefault("default_endian", self.default_endian)
+        target_lang = lang or getattr(self, "lang", "auto") or "auto"
+        kwargs["lang"] = target_lang
         return generate_html(self.entries, **kwargs)
 
-    def write_html(self, path_or_file: Union[str, Path, IO[str]], **kwargs: Any) -> str:
+    def write_html(
+        self,
+        path_or_file: Union[str, Path, IO[str]],
+        lang: Optional[Literal["auto", "en", "ja"]] = None,
+        **kwargs: Any,
+    ) -> str:
         """Generate specification HTML and write it to a file or stream."""
-        content = self.to_html(**kwargs)
+        content = self.to_html(lang=lang, **kwargs)
         if isinstance(path_or_file, (str, Path)):
             p = Path(path_or_file)
             p.parent.mkdir(parents=True, exist_ok=True)

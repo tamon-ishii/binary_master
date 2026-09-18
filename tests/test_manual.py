@@ -239,3 +239,139 @@ def test_generate_manual_section_packet_diagrams():
     assert '0-31: "data (UInt32)"' in md
 
 
+def test_generate_manual_auto_sections_by_struct_name():
+    """Verify that multiple structs automatically divide into sections with docstrings and packet diagrams."""
+    @binary_struct
+    class SubPayload:
+        """SubPayload detailed docstring."""
+        x: UInt16
+        y: UInt16
+
+    @binary_struct
+    class MainHeader:
+        """MainHeader detailed docstring."""
+        tag: UInt32
+        sub: Offset[SubPayload]
+
+    hdr = MainHeader(tag=0x12345678, sub=SubPayload(x=10, y=20))
+    writer = BinaryWriter()
+    writer.write_struct(hdr)
+
+    # Even without section_packet_diagrams=True, diagram_type="both" automatically produces section packet diagrams!
+    md = generate_manual(writer.entries, diagram_type="both")
+
+    # Automatic sections by struct name
+    assert "### MainHeader (0x0000 - 0x0008, 8B)" in md
+    assert "MainHeader detailed docstring." in md
+    assert "title MainHeader Layout" in md
+
+    assert "### SubPayload (0x0008 - 0x000C, 4B)" in md
+    assert "SubPayload detailed docstring." in md
+    assert "title SubPayload Layout" in md
+    assert '0-15: "x (UInt16)"' in md
+    assert '16-31: "y (UInt16)"' in md
+
+
+def test_generate_manual_lang_ja():
+    """Test generating Markdown manual with Japanese localization (lang='ja')."""
+    flags = Flags(enable=1, mode=5, priority=12, reserved=0xAB)
+    hdr = Header(magic=0x42494E59, version=1, flags=flags, image_offset=None)
+
+    writer = BinaryWriter()
+    writer.write_struct(hdr)
+
+    md = generate_manual(writer.entries, title="画像ヘッダ仕様", lang="ja", diagram_type="both")
+
+    # Japanese Headings & Overview
+    assert "# 画像ヘッダ仕様" in md
+    assert "## 概要" in md
+    assert "- **合計サイズ**:" in md
+    assert "- **デフォルトエンディアン**:" in md
+    assert "- **合計フィールド数**:" in md
+
+    # Japanese Diagrams
+    assert "## 構造図 (フローチャート)" in md
+    assert "## 構造図 (パケット図)" in md
+
+    # Japanese Memory Layout Table
+    assert "## メモリレイアウト表" in md
+    assert "| オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |" in md
+
+    # Japanese Bitfield Details
+    assert "## ビットフィールド詳細" in md
+    assert "| ビット範囲 | フィールド名 | ビット幅 | 説明 |" in md
+    assert "| `[0:1]` | `enable` | 1 bit |" in md
+
+
+def test_writer_and_html_lang_ja():
+    """Test BinaryWriter to_markdown and to_html with lang='ja'."""
+    writer = BinaryWriter(lang="ja")
+    writer.write_uint16(0x1234, name="magic", desc="マジックコード")
+    writer.write_uint8(1, name="status", desc="ステータス")
+
+    md = writer.to_markdown()
+    assert "## 概要" in md
+    assert "| オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |" in md
+    assert "マジックコード" in md
+
+    html = writer.to_html()
+    assert '<html lang="ja"' in html
+    assert "バイナリ仕様書" in html
+    assert "合計サイズ:" in html
+    assert "フィールド名" in html
+    assert "未マッピング / パディング" in html
+
+
+
+def test_builder_lang_ja():
+    """Test Builder with lang='ja' generating Japanese markdown and html."""
+    builder = Builder(title="パケット構造定義", lang="ja")
+    builder.add_struct(Packet)
+
+    md = builder.build()
+    assert "# パケット構造定義" in md
+    assert "## 概要" in md
+    assert "## 構造図 (フローチャート)" in md
+    assert "## データ構造とレイアウト" in md
+    assert "### 構造体 `Packet` (Packet)" in md
+    assert "| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |" in md
+
+
+def test_resolve_language_and_auto_locale(monkeypatch):
+    """Test resolve_language function and automatic locale detection with lang='auto'."""
+    from binary_master import resolve_language
+
+    # Explicit languages
+    assert resolve_language("ja") == "ja"
+    assert resolve_language("JA") == "ja"
+    assert resolve_language("jp") == "ja"
+    assert resolve_language("en") == "en"
+    assert resolve_language("EN") == "en"
+
+    # Auto mode with Japanese locale
+    monkeypatch.setenv("LANG", "ja_JP.UTF-8")
+    monkeypatch.delenv("LC_ALL", raising=False)
+    monkeypatch.delenv("LC_MESSAGES", raising=False)
+    assert resolve_language("auto") == "ja"
+    assert resolve_language() == "ja"
+
+    writer = BinaryWriter()  # default lang is "auto"
+    writer.write_uint16(0x1234, name="magic")
+    md_ja = generate_manual(writer.entries)
+    assert "## 概要" in md_ja
+    assert "- **合計サイズ**:" in md_ja
+
+    # Auto mode with English locale
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    assert resolve_language("auto") == "en"
+    assert resolve_language() == "en"
+
+    md_en = generate_manual(writer.entries)
+    assert "## Overview" in md_en
+    assert "- **Total Size**:" in md_en
+
+
+
+
+
+

@@ -2,14 +2,47 @@
 
 from __future__ import annotations
 
+import locale
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, IO, List, Optional, Union
+from typing import Any, IO, List, Literal, Optional, Union
+
+
+def resolve_language(lang: Optional[str] = "auto") -> Literal["en", "ja"]:
+    """Resolve language choice ('auto', 'en', 'ja') to 'en' or 'ja' based on system locale.
+
+    If lang is 'auto' (or None/empty), it checks environment variables (LC_ALL, LC_MESSAGES, LANG)
+    and Python's locale.getlocale(). If the locale indicates Japanese ('ja' or 'japanese'),
+    it returns 'ja', otherwise 'en'.
+    """
+    if not lang or lang == "auto":
+        env_lang = (
+            os.environ.get("LC_ALL")
+            or os.environ.get("LC_MESSAGES")
+            or os.environ.get("LANG")
+            or ""
+        )
+        if not env_lang:
+            try:
+                loc = locale.getlocale()[0] or ""
+                env_lang = loc
+            except Exception:
+                pass
+        if env_lang.lower().startswith("ja") or "japanese" in env_lang.lower():
+            return "ja"
+        return "en"
+
+    clean = lang.lower().strip()
+    if clean.startswith("ja") or clean.startswith("jp"):
+        return "ja"
+    return "en"
 
 
 @dataclass
 class LayoutEntry:
+
     """Represents a serialized field or binary chunk in the output layout."""
 
     offset: int
@@ -573,8 +606,8 @@ def generate_manual(
     entries: List[LayoutEntry],
     default_endian: str = "little",
     title: str = "Binary Specification Manual",
-    diagram_direction: str = "TD",
-    diagram_type: str = "flowchart",
+    diagram_direction: Literal["TD", "LR"] = "TD",
+    diagram_type: Literal["both", "flowchart", "packet", "none"] = "both",
     bits_per_row: int = 32,
     include_bitfield_diagram: bool = True,
     expand_bitfields: bool = False,
@@ -582,7 +615,28 @@ def generate_manual(
     bit_width: Optional[int] = None,
     section_packet_diagrams: bool = False,
     include_values: bool = False,
+    lang: Literal["auto", "en", "ja"] = "auto",
 ) -> str:
+    """Generate a comprehensive Markdown specification manual with Mermaid diagrams.
+
+    Args:
+        entries: A @binary_struct class/instance, BinaryWriter, Builder, or list of LayoutEntry.
+        default_endian: Default endianness ("little" or "big").
+        title: Document title.
+        diagram_direction: Mermaid flowchart direction ("TD" or "LR").
+        diagram_type: Mermaid diagram type: "both", "flowchart", "packet", or "none".
+        bits_per_row: Packet diagram width in bits.
+        include_bitfield_diagram: Whether to render bitfield diagrams.
+        expand_bitfields: Whether to expand bitfields in packet diagrams.
+        font_size: Optional font size for diagrams.
+        bit_width: Optional bit width for packet diagrams.
+        section_packet_diagrams: Whether to include packet diagrams per struct.
+        include_values: Whether to include runtime values in tables.
+        lang: Output language ("auto", "en", or "ja"). Default is "auto" (detected from system locale).
+
+    Returns:
+        Complete Markdown document string.
+    """
     if hasattr(entries, "__binary__"):
         if isinstance(entries, type):
             entries = inspect_struct_layout(entries)
@@ -597,34 +651,52 @@ def generate_manual(
     if entries:
         total_bytes = max(e.offset + e.size for e in entries)
 
+    is_ja = resolve_language(lang) == "ja"
+    if is_ja and title == "Binary Specification Manual":
+        resolved_title = "バイナリ仕様書"
+    else:
+        resolved_title = title
+
+
     sections: List[str] = []
-    sections.append(f"# {title}\n")
+    sections.append(f"# {resolved_title}\n")
 
     # 1. Summary
-    sections.append("## Overview\n")
     root_doc = ""
     for e in entries:
         if e.struct_doc:
             root_doc = e.struct_doc
             break
-    if root_doc:
-        sections.append(f"{root_doc}\n")
-    sections.append(f"- **Total Size**: {total_bytes} bytes (`0x{total_bytes:04X}`)")
-    sections.append(f"- **Default Endianness**: {default_endian.capitalize()}")
-    sections.append(f"- **Total Fields**: {len(entries)}\n")
+
+    if is_ja:
+        sections.append("## 概要\n")
+        if root_doc:
+            sections.append(f"{root_doc}\n")
+        endian_disp = "リトルエンディアン (Little)" if default_endian.lower() == "little" else "ビッグエンディアン (Big)"
+        sections.append(f"- **合計サイズ**: {total_bytes} バイト (`0x{total_bytes:04X}`)")
+        sections.append(f"- **デフォルトエンディアン**: {endian_disp}")
+        sections.append(f"- **合計フィールド数**: {len(entries)}\n")
+    else:
+        sections.append("## Overview\n")
+        if root_doc:
+            sections.append(f"{root_doc}\n")
+        sections.append(f"- **Total Size**: {total_bytes} bytes (`0x{total_bytes:04X}`)")
+        sections.append(f"- **Default Endianness**: {default_endian.capitalize()}")
+        sections.append(f"- **Total Fields**: {len(entries)}\n")
 
     # 2. Structure Diagram
     if entries:
+        diag_title = f"{resolved_title} レイアウト" if is_ja else f"{resolved_title} Layout"
         if diagram_type == "flowchart":
-            sections.append("## Structure Diagram\n")
+            sections.append("## 構造図\n" if is_ja else "## Structure Diagram\n")
             sections.append(generate_mermaid_diagram(entries, direction=diagram_direction))
             sections.append("")
         elif diagram_type == "packet":
-            sections.append("## Structure Diagram (Packet)\n")
+            sections.append("## 構造図 (パケット図)\n" if is_ja else "## Structure Diagram (Packet)\n")
             sections.append(
                 generate_packet_diagram(
                     entries,
-                    title=f"{title} Layout",
+                    title=diag_title,
                     bits_per_row=bits_per_row,
                     expand_bitfields=expand_bitfields,
                     font_size=font_size,
@@ -634,14 +706,14 @@ def generate_manual(
             )
             sections.append("")
         elif diagram_type == "both":
-            sections.append("## Structure Diagram (Flowchart)\n")
+            sections.append("## 構造図 (フローチャート)\n" if is_ja else "## Structure Diagram (Flowchart)\n")
             sections.append(generate_mermaid_diagram(entries, direction=diagram_direction))
             sections.append("")
-            sections.append("## Structure Diagram (Packet)\n")
+            sections.append("## 構造図 (パケット図)\n" if is_ja else "## Structure Diagram (Packet)\n")
             sections.append(
                 generate_packet_diagram(
                     entries,
-                    title=f"{title} Layout",
+                    title=diag_title,
                     bits_per_row=bits_per_row,
                     expand_bitfields=expand_bitfields,
                     font_size=font_size,
@@ -652,25 +724,45 @@ def generate_manual(
             sections.append("")
 
     # 3. Layout Table
-    sections.append("## Memory Layout Table\n")
+    sections.append("## メモリレイアウト表\n" if is_ja else "## Memory Layout Table\n")
+
+    distinct_struct_names: List[str] = []
+    for e in entries:
+        if e.struct_name and (not distinct_struct_names or distinct_struct_names[-1] != e.struct_name):
+            distinct_struct_names.append(e.struct_name)
 
     has_captions = any(e.caption for e in entries)
+    has_multiple_structs = len(distinct_struct_names) > 1
+    has_sections = has_captions or has_multiple_structs
+    want_section_packets = section_packet_diagrams or (has_sections and diagram_type in ("packet", "both"))
 
     def _inspect_struct_layout(struct_cls: type) -> List[LayoutEntry]:
         return inspect_struct_layout(struct_cls)
 
 
     def _render_variant_table_rows(v_entries: List[LayoutEntry], sec_list: List[str], inc_values: bool) -> None:
-        if inc_values:
-            sec_list.append(
-                "| Relative Offset | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
-            )
-            sec_list.append("|---|---|---|---|---|---|---|")
+        if is_ja:
+            if inc_values:
+                sec_list.append(
+                    "| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 値 / プレビュー | 説明 |"
+                )
+                sec_list.append("|---|---|---|---|---|---|---|")
+            else:
+                sec_list.append(
+                    "| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |"
+                )
+                sec_list.append("|---|---|---|---|---|---|")
         else:
-            sec_list.append(
-                "| Relative Offset | Size (B) | Field Name | Type | Endian | Description |"
-            )
-            sec_list.append("|---|---|---|---|---|---|")
+            if inc_values:
+                sec_list.append(
+                    "| Relative Offset | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
+                )
+                sec_list.append("|---|---|---|---|---|---|---|")
+            else:
+                sec_list.append(
+                    "| Relative Offset | Size (B) | Field Name | Type | Endian | Description |"
+                )
+                sec_list.append("|---|---|---|---|---|---|")
 
         for entry in v_entries:
             rel_off = f"`+0x{entry.offset:02X}`"
@@ -691,16 +783,28 @@ def generate_manual(
         sec_list.append("")
 
     def _render_table_rows(entry_list: List[LayoutEntry]) -> None:
-        if include_values:
-            sections.append(
-                "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
-            )
-            sections.append("|---|---|---|---|---|---|---|---|")
+        if is_ja:
+            if include_values:
+                sections.append(
+                    "| オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 値 / プレビュー | 説明 |"
+                )
+                sections.append("|---|---|---|---|---|---|---|---|")
+            else:
+                sections.append(
+                    "| オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |"
+                )
+                sections.append("|---|---|---|---|---|---|---|")
         else:
-            sections.append(
-                "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Description |"
-            )
-            sections.append("|---|---|---|---|---|---|---|")
+            if include_values:
+                sections.append(
+                    "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
+                )
+                sections.append("|---|---|---|---|---|---|---|---|")
+            else:
+                sections.append(
+                    "| Offset (Hex) | Offset (Dec) | Size (B) | Field Name | Type | Endian | Description |"
+                )
+                sections.append("|---|---|---|---|---|---|---|")
 
         for entry in entry_list:
             off_hex = f"`0x{entry.offset:04X}`"
@@ -728,16 +832,28 @@ def generate_manual(
         sections.append("")
 
     def _render_relative_table_rows(entry_list: List[LayoutEntry], base_offset: int) -> None:
-        if include_values:
-            sections.append(
-                "| Relative Offset | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
-            )
-            sections.append("|---|---|---|---|---|---|---|")
+        if is_ja:
+            if include_values:
+                sections.append(
+                    "| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 値 / プレビュー | 説明 |"
+                )
+                sections.append("|---|---|---|---|---|---|---|")
+            else:
+                sections.append(
+                    "| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |"
+                )
+                sections.append("|---|---|---|---|---|---|")
         else:
-            sections.append(
-                "| Relative Offset | Size (B) | Field Name | Type | Endian | Description |"
-            )
-            sections.append("|---|---|---|---|---|---|")
+            if include_values:
+                sections.append(
+                    "| Relative Offset | Size (B) | Field Name | Type | Endian | Value / Preview | Description |"
+                )
+                sections.append("|---|---|---|---|---|---|---|")
+            else:
+                sections.append(
+                    "| Relative Offset | Size (B) | Field Name | Type | Endian | Description |"
+                )
+                sections.append("|---|---|---|---|---|---|")
 
         for entry in entry_list:
             rel_bytes = entry.offset - base_offset
@@ -764,22 +880,30 @@ def generate_manual(
                 )
         sections.append("")
 
-    if not has_captions:
+    if not has_sections:
         is_rep, rep_spec, unit_entries, sample_count = _detect_repetition(entries)
         if is_rep:
             unit_size = sum(e.size for e in unit_entries)
             repeat_label = _format_repeat_label(rep_spec)
-            meta_lines = [
-                f"- 🔁 **繰り返し**: {repeat_label}",
-                f"- **1要素サイズ**: `{unit_size}` bytes (0x{unit_size:X})",
-            ]
-            if sample_count > 1:
-                meta_lines.append(f"- **サンプルデータ**: {sample_count} 件 (合計 `{total_bytes}` bytes)")
+            if is_ja:
+                meta_lines = [
+                    f"- 🔁 **繰り返し**: {repeat_label}",
+                    f"- **1要素サイズ**: `{unit_size}` バイト (0x{unit_size:X})",
+                ]
+                if sample_count > 1:
+                    meta_lines.append(f"- **サンプルデータ**: {sample_count} 件 (合計 `{total_bytes}` バイト)")
+            else:
+                meta_lines = [
+                    f"- 🔁 **繰り返し**: {repeat_label}",
+                    f"- **1要素サイズ**: `{unit_size}` bytes (0x{unit_size:X})",
+                ]
+                if sample_count > 1:
+                    meta_lines.append(f"- **サンプルデータ**: {sample_count} 件 (合計 `{total_bytes}` bytes)")
             sections.append("\n".join(meta_lines) + "\n")
             if section_packet_diagrams:
                 sec_diag = generate_packet_diagram(
                     unit_entries,
-                    title=f"{title} (1要素の構造)",
+                    title=f"{resolved_title} (1要素の構造)" if is_ja else f"{title} (1要素の構造)",
                     bits_per_row=bits_per_row,
                     expand_bitfields=expand_bitfields,
                     font_size=font_size,
@@ -795,7 +919,7 @@ def generate_manual(
             if section_packet_diagrams and diagram_type not in ("packet", "both"):
                 diag = generate_packet_diagram(
                     entries,
-                    title=f"{title} Layout",
+                    title=f"{resolved_title} レイアウト" if is_ja else f"{title} Layout",
                     bits_per_row=bits_per_row,
                     expand_bitfields=expand_bitfields,
                     font_size=font_size,
@@ -809,13 +933,13 @@ def generate_manual(
 
             _render_table_rows(entries)
     else:
-        # Group by consecutive caption
+        # Group by consecutive caption or struct_name
         caption_groups: List[tuple[Optional[str], List[LayoutEntry]]] = []
         current_cap: Optional[str] = None
         current_cap_entries: List[LayoutEntry] = []
 
         for entry in entries:
-            cap = entry.caption
+            cap = entry.caption or entry.struct_name
             if cap != current_cap:
                 if current_cap_entries:
                     caption_groups.append((current_cap, current_cap_entries))
@@ -830,7 +954,12 @@ def generate_manual(
             min_off = c_entries[0].offset
             max_off = c_entries[-1].offset + c_entries[-1].size
             total_size = max_off - min_off
-            cap_desc = c_entries[0].caption_desc or c_entries[0].struct_doc
+            cap_desc = c_entries[0].caption_desc
+            if not cap_desc:
+                for e in c_entries:
+                    if e.struct_doc:
+                        cap_desc = e.struct_doc
+                        break
             is_rep, rep_spec, unit_entries, sample_count = _detect_repetition(c_entries)
 
             if is_rep:
@@ -844,17 +973,27 @@ def generate_manual(
                     sections.append(f"{cap_desc}\n")
 
                 repeat_label = _format_repeat_label(rep_spec)
-                meta_lines = [
-                    f"- 🔁 **繰り返し**: {repeat_label}",
-                    f"- **1要素サイズ**: `{unit_size}` bytes (0x{unit_size:X})",
-                ]
-                if sample_count > 1:
-                    meta_lines.append(f"- **サンプルデータ**: {sample_count} 件 (合計 `{total_size}` bytes)")
+                if is_ja:
+                    meta_lines = [
+                        f"- 🔁 **繰り返し**: {repeat_label}",
+                        f"- **1要素サイズ**: `{unit_size}` バイト (0x{unit_size:X})",
+                    ]
+                    if sample_count > 1:
+                        meta_lines.append(f"- **サンプルデータ**: {sample_count} 件 (合計 `{total_size}` バイト)")
+                    else:
+                        meta_lines.append(f"- **サンプルデータ**: 1 件 (`{total_size}` バイト)")
                 else:
-                    meta_lines.append(f"- **サンプルデータ**: 1 件 (`{total_size}` bytes)")
+                    meta_lines = [
+                        f"- 🔁 **繰り返し**: {repeat_label}",
+                        f"- **1要素サイズ**: `{unit_size}` bytes (0x{unit_size:X})",
+                    ]
+                    if sample_count > 1:
+                        meta_lines.append(f"- **サンプルデータ**: {sample_count} 件 (合計 `{total_size}` bytes)")
+                    else:
+                        meta_lines.append(f"- **サンプルデータ**: 1 件 (`{total_size}` bytes)")
                 sections.append("\n".join(meta_lines) + "\n")
 
-                if section_packet_diagrams:
+                if want_section_packets:
                     sec_diag = generate_packet_diagram(
                         unit_entries,
                         title=f"{cap} (1要素の構造)" if cap else "要素構造",
@@ -906,10 +1045,10 @@ def generate_manual(
                 if cap_desc:
                     sections.append(f"{cap_desc}\n")
 
-                if section_packet_diagrams:
+                if want_section_packets:
                     sec_diag = generate_packet_diagram(
                         c_entries,
-                        title=f"{cap} Layout" if cap else "",
+                        title=(f"{cap} レイアウト" if is_ja else f"{cap} Layout") if cap else "",
                         bits_per_row=bits_per_row,
                         expand_bitfields=expand_bitfields,
                         font_size=font_size,
@@ -948,10 +1087,10 @@ def generate_manual(
                             sections.append(f"#### {sub_title} (0x{s_min:04X} - 0x{s_max:04X}, {s_size}B)\n")
                             if s_desc:
                                 sections.append(f"{s_desc}\n")
-                            if section_packet_diagrams:
+                            if want_section_packets:
                                 s_diag = generate_packet_diagram(
                                     s_entries,
-                                    title=f"{sub_title} Layout",
+                                    title=f"{sub_title} レイアウト" if is_ja else f"{sub_title} Layout",
                                     bits_per_row=bits_per_row,
                                     expand_bitfields=expand_bitfields,
                                     font_size=font_size,
@@ -991,7 +1130,8 @@ def generate_manual(
                 for tag, v_cls, v_desc in var_list:
                     cls_name = getattr(v_cls, "__name__", str(v_cls))
                     tag_str = f"Tag `0x{tag:04X}`" if isinstance(tag, int) else (f"Tag `{tag}`" if tag != "-" else "")
-                    header_str = f"#### [Variant] {tag_str + ': ' if tag_str else ''}`{cls_name}`\n"
+                    var_prefix = "#### [バリアント]" if is_ja else "#### [Variant]"
+                    header_str = f"{var_prefix} {tag_str + ': ' if tag_str else ''}`{cls_name}`\n"
                     sections.append(header_str)
                     doc_text = v_desc or getattr(v_cls, "__doc__", "") or ""
                     if doc_text:
@@ -1000,7 +1140,7 @@ def generate_manual(
 
                     v_entries = _inspect_struct_layout(v_cls)
                     if v_entries:
-                        if section_packet_diagrams:
+                        if want_section_packets:
                             v_diag = generate_packet_diagram(
                                 v_entries,
                                 title=f"{cls_name} Layout",
@@ -1026,12 +1166,17 @@ def generate_manual(
                 seen_bf.add(key)
                 bitfields.append(e)
     if bitfields:
-        sections.append("## Bitfield Details\n")
+        sections.append("## ビットフィールド詳細\n" if is_ja else "## Bitfield Details\n")
         for bf in bitfields:
             bf_name = bf.name or bf.type_name
-            sections.append(
-                f"### `{bf_name}` (Offset: `0x{bf.offset:04X}`, Size: {bf.size}B)\n"
-            )
+            if is_ja:
+                sections.append(
+                    f"### `{bf_name}` (オフセット: `0x{bf.offset:04X}`, サイズ: {bf.size}B)\n"
+                )
+            else:
+                sections.append(
+                    f"### `{bf_name}` (Offset: `0x{bf.offset:04X}`, Size: {bf.size}B)\n"
+                )
             if bf.struct_doc:
                 sections.append(f"{bf.struct_doc}\n")
             if include_bitfield_diagram:
@@ -1042,21 +1187,33 @@ def generate_manual(
                 if diag:
                     sections.append(diag)
                     sections.append("")
-            if include_values:
-                sections.append(
-                    "| Bit Range | Field Name | Width | Value | Description |"
-                )
-                sections.append("|---|---|---|---|---|")
+            if is_ja:
+                if include_values:
+                    sections.append(
+                        "| ビット範囲 | フィールド名 | ビット幅 | 値 | 説明 |"
+                    )
+                    sections.append("|---|---|---|---|---|")
+                else:
+                    sections.append(
+                        "| ビット範囲 | フィールド名 | ビット幅 | 説明 |"
+                    )
+                    sections.append("|---|---|---|---|")
             else:
-                sections.append(
-                    "| Bit Range | Field Name | Width | Description |"
-                )
-                sections.append("|---|---|---|---|")
+                if include_values:
+                    sections.append(
+                        "| Bit Range | Field Name | Width | Value | Description |"
+                    )
+                    sections.append("|---|---|---|---|---|")
+                else:
+                    sections.append(
+                        "| Bit Range | Field Name | Width | Description |"
+                    )
+                    sections.append("|---|---|---|---|")
 
             for sub in (bf.subfields or []):
                 bit_range = f"`[{sub.get('bit_start', 0)}:{sub.get('bit_end', 0)}]`"
                 sub_name = f"`{sub.get('name', '-')}`"
-                width_str = f"{sub.get('width', 1)} bit(s)"
+                width_str = f"{sub.get('width', 1)} bit" if is_ja else f"{sub.get('width', 1)} bit(s)"
                 sub_desc = sub.get("description") or "-"
                 if include_values:
                     sub_val = format_value_preview(sub.get("value"))
@@ -1077,11 +1234,12 @@ def generate_html(
     default_endian: str = "little",
     title: str = "Binary Specification Manual",
     sample_data: Optional[bytes] = None,
-    diagram_type: str = "flowchart",
-    diagram_direction: str = "TD",
+    diagram_type: Literal["both", "flowchart", "packet", "none"] = "both",
+    diagram_direction: Literal["TD", "LR"] = "TD",
     bits_per_row: int = 32,
     include_values: bool = True,
-    theme: str = "auto",
+    theme: Literal["auto", "light", "dark"] = "auto",
+    lang: Literal["auto", "en", "ja"] = "auto",
 ) -> str:
     """Generate a standalone, interactive HTML specification manual with an embedded hex inspector.
 
@@ -1101,11 +1259,19 @@ def generate_html(
         bits_per_row: Number of bits per row for packet diagrams (default: 32).
         include_values: Whether to include sample values in tables.
         theme: Color theme ("auto", "light", or "dark").
+        lang: Output language ("auto", "en", or "ja"). Default is "auto" (detected from system locale).
 
     Returns:
         Complete standalone HTML document as a string.
     """
     import html as html_lib
+
+    is_ja = resolve_language(lang) == "ja"
+    if is_ja and title == "Binary Specification Manual":
+        resolved_title = "バイナリ仕様書"
+    else:
+        resolved_title = title
+
 
     raw_entries = entries
     extracted_sample_data = sample_data
@@ -1158,7 +1324,7 @@ def generate_html(
     if diagram_type in ("packet", "both") and entries_list:
         p_diag = generate_packet_diagram(
             entries_list,
-            title=f"{title} Layout",
+            title=f"{resolved_title} レイアウト" if is_ja else f"{resolved_title} Layout",
             bits_per_row=bits_per_row,
             include_values=include_values,
         )
@@ -1257,7 +1423,7 @@ def generate_html(
             for sub in (bf.subfields or []):
                 b_range = f"[{sub.get('bit_start', 0)}:{sub.get('bit_end', 0)}]"
                 s_name = html_lib.escape(sub.get("name", "-"))
-                s_width = f"{sub.get('width', 1)} bit(s)"
+                s_width = f"{sub.get('width', 1)} bit" if is_ja else f"{sub.get('width', 1)} bit(s)"
                 s_val = html_lib.escape(format_value_preview(sub.get("value"))) if include_values else "-"
                 s_desc = html_lib.escape(sub.get("description") or "-")
                 sub_trs.append(
@@ -1265,25 +1431,33 @@ def generate_html(
                     + (f"<td><code>{s_val}</code></td>" if include_values else "")
                     + f"<td>{s_desc}</td></tr>"
                 )
+            th_bit_range = "ビット範囲" if is_ja else "Bit Range"
+            th_field_name = "フィールド名" if is_ja else "Field Name"
+            th_bit_width = "ビット幅" if is_ja else "Width"
+            th_bit_val = "値" if is_ja else "Value"
+            th_bit_desc = "説明" if is_ja else "Description"
+            off_lbl = "オフセット:" if is_ja else "Offset:"
+            size_lbl = "サイズ:" if is_ja else "Size:"
             bf_sections.append(
                 f'<div class="card mb-4">\n'
-                f'  <h3><code>{bf_name}</code> (Offset: 0x{bf.offset:04X}, Size: {bf.size}B)</h3>\n'
+                f'  <h3><code>{bf_name}</code> ({off_lbl} 0x{bf.offset:04X}, {size_lbl} {bf.size}B)</h3>\n'
                 f'  <table class="layout-table">\n'
-                f'    <thead><tr><th>Bit Range</th><th>Field Name</th><th>Width</th>'
-                f'{"<th>Value</th>" if include_values else ""}<th>Description</th></tr></thead>\n'
+                f'    <thead><tr><th>{th_bit_range}</th><th>{th_field_name}</th><th>{th_bit_width}</th>'
+                f'{"<th>" + th_bit_val + "</th>" if include_values else ""}<th>{th_bit_desc}</th></tr></thead>\n'
                 f'    <tbody>{"".join(sub_trs)}</tbody>\n'
                 f'  </table>\n'
                 f'</div>'
             )
+        bf_main_title = "ビットフィールド詳細" if is_ja else "Bitfield Details"
         bitfields_html = (
             '<section class="section">\n'
-            '  <h2>Bitfield Details</h2>\n'
+            f'  <h2>{bf_main_title}</h2>\n'
             + "\n".join(bf_sections)
             + '\n</section>'
         )
 
     # Build final HTML
-    escaped_title = html_lib.escape(title)
+    escaped_title = html_lib.escape(resolved_title)
     doc_html = f'<p class="overview-doc">{html_lib.escape(root_doc)}</p>' if root_doc else ""
 
     mermaid_section = ""
@@ -1292,24 +1466,29 @@ def generate_html(
             f'<div class="mermaid-card"><pre class="mermaid">\n{blk}\n</pre></div>'
             for blk in mermaid_blocks
         )
+        diag_heading = "構造図" if is_ja else "Structure Diagram"
         mermaid_section = (
             '<section class="section">\n'
-            '  <h2>Structure Diagram</h2>\n'
+            f'  <h2>{diag_heading}</h2>\n'
             f'{mermaid_html_blocks}\n'
             '</section>'
         )
 
     hex_section = ""
     if hex_dump_html:
+        hex_main_title = "ヘックスインスペクター" if is_ja else "Interactive Hex Inspector"
+        hover_badge = "バイトまたは表の行にホバーして検査" if is_ja else "Hover bytes or table rows to inspect"
+        inspect_bar_label = "検査情報:" if is_ja else "Inspection:"
+        inspect_placeholder = "バイトまたは表の行にホバーして詳細を表示" if is_ja else "Hover over a byte or table row to inspect"
         hex_section = f"""
 <section class="section">
   <div class="section-header">
-    <h2>Interactive Hex Inspector</h2>
-    <span class="badge badge-info">Hover bytes or table rows to inspect</span>
+    <h2>{hex_main_title}</h2>
+    <span class="badge badge-info">{hover_badge}</span>
   </div>
   <div class="inspector-bar" id="inspector-bar">
-    <span class="inspector-label">Inspection:</span>
-    <span id="inspector-info">Hover over a byte or table row to inspect</span>
+    <span class="inspector-label">{inspect_bar_label}</span>
+    <span id="inspector-info">{inspect_placeholder}</span>
   </div>
   <div class="hex-viewer-container">
     <div class="hex-viewer" id="hex-viewer">
@@ -1319,8 +1498,32 @@ def generate_html(
 </section>
 """
 
+    html_lang = "ja" if is_ja else "en"
+    size_badge_lbl = "合計サイズ:" if is_ja else "Total Size:"
+    size_unit_lbl = "バイト" if is_ja else "bytes"
+    endian_badge_lbl = "エンディアン:" if is_ja else "Endianness:"
+    endian_disp_val = ("リトルエンディアン (Little)" if default_endian.lower() == "little" else "ビッグエンディアン (Big)") if is_ja else default_endian.capitalize()
+    fields_badge_lbl = "フィールド数:" if is_ja else "Fields:"
+
+    th_off_col = "オフセット" if is_ja else "Offset"
+    th_sz_col = "サイズ" if is_ja else "Size"
+    th_fn_col = "フィールド名" if is_ja else "Field Name"
+    th_tp_col = "型" if is_ja else "Type"
+    th_en_col = "エンディアン" if is_ja else "Endian"
+    th_val_col = "値 / プレビュー" if is_ja else "Value / Preview"
+    th_desc_col = "説明" if is_ja else "Description"
+    mem_table_heading = "メモリレイアウト表" if is_ja else "Memory Layout Table"
+
+    js_field_lbl = "フィールド:" if is_ja else "Field:"
+    js_type_lbl = "型:" if is_ja else "Type:"
+    js_offset_lbl = "オフセット:" if is_ja else "Offset:"
+    js_size_lbl = "サイズ:" if is_ja else "Size:"
+    js_val_lbl = "値:" if is_ja else "Value:"
+    js_unmapped = "(未マッピング / パディング)" if is_ja else "(unmapped / padding)"
+    js_hover_prompt = "バイトまたは表の行にホバーして詳細を表示" if is_ja else "Hover over a byte or table row to inspect"
+
     return f"""<!DOCTYPE html>
-<html lang="en" data-theme="{theme}">
+<html lang="{html_lang}" data-theme="{theme}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1335,60 +1538,26 @@ def generate_html(
       --accent: #2563eb;
       --accent-hover: #1d4ed8;
       --highlight: #fef08a;
-      --highlight-border: #eab308;
-      --highlight-text: #713f12;
+      --highlight-text: #854d0e;
+      --highlight-border: #facc15;
       --badge-bg: #eff6ff;
-      --badge-text: #1d4ed8;
       --table-header: #f1f5f9;
-      --mono-font: "JetBrains Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       --sans-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }}
-    @media (prefers-color-scheme: dark) {{
-      :root[data-theme="auto"], :root[data-theme="dark"] {{
-        --bg: #0b0f19;
-        --card-bg: #131b2e;
-        --text: #f1f5f9;
-        --text-dim: #94a3b8;
-        --border: #243049;
-        --accent: #3b82f6;
-        --accent-hover: #60a5fa;
-        --highlight: #854d0e;
-        --highlight-border: #facc15;
-        --highlight-text: #fef08a;
-        --badge-bg: #1e293b;
-        --badge-text: #60a5fa;
-        --table-header: #1e293b;
-      }}
-    }}
-    :root[data-theme="dark"] {{
-      --bg: #0b0f19;
-      --card-bg: #131b2e;
-      --text: #f1f5f9;
+    [data-theme="dark"] {{
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --text: #f8fafc;
       --text-dim: #94a3b8;
-      --border: #243049;
+      --border: #334155;
       --accent: #3b82f6;
       --accent-hover: #60a5fa;
       --highlight: #854d0e;
-      --highlight-border: #facc15;
       --highlight-text: #fef08a;
-      --badge-bg: #1e293b;
-      --badge-text: #60a5fa;
+      --highlight-border: #ca8a04;
+      --badge-bg: #1e3a8a;
       --table-header: #1e293b;
-    }}
-    :root[data-theme="light"] {{
-      --bg: #f8fafc;
-      --card-bg: #ffffff;
-      --text: #0f172a;
-      --text-dim: #64748b;
-      --border: #e2e8f0;
-      --accent: #2563eb;
-      --accent-hover: #1d4ed8;
-      --highlight: #fef08a;
-      --highlight-border: #eab308;
-      --highlight-text: #713f12;
-      --badge-bg: #eff6ff;
-      --badge-text: #1d4ed8;
-      --table-header: #f1f5f9;
     }}
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
@@ -1396,7 +1565,7 @@ def generate_html(
       background-color: var(--bg);
       color: var(--text);
       line-height: 1.6;
-      padding: 2rem 1.5rem;
+      padding: 2rem 1rem;
     }}
     .container {{
       max-width: 1200px;
@@ -1404,13 +1573,21 @@ def generate_html(
     }}
     header {{
       margin-bottom: 2rem;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 2px solid var(--border);
       padding-bottom: 1.5rem;
     }}
-    h1 {{ font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; }}
-    h2 {{ font-size: 1.35rem; font-weight: 600; margin-bottom: 1rem; }}
-    h3 {{ font-size: 1.1rem; font-weight: 600; margin-bottom: 0.75rem; }}
-    .overview-doc {{ margin-top: 0.5rem; color: var(--text-dim); }}
+    h1 {{
+      font-size: 2.25rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 0.5rem;
+    }}
+    .overview-doc {{
+      font-size: 1.1rem;
+      color: var(--text-dim);
+      margin-bottom: 1rem;
+      white-space: pre-line;
+    }}
     .meta-badges {{
       display: flex;
       flex-wrap: wrap;
@@ -1422,13 +1599,17 @@ def generate_html(
       align-items: center;
       padding: 0.35rem 0.75rem;
       border-radius: 9999px;
-      font-size: 0.875rem;
+      font-size: 0.85rem;
       font-weight: 500;
-      background: var(--badge-bg);
-      color: var(--badge-text);
+      background: var(--card-bg);
       border: 1px solid var(--border);
+      color: var(--text);
     }}
-    .badge-info {{ background: var(--badge-bg); color: var(--accent); }}
+    .badge-info {{
+      background: var(--badge-bg);
+      color: var(--accent);
+      border-color: var(--accent);
+    }}
     .section {{
       background: var(--card-bg);
       border: 1px solid var(--border);
@@ -1584,9 +1765,9 @@ def generate_html(
       <h1>{escaped_title}</h1>
       {doc_html}
       <div class="meta-badges">
-        <span class="badge"><strong>Total Size:</strong>&nbsp;{total_bytes} bytes (0x{total_bytes:04X})</span>
-        <span class="badge"><strong>Endianness:</strong>&nbsp;{default_endian.capitalize()}</span>
-        <span class="badge"><strong>Fields:</strong>&nbsp;{len(entries_list)}</span>
+        <span class="badge"><strong>{size_badge_lbl}</strong>&nbsp;{total_bytes} {size_unit_lbl} (0x{total_bytes:04X})</span>
+        <span class="badge"><strong>{endian_badge_lbl}</strong>&nbsp;{endian_disp_val}</span>
+        <span class="badge"><strong>{fields_badge_lbl}</strong>&nbsp;{len(entries_list)}</span>
       </div>
     </header>
 
@@ -1596,19 +1777,19 @@ def generate_html(
 
     <section class="section">
       <div class="section-header">
-        <h2>Memory Layout Table</h2>
+        <h2>{mem_table_heading}</h2>
       </div>
       <div class="table-container">
         <table class="layout-table" id="layout-table">
           <thead>
             <tr>
-              <th>Offset</th>
-              <th>Size</th>
-              <th>Field Name</th>
-              <th>Type</th>
-              <th>Endian</th>
-              {"<th>Value / Preview</th>" if include_values else ""}
-              <th>Description</th>
+              <th>{th_off_col}</th>
+              <th>{th_sz_col}</th>
+              <th>{th_fn_col}</th>
+              <th>{th_tp_col}</th>
+              <th>{th_en_col}</th>
+              {"<th>" + th_val_col + "</th>" if include_values else ""}
+              <th>{th_desc_col}</th>
             </tr>
           </thead>
           <tbody>
@@ -1655,7 +1836,7 @@ def generate_html(
         const size = row.getAttribute('data-size');
         const val = row.getAttribute('data-value');
 
-        const info = `<strong>Field:</strong> <code>${{name}}</code> | <strong>Type:</strong> ${{type}} | <strong>Offset:</strong> 0x${{start.toString(16).padStart(4, '0')}} (${{start}}) | <strong>Size:</strong> ${{size}}B` + (val !== '-' ? ` | <strong>Value:</strong> <code>${{val}}</code>` : '');
+        const info = `<strong>{js_field_lbl}</strong> <code>${{name}}</code> | <strong>{js_type_lbl}</strong> ${{type}} | <strong>{js_offset_lbl}</strong> 0x${{start.toString(16).padStart(4, '0')}} (${{start}}) | <strong>{js_size_lbl}</strong> ${{size}}B` + (val !== '-' ? ` | <strong>{js_val_lbl}</strong> <code>${{val}}</code>` : '');
 
         row.addEventListener('mouseenter', () => {{
           row.classList.add('active');
@@ -1663,7 +1844,7 @@ def generate_html(
         }});
         row.addEventListener('mouseleave', () => {{
           clearHighlights();
-          if (inspectorBar) inspectorBar.textContent = 'Hover over a byte or table row to inspect';
+          if (inspectorBar) inspectorBar.textContent = '{js_hover_prompt}';
         }});
       }});
 
@@ -1690,20 +1871,20 @@ def generate_html(
             const val = matchedRow.getAttribute('data-value');
 
             matchedRow.classList.add('active');
-            const info = `<strong>Offset:</strong> 0x${{offset.toString(16).padStart(4, '0')}} (${{offset}}) &rarr; <strong>Field:</strong> <code>${{name}}</code> | <strong>Type:</strong> ${{type}} | <strong>Size:</strong> ${{size}}B` + (val !== '-' ? ` | <strong>Value:</strong> <code>${{val}}</code>` : '');
+            const info = `<strong>{js_offset_lbl}</strong> 0x${{offset.toString(16).padStart(4, '0')}} (${{offset}}) &rarr; <strong>{js_field_lbl}</strong> <code>${{name}}</code> | <strong>{js_type_lbl}</strong> ${{type}} | <strong>{js_size_lbl}</strong> ${{size}}B` + (val !== '-' ? ` | <strong>{js_val_lbl}</strong> <code>${{val}}</code>` : '');
             highlightRange(start, end, info);
           }} else {{
             clearHighlights();
             byteEl.classList.add('active');
             if (inspectorBar) {{
-              inspectorBar.innerHTML = `<strong>Offset:</strong> 0x${{offset.toString(16).padStart(4, '0')}} (${{offset}}) (unmapped / padding)`;
+              inspectorBar.innerHTML = `<strong>{js_offset_lbl}</strong> 0x${{offset.toString(16).padStart(4, '0')}} (${{offset}}) {js_unmapped}`;
             }}
           }}
         }});
 
         byteEl.addEventListener('mouseleave', () => {{
           clearHighlights();
-          if (inspectorBar) inspectorBar.textContent = 'Hover over a byte or table row to inspect';
+          if (inspectorBar) inspectorBar.textContent = '{js_hover_prompt}';
         }});
       }});
     }})();
@@ -1716,6 +1897,7 @@ def generate_html(
 def write_html(
     entries: Any,
     path_or_file: Union[str, Path, IO[str]],
+    lang: Literal["auto", "en", "ja"] = "auto",
     **kwargs: Any,
 ) -> str:
     """Generate interactive specification HTML and write it to a file or stream.
@@ -1723,11 +1905,13 @@ def write_html(
     Args:
         entries: A @binary_struct class/instance, BinaryWriter, Builder, or list of LayoutEntry.
         path_or_file: File path string, Path object, or writable text stream.
+        lang: Output language ("auto", "en", or "ja"). Default is "auto" (detected from system locale).
         **kwargs: Options forwarded to generate_html().
 
     Returns:
         The generated HTML content as a string.
     """
+    kwargs["lang"] = lang
     content = generate_html(entries, **kwargs)
     if isinstance(path_or_file, (str, Path)):
         p = Path(path_or_file)

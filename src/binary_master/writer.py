@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 import struct
 from contextlib import contextmanager
-from typing import Any, IO, Iterable, Iterator, Optional, Union
+from typing import Any, IO, Iterable, Iterator, Literal, Optional, Union
 
 from binary_master.enums import Endian, EndianType, normalize_endian
 
@@ -190,6 +190,7 @@ class BinaryWriter:
         stream: Optional[IO[bytes]] = None,
         default_endian: EndianType = Endian.LITTLE,
         auto_close: Optional[bool] = None,
+        lang: Literal["auto", "en", "ja"] = "auto",
     ) -> None:
         """Initialize a BinaryWriter.
 
@@ -199,7 +200,9 @@ class BinaryWriter:
             default_endian: The default byte order (Endian.LITTLE, Endian.BIG, or string alias).
             auto_close: Whether closing this writer should close the underlying stream.
                         Defaults to True if a file path was opened, False if stream was provided.
+            lang: Default language for generated manuals ('auto', 'en', or 'ja'). Default is 'auto' (detected from system locale).
         """
+        self.lang = lang
         self._default_endian = normalize_endian(default_endian)
         self._entries: list[Any] = []
         self._struct_classes: list[type] = []
@@ -1723,31 +1726,231 @@ class BinaryWriter:
 
         return builder
 
-    def to_markdown(self, **kwargs: Any) -> str:
-        """Generate a complete Markdown specification manual from this writer."""
-        from binary_master.manual import generate_manual
-        return generate_manual(self, **kwargs)
+    def to_markdown(
+        self,
+        title: str = "Binary Specification Manual",
+        diagram_type: Literal["both", "flowchart", "packet", "none"] = "both",
+        diagram_direction: Literal["TD", "LR"] = "TD",
+        bits_per_row: int = 32,
+        include_values: bool = False,
+        include_bitfield_diagram: bool = True,
+        expand_bitfields: bool = False,
+        font_size: Optional[str] = None,
+        bit_width: Optional[int] = None,
+        section_packet_diagrams: bool = False,
+        default_endian: Optional[str] = None,
+        lang: Optional[Literal["auto", "en", "ja"]] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Generate a complete Markdown specification manual from this writer.
 
-    def write_markdown(self, path_or_file: Union[str, Path, IO[str]], **kwargs: Any) -> str:
-        """Generate specification markdown and write it to a file or stream."""
-        content = self.to_markdown(**kwargs)
+        Args:
+            title: Document header title.
+            diagram_type: Diagram types to include ('both', 'flowchart', 'packet', 'none'). Default is 'both'.
+            diagram_direction: Direction for Mermaid flowchart ('TD' or 'LR'). Default is 'TD'.
+            bits_per_row: Packet diagram width in bits. Default is 32.
+            include_values: Include serialized runtime preview values in layout tables.
+            include_bitfield_diagram: Generate detailed packet diagrams for bitfields. Default is True.
+            expand_bitfields: Expand bitfield subfields inside the overall packet diagram. Default is False.
+            font_size: Optional CSS font size for Mermaid diagrams (e.g. '12px').
+            bit_width: Optional pixel width per bit in packet diagrams.
+            section_packet_diagrams: Explicitly include packet diagrams per struct/section.
+            default_endian: Optional default endianness override ('little' or 'big').
+            lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
+            **kwargs: Extra options forwarded to generate_manual.
+
+        Returns:
+            The complete Markdown document as a string.
+        """
+        from binary_master.manual import generate_manual
+        resolved_endian = default_endian or (
+            "little" if self.default_endian == Endian.LITTLE else "big"
+        )
+        target_lang = lang or getattr(self, "lang", "auto") or "auto"
+        return generate_manual(
+            self,
+            title=title,
+            default_endian=resolved_endian,
+            diagram_type=diagram_type,
+            diagram_direction=diagram_direction,
+            bits_per_row=bits_per_row,
+            include_values=include_values,
+            include_bitfield_diagram=include_bitfield_diagram,
+            expand_bitfields=expand_bitfields,
+            font_size=font_size,
+            bit_width=bit_width,
+            section_packet_diagrams=section_packet_diagrams,
+            lang=target_lang,
+            **kwargs,
+        )
+
+    def write_markdown(
+        self,
+        path_or_file: Union[str, Path, IO[str]],
+        title: str = "Binary Specification Manual",
+        diagram_type: Literal["both", "flowchart", "packet", "none"] = "both",
+        diagram_direction: Literal["TD", "LR"] = "TD",
+        bits_per_row: int = 32,
+        include_values: bool = False,
+        include_bitfield_diagram: bool = True,
+        expand_bitfields: bool = False,
+        font_size: Optional[str] = None,
+        bit_width: Optional[int] = None,
+        section_packet_diagrams: bool = False,
+        default_endian: Optional[str] = None,
+        lang: Optional[Literal["auto", "en", "ja"]] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Generate specification markdown and write it to a file or stream.
+
+        Args:
+            path_or_file: Destination file path (str or Path) or writable text stream.
+            title: Document header title.
+            diagram_type: Diagram types to include ('both', 'flowchart', 'packet', 'none'). Default is 'both'.
+            diagram_direction: Direction for Mermaid flowchart ('TD' or 'LR'). Default is 'TD'.
+            bits_per_row: Packet diagram width in bits. Default is 32.
+            include_values: Include serialized runtime preview values in layout tables.
+            include_bitfield_diagram: Generate detailed packet diagrams for bitfields. Default is True.
+            expand_bitfields: Expand bitfield subfields inside the overall packet diagram. Default is False.
+            font_size: Optional CSS font size for Mermaid diagrams (e.g. '12px').
+            bit_width: Optional pixel width per bit in packet diagrams.
+            section_packet_diagrams: Explicitly include packet diagrams per struct/section.
+            default_endian: Optional default endianness override ('little' or 'big').
+            lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
+            **kwargs: Extra options forwarded to to_markdown.
+
+
+        Returns:
+            The complete Markdown document as a string.
+        """
+        content = self.to_markdown(
+            title=title,
+            diagram_type=diagram_type,
+            diagram_direction=diagram_direction,
+            bits_per_row=bits_per_row,
+            include_values=include_values,
+            include_bitfield_diagram=include_bitfield_diagram,
+            expand_bitfields=expand_bitfields,
+            font_size=font_size,
+            bit_width=bit_width,
+            section_packet_diagrams=section_packet_diagrams,
+            default_endian=default_endian,
+            lang=lang,
+            **kwargs,
+        )
         if isinstance(path_or_file, (str, Path)):
-            Path(path_or_file).write_text(content, encoding="utf-8")
+            p = Path(path_or_file)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
         elif hasattr(path_or_file, "write"):
             path_or_file.write(content)
         else:
             raise TypeError(f"Invalid path_or_file: {type(path_or_file).__name__}")
         return content
 
-    def to_html(self, **kwargs: Any) -> str:
-        """Generate an interactive HTML specification manual with hex inspector."""
-        from binary_master.manual import generate_html
-        return generate_html(self, **kwargs)
+    def to_html(
+        self,
+        title: str = "Binary Specification Manual",
+        diagram_type: Literal["both", "flowchart", "packet", "none"] = "both",
+        diagram_direction: Literal["TD", "LR"] = "TD",
+        bits_per_row: int = 32,
+        include_values: bool = True,
+        theme: Literal["auto", "light", "dark"] = "auto",
+        sample_data: Optional[bytes] = None,
+        default_endian: Optional[str] = None,
+        lang: Optional[Literal["auto", "en", "ja"]] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Generate an interactive HTML specification manual with hex inspector.
 
-    def write_html(self, path_or_file: Union[str, Path, IO[str]], **kwargs: Any) -> str:
-        """Generate specification HTML and write it to a file or stream."""
-        from binary_master.manual import write_html
-        return write_html(self, path_or_file, **kwargs)
+        Args:
+            title: Document header title.
+            diagram_type: Diagram types to include ('both', 'flowchart', 'packet', 'none'). Default is 'both'.
+            diagram_direction: Direction for Mermaid flowchart ('TD' or 'LR'). Default is 'TD'.
+            bits_per_row: Packet diagram width in bits. Default is 32.
+            include_values: Include serialized values in layout tables. Default is True.
+            theme: Color theme ('auto', 'light', 'dark'). Default is 'auto'.
+            sample_data: Optional sample bytes for the interactive hex dump viewer.
+            default_endian: Optional default endianness override ('little' or 'big').
+            lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
+            **kwargs: Extra options forwarded to generate_html.
+
+        Returns:
+            The complete HTML document as a string.
+        """
+        from binary_master.manual import generate_html
+        resolved_endian = default_endian or (
+            "little" if self.default_endian == Endian.LITTLE else "big"
+        )
+        target_lang = lang or getattr(self, "lang", "auto") or "auto"
+        return generate_html(
+            self,
+            title=title,
+            default_endian=resolved_endian,
+            diagram_type=diagram_type,
+            diagram_direction=diagram_direction,
+            bits_per_row=bits_per_row,
+            include_values=include_values,
+            theme=theme,
+            sample_data=sample_data,
+            lang=target_lang,
+            **kwargs,
+        )
+
+    def write_html(
+        self,
+        path_or_file: Union[str, Path, IO[str]],
+        title: str = "Binary Specification Manual",
+        diagram_type: Literal["both", "flowchart", "packet", "none"] = "both",
+        diagram_direction: Literal["TD", "LR"] = "TD",
+        bits_per_row: int = 32,
+        include_values: bool = True,
+        theme: Literal["auto", "light", "dark"] = "auto",
+        sample_data: Optional[bytes] = None,
+        default_endian: Optional[str] = None,
+        lang: Optional[Literal["auto", "en", "ja"]] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Generate specification HTML and write it to a file or stream.
+
+        Args:
+            path_or_file: Destination file path (str or Path) or writable text stream.
+            title: Document header title.
+            diagram_type: Diagram types to include ('both', 'flowchart', 'packet', 'none'). Default is 'both'.
+            diagram_direction: Direction for Mermaid flowchart ('TD' or 'LR'). Default is 'TD'.
+            bits_per_row: Packet diagram width in bits. Default is 32.
+            include_values: Include serialized values in layout tables. Default is True.
+            theme: Color theme ('auto', 'light', 'dark'). Default is 'auto'.
+            sample_data: Optional sample bytes for the interactive hex dump viewer.
+            default_endian: Optional default endianness override ('little' or 'big').
+            lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
+            **kwargs: Extra options forwarded to to_html.
+
+
+        Returns:
+            The complete HTML document as a string.
+        """
+        content = self.to_html(
+            title=title,
+            diagram_type=diagram_type,
+            diagram_direction=diagram_direction,
+            bits_per_row=bits_per_row,
+            include_values=include_values,
+            theme=theme,
+            sample_data=sample_data,
+            default_endian=default_endian,
+            lang=lang,
+            **kwargs,
+        )
+        if isinstance(path_or_file, (str, Path)):
+            p = Path(path_or_file)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+        elif hasattr(path_or_file, "write"):
+            path_or_file.write(content)
+        else:
+            raise TypeError(f"Invalid path_or_file: {type(path_or_file).__name__}")
+        return content
 
     def to_c_header(self, guard: Optional[str] = None, pack: bool = True) -> str:
         """Generate a C99/C11 header file from this writer's recorded structures and variants."""
