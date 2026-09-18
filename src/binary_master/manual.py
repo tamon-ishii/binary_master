@@ -377,20 +377,88 @@ def _compress_consecutive_indexed_entries(
     return result
 
 
-def _compress_entries_for_diagram(
+def _format_indexed_type_name(base_type: Optional[str], count: int) -> str:
+    """Format an aggregated type name for indexed entries (e.g. Offset[UInt16] -> OffsetTable[10, UInt16])."""
+    if not base_type:
+        return f"[{count}]"
+    m = re.match(r"^Offset\[(.+)\]$", base_type)
+    if m:
+        target_t = m.group(1)
+        return f"OffsetTable[{count}, {target_t}]"
+    if base_type == "Offset":
+        return f"OffsetTable[{count}]"
+    return f"{base_type}[{count}]"
+
+
+def _aggregate_indexed_entries_in_list(entries: List[LayoutEntry]) -> List[LayoutEntry]:
+    """Aggregate consecutive indexed entries (e.g. offsets[0..9]) into a single LayoutEntry."""
+    result: List[LayoutEntry] = []
+    i = 0
+    n = len(entries)
+    while i < n:
+        curr = entries[i]
+        m = re.match(r"^(.+)\[(\d+)\]$", curr.name) if curr.name else None
+        if not m:
+            result.append(curr)
+            i += 1
+            continue
+
+        base_name = m.group(1)
+        idx_val = int(m.group(2))
+        j = i + 1
+        expected_idx = idx_val + 1
+        while j < n:
+            nxt = entries[j]
+            m_nxt = re.match(r"^(.+)\[(\d+)\]$", nxt.name) if nxt.name else None
+            if not m_nxt or m_nxt.group(1) != base_name or int(m_nxt.group(2)) != expected_idx:
+                break
+            if nxt.type_name != curr.type_name or nxt.size != curr.size:
+                break
+            expected_idx += 1
+            j += 1
+
+        count = j - i
+        if count >= 3:
+            total_size = sum(entries[k].size for k in range(i, j))
+            agg_type = _format_indexed_type_name(curr.type_name, count)
+            summary_entry = LayoutEntry(
+                offset=curr.offset,
+                size=total_size,
+                name=base_name,
+                type_name=agg_type,
+                endian=curr.endian,
+                description=curr.description,
+                struct_name=curr.struct_name,
+                caption=curr.caption,
+                target_offset=curr.target_offset,
+            )
+            setattr(summary_entry, "_is_indexed_summary", True)
+            result.append(summary_entry)
+            i = j
+        else:
+            for k in range(i, j):
+                result.append(entries[k])
+            i = j
+
+    return result
+
+
+def _aggregate_entries_for_diagram(
     entries: List[LayoutEntry],
-) -> List[tuple[bool, Any]]:
-    """Compress consecutive indexed entries AND repeated struct patterns for diagrams.
+    relative_offset: bool = False,
+) -> List[LayoutEntry]:
+    """Aggregate repeated sections and indexed entries into single coherent blocks for packet diagrams.
 
-    Returns:
-        List of tuples: (is_omitted, item)
-        If is_omitted is False, item is LayoutEntry.
-        If is_omitted is True, item is a tuple: (omitted_count, first_entry, last_entry).
+    This eliminates unhelpful intermediate '...' ellipses in diagrams.
     """
-    if len(entries) < 3:
-        return [(False, e) for e in entries]
+    if not entries:
+        return []
 
-    # Group consecutive entries by (caption or struct_name)
+    # If rendering a relative section (e.g. unit of a repeated struct), only aggregate indexed entries
+    if relative_offset:
+        return _aggregate_indexed_entries_in_list(entries)
+
+    # Group entries by section (caption or struct_name)
     groups: List[List[LayoutEntry]] = []
     current_key = None
     current_group: List[LayoutEntry] = []
@@ -407,26 +475,30 @@ def _compress_entries_for_diagram(
     if current_group:
         groups.append(current_group)
 
-    result: List[tuple[bool, Any]] = []
+    aggregated: List[LayoutEntry] = []
     for grp in groups:
         is_rep, rep_spec, u_entries, sample_count = _detect_repetition(grp)
-        unit_len = len(u_entries)
-
-        if is_rep and sample_count >= 3 and unit_len > 0:
-            first_unit = grp[:unit_len]
-            result.extend(_compress_consecutive_indexed_entries(first_unit))
-
-            omitted_count = sample_count - 2
-            first_entry = grp[unit_len - 1]
-            last_entry = grp[(sample_count - 1) * unit_len]
-            result.append((True, (omitted_count, first_entry, last_entry)))
-
-            last_unit = grp[(sample_count - 1) * unit_len:]
-            result.extend(_compress_consecutive_indexed_entries(last_unit))
+        if is_rep and sample_count >= 2:
+            first_e = grp[0]
+            sec_name = first_e.struct_name or first_e.caption or "Payload"
+            total_size = sum(e.size for e in grp)
+            rep_tag = _format_repeat_tag(rep_spec)
+            summary_entry = LayoutEntry(
+                offset=first_e.offset,
+                size=total_size,
+                name=f"{sec_name}{rep_tag}",
+                type_name=f"{sec_name}{rep_tag}",
+                endian=first_e.endian,
+                description=first_e.description or first_e.caption_desc or "",
+                struct_name=first_e.struct_name,
+                caption=first_e.caption,
+            )
+            setattr(summary_entry, "_is_rep_summary", True)
+            aggregated.append(summary_entry)
         else:
-            result.extend(_compress_consecutive_indexed_entries(grp))
+            aggregated.extend(_aggregate_indexed_entries_in_list(grp))
 
-    return result
+    return aggregated
 
 
 def _is_offset_table_entries(entries: List[LayoutEntry]) -> bool:
@@ -478,6 +550,7 @@ def generate_mermaid_diagram(
 
     node_ids: List[str] = []
     used_subgraph_ids: set[str] = set()
+    rep_node_map: Dict[int, str] = {}
 
     for group_idx, (group_key, s_entries) in enumerate(groups):
         raw_entries = [e for _, e in s_entries]
@@ -494,25 +567,59 @@ def generate_mermaid_diagram(
                     name_label = entry.name or entry.type_name
                     node_label = f"+0x{rel:02X}: {name_label} ({entry.type_name}, {entry.size}B)"
                     lines.append(f'{indent}{nid}["{node_label}"]')
+                # Map all entries in this repeated group to the representative nodes
+                for k, (orig_i, _) in enumerate(s_entries):
+                    rep_i = s_entries[k % unit_len][0]
+                    rep_node_map[orig_i] = f"N{rep_i}"
             else:
-                raw_s = [e for _, e in s_entries]
-                compressed = _compress_consecutive_indexed_entries(raw_s)
-                s_ptr = 0
-                for is_omitted, item in compressed:
-                    if is_omitted:
-                        omitted_count, first_e, last_e = item
-                        nid = f"N_omit_{group_idx}_{s_ptr}"
-                        node_ids.append(nid)
-                        lines.append(f'{indent}{nid}["..."]')
-                        s_ptr += omitted_count
-                    else:
-                        orig_idx, entry = s_entries[s_ptr]
+                i = 0
+                n = len(s_entries)
+                while i < n:
+                    orig_idx, curr = s_entries[i]
+                    m = re.match(r"^(.+)\[(\d+)\]$", curr.name) if curr.name else None
+                    if not m:
                         nid = f"N{orig_idx}"
                         node_ids.append(nid)
-                        name_label = entry.name or entry.type_name
-                        node_label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
+                        name_label = curr.name or curr.type_name
+                        node_label = f"0x{curr.offset:04X}: {name_label} ({curr.type_name}, {curr.size}B)"
                         lines.append(f'{indent}{nid}["{node_label}"]')
-                        s_ptr += 1
+                        i += 1
+                        continue
+
+                    base_name = m.group(1)
+                    idx_val = int(m.group(2))
+                    j = i + 1
+                    expected_idx = idx_val + 1
+                    while j < n:
+                        _, nxt = s_entries[j]
+                        m_nxt = re.match(r"^(.+)\[(\d+)\]$", nxt.name) if nxt.name else None
+                        if not m_nxt or m_nxt.group(1) != base_name or int(m_nxt.group(2)) != expected_idx:
+                            break
+                        if nxt.type_name != curr.type_name or nxt.size != curr.size:
+                            break
+                        expected_idx += 1
+                        j += 1
+
+                    count = j - i
+                    if count >= 3:
+                        nid = f"N{orig_idx}"
+                        node_ids.append(nid)
+                        for k in range(i, j):
+                            rep_node_map[s_entries[k][0]] = nid
+                        total_size = sum(s_entries[k][1].size for k in range(i, j))
+                        type_label = _format_indexed_type_name(curr.type_name, count)
+                        node_label = f"0x{curr.offset:04X}: {base_name} ({type_label}, {total_size}B)"
+                        lines.append(f'{indent}{nid}["{node_label}"]')
+                        i = j
+                    else:
+                        for k in range(i, j):
+                            idx_k, e_k = s_entries[k]
+                            nid = f"N{idx_k}"
+                            node_ids.append(nid)
+                            name_label = e_k.name or e_k.type_name
+                            node_label = f"0x{e_k.offset:04X}: {name_label} ({e_k.type_name}, {e_k.size}B)"
+                            lines.append(f'{indent}{nid}["{node_label}"]')
+                        i = j
 
         if group_key is not None:
             min_off = s_entries[0][1].offset
@@ -556,14 +663,20 @@ def generate_mermaid_diagram(
         lines.append(f"    {node_ids[i]} --> {node_ids[i+1]}")
 
     # Offset relationships (dotted arrows pointing to referenced target offset)
+    seen_links: set[tuple[str, str]] = set()
     for idx, entry in enumerate(entries):
         if entry.target_offset is not None:
             for t_idx, t_entry in enumerate(entries):
                 if t_entry.offset == entry.target_offset:
-                    if f"N{idx}" in node_ids and f"N{t_idx}" in node_ids:
-                        lines.append(
-                            f'    N{idx} -.->|"offset: 0x{entry.target_offset:04X}"| N{t_idx}'
-                        )
+                    source_nid = rep_node_map.get(idx, f"N{idx}")
+                    target_nid = rep_node_map.get(t_idx, f"N{t_idx}")
+                    if source_nid in node_ids and target_nid in node_ids and source_nid != target_nid:
+                        link_key = (source_nid, target_nid)
+                        if link_key not in seen_links:
+                            seen_links.add(link_key)
+                            lines.append(
+                                f'    {source_nid} -.->|"offset: 0x{entry.target_offset:04X}"| {target_nid}'
+                            )
                     break
 
     lines.append("```")
@@ -688,31 +801,8 @@ def generate_packet_diagram(
     base_offset = entries[0].offset if (relative_offset and entries) else 0
     current_bit = 0
 
-    compressed = _compress_entries_for_diagram(entries)
-    for is_omitted, item in compressed:
-        if is_omitted:
-            omitted_count, first_entry, last_entry = item
-            omit_start_bit = (first_entry.offset + first_entry.size - base_offset) * 8
-            omit_end_bit = (last_entry.offset - base_offset) * 8 - 1
-            if omit_start_bit <= omit_end_bit:
-                if omit_start_bit > current_bit:
-                    gap_start = current_bit
-                    gap_end = omit_start_bit - 1
-                    gap_bytes = (gap_end - gap_start + 1) // 8
-                    if large_data_threshold > 0 and gap_bytes >= large_data_threshold:
-                        lines.append(f'{gap_start}-{gap_end}: "(padding, {gap_bytes}B)"')
-                    elif gap_start == gap_end:
-                        lines.append(f'{gap_start}: "(padding)"')
-                    else:
-                        lines.append(f'{gap_start}-{gap_end}: "(padding)"')
-                if omit_start_bit == omit_end_bit:
-                    lines.append(f'{omit_start_bit}: "..."')
-                else:
-                    lines.append(f'{omit_start_bit}-{omit_end_bit}: "..."')
-                current_bit = omit_end_bit + 1
-            continue
-
-        e = item
+    diagram_entries = _aggregate_entries_for_diagram(entries, relative_offset=relative_offset)
+    for e in diagram_entries:
         entry_start_bit = (e.offset - base_offset) * 8
         entry_end_bit = entry_start_bit + (e.size * 8)
 
@@ -766,7 +856,11 @@ def generate_packet_diagram(
             s_start = entry_start_bit
             s_end = entry_end_bit - 1
             name = e.name or e.type_name
-            if large_data_threshold > 0 and e.size >= large_data_threshold:
+            if getattr(e, "_is_rep_summary", False):
+                label = f"{name} ({e.size}B)"
+            elif getattr(e, "_is_indexed_summary", False):
+                label = f"{name} ({e.type_name}, {e.size}B)"
+            elif large_data_threshold > 0 and e.size >= large_data_threshold:
                 # Large data block auto-summarization
                 is_raw_bytes = not e.type_name or e.type_name == "Bytes" or e.type_name.startswith("Bytes[")
                 if is_raw_bytes:

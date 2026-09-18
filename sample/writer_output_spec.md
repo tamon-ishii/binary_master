@@ -62,13 +62,7 @@ title Procedural Binary Protocol Specification レイアウト
 448-463: "protocol_version (UInt16)"
 464-479: "flags (UInt16)"
 480-495: "num_records (UInt16)"
-496-527: "record_id (UInt32)"
-528-559: "timestamp (UInt32)"
-560-591: "value (Float32)"
-592-687: "..."
-688-719: "record_id (UInt32)"
-720-751: "timestamp (UInt32)"
-752-783: "value (Float32)"
+496-783: "DataRecord 🔁 xnum_records (36B)"
 ```
 
 ## メモリレイアウト表

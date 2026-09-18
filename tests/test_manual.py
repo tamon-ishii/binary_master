@@ -407,12 +407,9 @@ def test_offset_table_manual_omits_intermediate_entries():
     assert "| `offsets[8]` |" not in md
     assert "| ... | ... | ... | ... | ... | ... | ... |" in md
 
-    # Packet diagram also omits intermediate entries
-    assert 'offsets[0] (Offset[UInt32])' in md
-    assert 'offsets[9] (Offset[UInt32])' in md
-    assert '"offsets[1] (Offset[UInt32])"' not in md
-    assert '"offsets[5] (Offset[UInt32])"' not in md
-    assert ': "..."' in md
+    # Packet diagram aggregates the table into a clean slice without '...'
+    assert 'offsets (OffsetTable[10, UInt32], 40B)' in md
+    assert ': "..."' not in md
 
     # HTML manual test
     html = generate_html(LargeTableStruct, lang="en")
@@ -465,7 +462,7 @@ def test_anonymous_offset_table_title():
 
 
 def test_structure_diagram_repeated_elements_omitted():
-    """Verify that repeated items are omitted with '...' in packet diagram and flowchart."""
+    """Verify that repeated items are aggregated cleanly into a single block in packet diagram without '...'."""
     from binary_master import binary_struct, UInt16, FixedArray, UInt8
 
     @binary_struct
@@ -479,32 +476,19 @@ def test_structure_diagram_repeated_elements_omitted():
         w.write_struct(SubItem(width=100, height=200, pixels=[1, 2, 3, 4]))
 
     md = generate_manual(w.entries, diagram_type="packet")
-    # First unit (0..8 bytes -> 0..63 bits)
-    assert '0-15: "width (UInt16)"' in md
-    assert '16-31: "height (UInt16)"' in md
-    assert '32-63: "pixels (FixedArray[UInt8, 4])"' in md
-
-    # Intermediate omitted with '...' (64..575 bits)
-    assert '64-575: "..."' in md
-
-    # Last unit (72..80 bytes -> 576..639 bits)
-    assert '576-591: "width (UInt16)"' in md
-    assert '592-607: "height (UInt16)"' in md
-    assert '608-639: "pixels (FixedArray[UInt8, 4])"' in md
+    # Clean repeated block summary without '...'
+    assert '0-639: "SubItem 🔁 x10 (80B)"' in md
+    assert ': "..."' not in md
 
 
 def test_flowchart_indexed_omission():
-    """Verify that flowchart omits intermediate indexed entries with '...'."""
+    """Verify that flowchart aggregates indexed entries cleanly without '...' nodes."""
     w = BinaryWriter()
     w.write_offset_table(10)
 
     f_diag = generate_mermaid_diagram(w.entries)
-    assert '["0x0000: offsets[0] (Offset[UInt32], 4B)"]' in f_diag
-    assert '["..."]' in f_diag
-    assert '["0x0024: offsets[9] (Offset[UInt32], 4B)"]' in f_diag
-    # Intermediate should not be individual nodes
-    assert 'offsets[1]' not in f_diag
-    assert 'offsets[5]' not in f_diag
+    assert '["0x0000: offsets (OffsetTable[10, UInt32], 40B)"]' in f_diag
+    assert '["..."]' not in f_diag
 
 
 def test_packet_diagram_large_data_summarization():

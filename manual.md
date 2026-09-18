@@ -14,9 +14,7 @@
 flowchart TD
     subgraph SG_ImageHeader ["ImageHeader"]
         N0["0x0000: magic (UInt32, 4B)"]
-        N1["0x0004: offset_table[0] (Offset[UInt16], 2B)"]
-        N_omit_0_2["..."]
-        N10["0x0016: offset_table[9] (Offset[UInt16], 2B)"]
+        N1["0x0004: offset_table (OffsetTable[10, UInt16], 20B)"]
     end
     subgraph SG_ImagePayload ["ImagePayload 🔁 x10"]
         N11["+0x00: width (UInt16, 2B)"]
@@ -24,9 +22,7 @@ flowchart TD
         N13["+0x04: pixels (FixedArray[UInt8, 4], 4B)"]
     end
     N0 --> N1
-    N1 --> N_omit_0_2
-    N_omit_0_2 --> N10
-    N10 --> N11
+    N1 --> N11
     N11 --> N12
     N12 --> N13
     N1 -.->|"offset: 0x0018"| N11
@@ -38,16 +34,8 @@ flowchart TD
 packet-beta
 title バイナリ仕様書 レイアウト
 0-31: "magic (UInt32)"
-32-47: "offset_table[0] (Offset[UInt16])"
-48-175: "..."
-176-191: "offset_table[9] (Offset[UInt16])"
-192-207: "width (UInt16)"
-208-223: "height (UInt16)"
-224-255: "pixels (FixedArray[UInt8, 4])"
-256-767: "..."
-768-783: "width (UInt16)"
-784-799: "height (UInt16)"
-800-831: "pixels (FixedArray[UInt8, 4])"
+32-191: "offset_table (OffsetTable[10, UInt16], 20B)"
+192-831: "ImagePayload 🔁 x10 (80B)"
 ```
 
 ## メモリレイアウト表
@@ -60,9 +48,7 @@ title バイナリ仕様書 レイアウト
 packet-beta
 title ImageHeader レイアウト
 0-31: "magic (UInt32)"
-32-47: "offset_table[0] (Offset[UInt16])"
-48-175: "..."
-176-191: "offset_table[9] (Offset[UInt16])"
+32-191: "offset_table (OffsetTable[10, UInt16], 20B)"
 ```
 
 | オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
