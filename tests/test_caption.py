@@ -63,14 +63,19 @@ def test_caption_manual_generation():
 
     # Structure Diagram should have subgraphs for each caption
     assert "subgraph SG_File_Header" in md
-    assert '["File Header (0x0000 - 0x0006, 6B)"]' in md
+    assert '["File Header"]' in md
     assert "subgraph SG_Payload_Block" in md
-    assert '["Payload Block (0x0006 - 0x000E, 8B)"]' in md
+    assert '["Payload Block"]' in md
 
     # Memory Layout Table should have section headings
     assert "## Memory Layout Table" in md
-    assert "### File Header (0x0000 - 0x0006, 6B)" in md
-    assert "### Payload Block (0x0006 - 0x000E, 8B)" in md
+    assert "### File Header\n" in md
+    assert "### Payload Block\n" in md
+
+    # When include_section_offsets=True, offset ranges are added
+    md_offsets = generate_manual(writer.entries, include_section_offsets=True)
+    assert '["File Header (0x0000 - 0x0006, 6B)"]' in md_offsets
+    assert "### File Header (0x0000 - 0x0006, 6B)" in md_offsets
 
     # Entries in table
     assert "| `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | Magic header identifier |" in md
@@ -94,13 +99,18 @@ def test_caption_with_japanese_text():
 
     md = generate_manual(writer.entries, title="日本語テスト")
 
-    # Japanese label in subgraph
-    assert '["ヘッダー情報 (0x0000 - 0x0002, 2B)"]' in md
-    assert '["データ本体 (0x0002 - 0x0006, 4B)"]' in md
+    # Japanese label in subgraph (clean by default)
+    assert '["ヘッダー情報"]' in md
+    assert '["データ本体"]' in md
 
-    # Headings in layout table
-    assert "### ヘッダー情報 (0x0000 - 0x0002, 2B)" in md
-    assert "### データ本体 (0x0002 - 0x0006, 4B)" in md
+    # Headings in layout table (clean by default)
+    assert "### ヘッダー情報\n" in md
+    assert "### データ本体\n" in md
+
+    # With include_section_offsets=True
+    md_offsets = generate_manual(writer.entries, include_section_offsets=True)
+    assert '["ヘッダー情報 (0x0000 - 0x0002, 2B)"]' in md_offsets
+    assert "### ヘッダー情報 (0x0000 - 0x0002, 2B)" in md_offsets
 
 
 def test_caption_with_binary_struct():
@@ -114,7 +124,10 @@ def test_caption_with_binary_struct():
     assert writer.entries[1].caption == "Command Packet"
 
     md = generate_manual(writer.entries)
-    assert "### Command Packet (0x0000 - 0x0003, 3B)" in md
+    assert "### Command Packet\n" in md
+
+    md_off = generate_manual(writer.entries, include_section_offsets=True)
+    assert "### Command Packet (0x0000 - 0x0003, 3B)" in md_off
 
 
 def test_set_caption_direct():
@@ -162,11 +175,15 @@ def test_set_caption_context_manager_offset_table():
 
     # Generate manual: check offsets are aggregated
     md = generate_manual(writer.entries, title="Offset Archive")
-    assert "### offsets (0x0004 - 0x0010, 12B)" in md
+    assert "### offsets\n" in md
     assert "Table of chunk offsets" in md
     assert "num_chunk" in md
     assert "offsets[i]" in md
-    assert 'subgraph SG_offsets ["offsets 🔁 xnum_chunk' in md
+    assert 'subgraph SG_offsets ["offsets 🔁 xnum_chunk"]' in md
+
+    md_off = generate_manual(writer.entries, title="Offset Archive", include_section_offsets=True)
+    assert "### offsets (0x0004 - 0x0010, 12B)" in md_off
+    assert 'subgraph SG_offsets ["offsets 🔁 xnum_chunk (0x0004 - 0x0010, 12B)"]' in md_off
 
 
 def test_set_caption_context_manager_struct_loop():
@@ -182,10 +199,13 @@ def test_set_caption_context_manager_struct_loop():
     assert writer.current_caption_repeat is None
 
     md = generate_manual(writer.entries, title="Struct Loop")
-    assert "### PayloadList (0x0000 - 0x000C, 12B)" in md
+    assert "### PayloadList\n" in md
     assert "List of commands" in md
     assert "cmd_count" in md
-    assert 'subgraph SG_PayloadList ["PayloadList 🔁 xcmd_count' in md
+    assert 'subgraph SG_PayloadList ["PayloadList 🔁 xcmd_count"]' in md
+
+    md_off = generate_manual(writer.entries, title="Struct Loop", include_section_offsets=True)
+    assert "### PayloadList (0x0000 - 0x000C, 12B)" in md_off
 
 
 def test_set_caption_nested():

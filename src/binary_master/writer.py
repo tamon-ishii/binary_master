@@ -1366,6 +1366,7 @@ class BinaryWriter:
         base_offset: Union[int, Any] = 0,
         repeat: Optional[Union[int, str, bool]] = None,
         spec_count: Optional[Union[int, str, bool]] = None,
+        struct_name: Optional[str] = None,
     ) -> OffsetTableHandle:
         """Reserve an offset table for `count` entries of `offset_size` bytes each.
 
@@ -1419,6 +1420,7 @@ class BinaryWriter:
                 name=f"{name}[{i}]",
                 endian=order.name.capitalize(),
                 description=f"{desc} [#{i}]" if desc else f"Offset entry {i}",
+                struct_name=struct_name,
             )
             if spec_rep is not None:
                 self._entries[idx].caption_repeat = spec_rep
@@ -1755,6 +1757,8 @@ class BinaryWriter:
         section_packet_diagrams: bool = False,
         default_endian: Optional[str] = None,
         lang: Optional[Literal["auto", "en", "ja"]] = None,
+        include_section_offsets: bool = False,
+        large_data_threshold: int = 64,
         **kwargs: Any,
     ) -> str:
         """Generate a complete Markdown specification manual from this writer.
@@ -1772,6 +1776,8 @@ class BinaryWriter:
             section_packet_diagrams: Explicitly include packet diagrams per struct/section.
             default_endian: Optional default endianness override ('little' or 'big').
             lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
+            include_section_offsets: Whether to append offset ranges to section titles and diagrams. Default is False.
+            large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
             **kwargs: Extra options forwarded to generate_manual.
 
         Returns:
@@ -1796,6 +1802,8 @@ class BinaryWriter:
             bit_width=bit_width,
             section_packet_diagrams=section_packet_diagrams,
             lang=target_lang,
+            include_section_offsets=include_section_offsets,
+            large_data_threshold=large_data_threshold,
             **kwargs,
         )
 
@@ -1814,6 +1822,8 @@ class BinaryWriter:
         section_packet_diagrams: bool = False,
         default_endian: Optional[str] = None,
         lang: Optional[Literal["auto", "en", "ja"]] = None,
+        include_section_offsets: bool = False,
+        large_data_threshold: int = 64,
         **kwargs: Any,
     ) -> str:
         """Generate specification markdown and write it to a file or stream.
@@ -1832,8 +1842,9 @@ class BinaryWriter:
             section_packet_diagrams: Explicitly include packet diagrams per struct/section.
             default_endian: Optional default endianness override ('little' or 'big').
             lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
+            include_section_offsets: Whether to append offset ranges to section titles and diagrams. Default is False.
+            large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
             **kwargs: Extra options forwarded to to_markdown.
-
 
         Returns:
             The complete Markdown document as a string.
@@ -1851,6 +1862,8 @@ class BinaryWriter:
             section_packet_diagrams=section_packet_diagrams,
             default_endian=default_endian,
             lang=lang,
+            include_section_offsets=include_section_offsets,
+            large_data_threshold=large_data_threshold,
             **kwargs,
         )
         if isinstance(path_or_file, (str, Path)):
@@ -1874,6 +1887,8 @@ class BinaryWriter:
         sample_data: Optional[bytes] = None,
         default_endian: Optional[str] = None,
         lang: Optional[Literal["auto", "en", "ja"]] = None,
+        include_section_offsets: bool = False,
+        large_data_threshold: int = 64,
         **kwargs: Any,
     ) -> str:
         """Generate an interactive HTML specification manual with hex inspector.
@@ -1888,6 +1903,8 @@ class BinaryWriter:
             sample_data: Optional sample bytes for the interactive hex dump viewer.
             default_endian: Optional default endianness override ('little' or 'big').
             lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
+            include_section_offsets: Whether to append offset ranges to section titles and diagrams. Default is False.
+            large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
             **kwargs: Extra options forwarded to generate_html.
 
         Returns:
@@ -1909,6 +1926,8 @@ class BinaryWriter:
             theme=theme,
             sample_data=sample_data,
             lang=target_lang,
+            include_section_offsets=include_section_offsets,
+            large_data_threshold=large_data_threshold,
             **kwargs,
         )
 
@@ -1924,6 +1943,8 @@ class BinaryWriter:
         sample_data: Optional[bytes] = None,
         default_endian: Optional[str] = None,
         lang: Optional[Literal["auto", "en", "ja"]] = None,
+        include_section_offsets: bool = False,
+        large_data_threshold: int = 64,
         **kwargs: Any,
     ) -> str:
         """Generate specification HTML and write it to a file or stream.
@@ -1939,8 +1960,9 @@ class BinaryWriter:
             sample_data: Optional sample bytes for the interactive hex dump viewer.
             default_endian: Optional default endianness override ('little' or 'big').
             lang: Output language ('auto', 'en', or 'ja'). Defaults to writer's lang setting (default 'auto').
+            include_section_offsets: Whether to append offset ranges to section titles and diagrams. Default is False.
+            large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
             **kwargs: Extra options forwarded to to_html.
-
 
         Returns:
             The complete HTML document as a string.
@@ -1955,6 +1977,8 @@ class BinaryWriter:
             sample_data=sample_data,
             default_endian=default_endian,
             lang=lang,
+            include_section_offsets=include_section_offsets,
+            large_data_threshold=large_data_threshold,
             **kwargs,
         )
         if isinstance(path_or_file, (str, Path)):

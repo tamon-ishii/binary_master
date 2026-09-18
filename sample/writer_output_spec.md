@@ -12,23 +12,23 @@ Configuration header parameters.
 
 ```mermaid
 flowchart TD
-    subgraph SG_File_Header ["File Header (0x0000 - 0x0008, 8B)"]
+    subgraph SG_File_Header ["File Header"]
         N0["0x0000: magic (UInt32, 4B)"]
         N1["0x0004: version_major (UInt16, 2B)"]
         N2["0x0006: version_minor (UInt16, 2B)"]
     end
-    subgraph SG_Metadata ["Metadata (0x0008 - 0x0036, 46B)"]
+    subgraph SG_Metadata ["Metadata"]
         N3["0x0008: app_name (CString, 15B)"]
         N4["0x0017: doc_title (PrefixedString[2], 23B)"]
         N5["0x002E: author_tag (FixedString[8], 8B)"]
     end
-    subgraph SG_Dynamic_Payload ["Dynamic Payload (0x0036 - 0x003E, 8B)"]
+    subgraph SG_Dynamic_Payload ["Dynamic Payload"]
         N6["0x0036: chunk_type (UInt16, 2B)"]
         N7["0x0038: protocol_version (UInt16, 2B)"]
         N8["0x003A: flags (UInt16, 2B)"]
         N9["0x003C: num_records (UInt16, 2B)"]
     end
-    subgraph SG_DataRecord ["DataRecord 🔁 xnum_records (0x003E - 0x0062, 36B)"]
+    subgraph SG_DataRecord ["DataRecord 🔁 xnum_records"]
         N10["+0x00: record_id (UInt32, 4B)"]
         N11["+0x04: timestamp (UInt32, 4B)"]
         N12["+0x08: value (Float32, 4B)"]
@@ -65,9 +65,7 @@ title Procedural Binary Protocol Specification レイアウト
 496-527: "record_id (UInt32)"
 528-559: "timestamp (UInt32)"
 560-591: "value (Float32)"
-592-623: "record_id (UInt32)"
-624-655: "timestamp (UInt32)"
-656-687: "value (Float32)"
+592-687: "..."
 688-719: "record_id (UInt32)"
 720-751: "timestamp (UInt32)"
 752-783: "value (Float32)"
@@ -75,7 +73,7 @@ title Procedural Binary Protocol Specification レイアウト
 
 ## メモリレイアウト表
 
-### File Header (0x0000 - 0x0008, 8B)
+### File Header
 
 Container header identifying format and version
 
@@ -93,7 +91,7 @@ title File Header レイアウト
 | `0x0004` | 4 | 2 | `version_major` | `UInt16` | Little | Major version |
 | `0x0006` | 6 | 2 | `version_minor` | `UInt16` | Little | Minor version |
 
-### Metadata (0x0008 - 0x0036, 46B)
+### Metadata
 
 Textual metadata and application properties
 
@@ -111,7 +109,7 @@ title Metadata レイアウト
 | `0x0017` | 23 | 23 | `doc_title` | `PrefixedString[2]` | Little | Doc Title |
 | `0x002E` | 46 | 8 | `author_tag` | `FixedString[8]` | - | Author Tag |
 
-### Dynamic Payload (0x0036 - 0x003E, 8B)
+### Dynamic Payload
 
 Dynamic payload dispatched by chunk_type
 
@@ -165,7 +163,7 @@ title TextChunk Layout
 | `+0x00` | 2 | `length` | `UInt16` | Little | - |
 | `+0x02` | 16 | `content` | `FixedArray[UInt8, 16]` | Little | - |
 
-### DataRecord (0x003E - 0x0062, 36B)
+### DataRecord
 
 Repeating measurement data records
 

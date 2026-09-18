@@ -301,6 +301,25 @@ pkt.write_markdown("manual_en.md", lang="en") # 英語出力
 pkt.write_html("spec_ja.html", lang="ja")     # 日本語出力
 ```
 
+#### 💡 スマートな仕様書要約とレイアウト最適化
+`binary_master` は、仕様書が長大化・肥大化して視認性が損なわれないよう、様々な自動要約・最適化機能を備えています：
+
+- **OffsetTable の中間省略**: 要素数が多いオフセットテーブルは最初と最後の要素のみを詳細表示し、中間を `...` で自動省略（表およびパケット図）。
+- **繰り返し要素の省略**: ループ書き込みされた同一構造体や配列の連続要素は、構造図（フローチャート／パケット図）上で最初と最後を残して `...` で省略。
+- **巨大生データブロックの自動要約 (`large_data_threshold`)**:
+  `Bytes[10000]` などの大容量生データや大きな固定配列は、パケット図内で `payload (10000B)` や `data (FixedArray[UInt8, 1024], 1024B)` のようにバイトサイズ併記で簡潔に要約描画（デフォルトしきい値: 64B）。
+- **セクション見出しのアドレス非表示化 (`include_section_offsets=False`)**:
+  セクション見出し（`### Payload` 等）はデフォルトで絶対アドレスを省き、動的パケットでも汎用的な仕様書として利用可能。必要に応じて `include_section_offsets=True` でアドレス範囲を付加できます。
+
+```python
+# 例: 巨大データ要約のしきい値調整や、セクション見出しのオフセット表示
+writer.write_markdown(
+    "protocol_spec.md",
+    large_data_threshold=128,      # 128B以上を要約（0で無効化）
+    include_section_offsets=True,  # 見出しにアドレス範囲 (0x0000 - 0x0010, 16B) を付加
+)
+```
+
 
 ---
 

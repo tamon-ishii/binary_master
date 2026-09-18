@@ -318,11 +318,136 @@ def _format_repeat_tag(rep_spec: Any) -> str:
     return " 🔁"
 
 
+def _compress_consecutive_indexed_entries(
+    entry_list: List[LayoutEntry],
+) -> List[tuple[bool, Any]]:
+    """Compress consecutive indexed entries (e.g. offsets[0]..offsets[N-1]) where N >= 3.
+
+    Keeps the first (0) and last (N-1) entries, omitting intermediate items with a marker.
+    Returns:
+        List of tuples: (is_omitted, item)
+        If is_omitted is False, item is LayoutEntry.
+        If is_omitted is True, item is a tuple: (omitted_count, first_entry, last_entry).
+    """
+    if len(entry_list) < 3:
+        return [(False, e) for e in entry_list]
+
+    result: List[tuple[bool, Any]] = []
+    i = 0
+    n = len(entry_list)
+    while i < n:
+        curr = entry_list[i]
+        m = re.match(r"^(.+)\[(\d+)\]$", curr.name) if curr.name else None
+        if not m:
+            result.append((False, curr))
+            i += 1
+            continue
+
+        base_name = m.group(1)
+        idx_val = int(m.group(2))
+
+        # Look for consecutive sequence starting from idx_val
+        j = i + 1
+        expected_idx = idx_val + 1
+        while j < n:
+            nxt = entry_list[j]
+            m_nxt = re.match(r"^(.+)\[(\d+)\]$", nxt.name) if nxt.name else None
+            if not m_nxt:
+                break
+            if m_nxt.group(1) != base_name:
+                break
+            if int(m_nxt.group(2)) != expected_idx:
+                break
+            if nxt.type_name != curr.type_name or nxt.size != curr.size:
+                break
+            expected_idx += 1
+            j += 1
+
+        count = j - i
+        if count >= 3:
+            result.append((False, entry_list[i]))
+            result.append((True, (count - 2, entry_list[i], entry_list[j - 1])))
+            result.append((False, entry_list[j - 1]))
+            i = j
+        else:
+            for k in range(i, j):
+                result.append((False, entry_list[k]))
+            i = j
+
+    return result
+
+
+def _compress_entries_for_diagram(
+    entries: List[LayoutEntry],
+) -> List[tuple[bool, Any]]:
+    """Compress consecutive indexed entries AND repeated struct patterns for diagrams.
+
+    Returns:
+        List of tuples: (is_omitted, item)
+        If is_omitted is False, item is LayoutEntry.
+        If is_omitted is True, item is a tuple: (omitted_count, first_entry, last_entry).
+    """
+    if len(entries) < 3:
+        return [(False, e) for e in entries]
+
+    # Group consecutive entries by (caption or struct_name)
+    groups: List[List[LayoutEntry]] = []
+    current_key = None
+    current_group: List[LayoutEntry] = []
+
+    for entry in entries:
+        key = entry.caption or entry.struct_name
+        if key != current_key:
+            if current_group:
+                groups.append(current_group)
+            current_key = key
+            current_group = [entry]
+        else:
+            current_group.append(entry)
+    if current_group:
+        groups.append(current_group)
+
+    result: List[tuple[bool, Any]] = []
+    for grp in groups:
+        is_rep, rep_spec, u_entries, sample_count = _detect_repetition(grp)
+        unit_len = len(u_entries)
+
+        if is_rep and sample_count >= 3 and unit_len > 0:
+            first_unit = grp[:unit_len]
+            result.extend(_compress_consecutive_indexed_entries(first_unit))
+
+            omitted_count = sample_count - 2
+            first_entry = grp[unit_len - 1]
+            last_entry = grp[(sample_count - 1) * unit_len]
+            result.append((True, (omitted_count, first_entry, last_entry)))
+
+            last_unit = grp[(sample_count - 1) * unit_len:]
+            result.extend(_compress_consecutive_indexed_entries(last_unit))
+        else:
+            result.extend(_compress_consecutive_indexed_entries(grp))
+
+    return result
+
+
+def _is_offset_table_entries(entries: List[LayoutEntry]) -> bool:
+    """Check if the given layout entries represent an offset table."""
+    if not entries:
+        return False
+    return any(e.type_name and e.type_name.startswith("Offset[") for e in entries) and all(
+        (e.type_name and e.type_name.startswith("Offset["))
+        or (e.name and bool(re.search(r"\[\d+\]$", e.name)))
+        for e in entries
+    )
+
+
 def generate_mermaid_diagram(
     entries: List[LayoutEntry],
     direction: str = "TD",
+    include_section_offsets: bool = False,
+    lang: Literal["auto", "en", "ja"] = "auto",
 ) -> str:
     """Generate a Mermaid flowchart visualizing memory layout and structures."""
+    is_ja = resolve_language(lang) == "ja"
     lines = [f"```mermaid\nflowchart {direction}"]
 
     # Consecutive entries with the same group key are grouped together
@@ -332,6 +457,15 @@ def generate_mermaid_diagram(
 
     for idx, entry in enumerate(entries):
         key = entry.caption or entry.struct_name
+        if not key:
+            if entry.type_name and entry.type_name.startswith("Offset["):
+                m = re.match(r"^(.+)\[\d+\]$", entry.name) if entry.name else None
+                base_name = m.group(1) if m else ""
+                if not base_name or base_name in ("offsets", "offset_table"):
+                    key = "オフセットテーブル" if is_ja else "Offset Table"
+                else:
+                    key = base_name
+
         if key != current_key:
             if current_items:
                 groups.append((current_key, current_items))
@@ -350,13 +484,50 @@ def generate_mermaid_diagram(
         is_rep, rep_spec, u_entries, s_cnt = _detect_repetition(raw_entries)
         unit_len = len(u_entries) if is_rep else len(s_entries)
 
+        def _render_flowchart_nodes(indent: str) -> None:
+            if is_rep:
+                base_off = u_entries[0].offset
+                for (idx, _), entry in zip(s_entries[:unit_len], u_entries):
+                    nid = f"N{idx}"
+                    node_ids.append(nid)
+                    rel = entry.offset - base_off
+                    name_label = entry.name or entry.type_name
+                    node_label = f"+0x{rel:02X}: {name_label} ({entry.type_name}, {entry.size}B)"
+                    lines.append(f'{indent}{nid}["{node_label}"]')
+            else:
+                raw_s = [e for _, e in s_entries]
+                compressed = _compress_consecutive_indexed_entries(raw_s)
+                s_ptr = 0
+                for is_omitted, item in compressed:
+                    if is_omitted:
+                        omitted_count, first_e, last_e = item
+                        nid = f"N_omit_{group_idx}_{s_ptr}"
+                        node_ids.append(nid)
+                        lines.append(f'{indent}{nid}["..."]')
+                        s_ptr += omitted_count
+                    else:
+                        orig_idx, entry = s_entries[s_ptr]
+                        nid = f"N{orig_idx}"
+                        node_ids.append(nid)
+                        name_label = entry.name or entry.type_name
+                        node_label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
+                        lines.append(f'{indent}{nid}["{node_label}"]')
+                        s_ptr += 1
+
         if group_key is not None:
             min_off = s_entries[0][1].offset
             max_off = s_entries[-1][1].offset + s_entries[-1][1].size
             total_size = max_off - min_off
 
+            display_key = group_key
+            if not display_key:
+                if _is_offset_table_entries(raw_entries):
+                    display_key = "オフセットテーブル" if is_ja else "Offset Table"
+                else:
+                    display_key = "データ領域" if is_ja else "Data Section"
+
             # Generate valid Mermaid subgraph ID
-            clean_key = re.sub(r"[^a-zA-Z0-9_]", "_", group_key)
+            clean_key = re.sub(r"[^a-zA-Z0-9_]", "_", display_key)
             clean_key = re.sub(r"_+", "_", clean_key).strip("_")
             sg_id = f"SG_{clean_key}" if clean_key else f"SG_grp_{group_idx}"
             if sg_id in used_subgraph_ids:
@@ -365,45 +536,20 @@ def generate_mermaid_diagram(
 
             if is_rep:
                 rep_tag = _format_repeat_tag(rep_spec)
-                label = f"{group_key}{rep_tag} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)"
+                if include_section_offsets:
+                    label = f"{display_key}{rep_tag} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)"
+                else:
+                    label = f"{display_key}{rep_tag}"
             else:
-                label = f"{group_key} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)"
+                if include_section_offsets:
+                    label = f"{display_key} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)"
+                else:
+                    label = f"{display_key}"
             lines.append(f'    subgraph {sg_id} ["{label}"]')
-
-            if is_rep:
-                base_off = u_entries[0].offset
-                for (idx, _), entry in zip(s_entries[:unit_len], u_entries):
-                    nid = f"N{idx}"
-                    node_ids.append(nid)
-                    rel = entry.offset - base_off
-                    name_label = entry.name or entry.type_name
-                    node_label = f"+0x{rel:02X}: {name_label} ({entry.type_name}, {entry.size}B)"
-                    lines.append(f'        {nid}["{node_label}"]')
-            else:
-                for idx, entry in s_entries:
-                    nid = f"N{idx}"
-                    node_ids.append(nid)
-                    name_label = entry.name or entry.type_name
-                    node_label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
-                    lines.append(f'        {nid}["{node_label}"]')
+            _render_flowchart_nodes(indent="        ")
             lines.append("    end")
         else:
-            if is_rep:
-                base_off = u_entries[0].offset
-                for (idx, _), entry in zip(s_entries[:unit_len], u_entries):
-                    nid = f"N{idx}"
-                    node_ids.append(nid)
-                    rel = entry.offset - base_off
-                    name_label = entry.name or entry.type_name
-                    node_label = f"+0x{rel:02X}: {name_label} ({entry.type_name}, {entry.size}B)"
-                    lines.append(f'    {nid}["{node_label}"]')
-            else:
-                for idx, entry in s_entries:
-                    nid = f"N{idx}"
-                    node_ids.append(nid)
-                    name_label = entry.name or entry.type_name
-                    node_label = f"0x{entry.offset:04X}: {name_label} ({entry.type_name}, {entry.size}B)"
-                    lines.append(f'    {nid}["{node_label}"]')
+            _render_flowchart_nodes(indent="    ")
 
     # Sequential connections between adjacent blocks
     for i in range(len(node_ids) - 1):
@@ -513,6 +659,7 @@ def generate_packet_diagram(
     bit_width: Optional[int] = None,
     relative_offset: bool = False,
     include_values: bool = False,
+    large_data_threshold: int = 64,
 ) -> str:
     """Generate a Mermaid packet-beta diagram for the overall binary layout."""
     if not entries:
@@ -540,14 +687,42 @@ def generate_packet_diagram(
 
     base_offset = entries[0].offset if (relative_offset and entries) else 0
     current_bit = 0
-    for e in entries:
+
+    compressed = _compress_entries_for_diagram(entries)
+    for is_omitted, item in compressed:
+        if is_omitted:
+            omitted_count, first_entry, last_entry = item
+            omit_start_bit = (first_entry.offset + first_entry.size - base_offset) * 8
+            omit_end_bit = (last_entry.offset - base_offset) * 8 - 1
+            if omit_start_bit <= omit_end_bit:
+                if omit_start_bit > current_bit:
+                    gap_start = current_bit
+                    gap_end = omit_start_bit - 1
+                    gap_bytes = (gap_end - gap_start + 1) // 8
+                    if large_data_threshold > 0 and gap_bytes >= large_data_threshold:
+                        lines.append(f'{gap_start}-{gap_end}: "(padding, {gap_bytes}B)"')
+                    elif gap_start == gap_end:
+                        lines.append(f'{gap_start}: "(padding)"')
+                    else:
+                        lines.append(f'{gap_start}-{gap_end}: "(padding)"')
+                if omit_start_bit == omit_end_bit:
+                    lines.append(f'{omit_start_bit}: "..."')
+                else:
+                    lines.append(f'{omit_start_bit}-{omit_end_bit}: "..."')
+                current_bit = omit_end_bit + 1
+            continue
+
+        e = item
         entry_start_bit = (e.offset - base_offset) * 8
         entry_end_bit = entry_start_bit + (e.size * 8)
 
         if entry_start_bit > current_bit:
             gap_start = current_bit
             gap_end = entry_start_bit - 1
-            if gap_start == gap_end:
+            gap_bytes = (gap_end - gap_start + 1) // 8
+            if large_data_threshold > 0 and gap_bytes >= large_data_threshold:
+                lines.append(f'{gap_start}-{gap_end}: "(padding, {gap_bytes}B)"')
+            elif gap_start == gap_end:
                 lines.append(f'{gap_start}: "(padding)"')
             else:
                 lines.append(f'{gap_start}-{gap_end}: "(padding)"')
@@ -591,7 +766,22 @@ def generate_packet_diagram(
             s_start = entry_start_bit
             s_end = entry_end_bit - 1
             name = e.name or e.type_name
-            label = f"{name} ({e.type_name})".replace('"', '\\"')
+            if large_data_threshold > 0 and e.size >= large_data_threshold:
+                # Large data block auto-summarization
+                is_raw_bytes = not e.type_name or e.type_name == "Bytes" or e.type_name.startswith("Bytes[")
+                if is_raw_bytes:
+                    if name and name != e.type_name:
+                        label = f"{name} ({e.size}B)"
+                    else:
+                        label = f"Bytes ({e.size}B)"
+                else:
+                    if name and name != e.type_name:
+                        label = f"{name} ({e.type_name}, {e.size}B)"
+                    else:
+                        label = f"{e.type_name} ({e.size}B)"
+            else:
+                label = f"{name} ({e.type_name})"
+            label = label.replace('"', '\\"')
             if s_start == s_end:
                 lines.append(f'{s_start}: "{label}"')
             else:
@@ -616,6 +806,9 @@ def generate_manual(
     section_packet_diagrams: bool = False,
     include_values: bool = False,
     lang: Literal["auto", "en", "ja"] = "auto",
+    include_section_offsets: bool = False,
+    large_data_threshold: int = 64,
+    **kwargs: Any,
 ) -> str:
     """Generate a comprehensive Markdown specification manual with Mermaid diagrams.
 
@@ -633,6 +826,8 @@ def generate_manual(
         section_packet_diagrams: Whether to include packet diagrams per struct.
         include_values: Whether to include runtime values in tables.
         lang: Output language ("auto", "en", or "ja"). Default is "auto" (detected from system locale).
+        include_section_offsets: Whether to append (0xXXXX - 0xYYYY, ZZB) offset ranges to section titles. Default is False.
+        large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
 
     Returns:
         Complete Markdown document string.
@@ -689,7 +884,7 @@ def generate_manual(
         diag_title = f"{resolved_title} レイアウト" if is_ja else f"{resolved_title} Layout"
         if diagram_type == "flowchart":
             sections.append("## 構造図\n" if is_ja else "## Structure Diagram\n")
-            sections.append(generate_mermaid_diagram(entries, direction=diagram_direction))
+            sections.append(generate_mermaid_diagram(entries, direction=diagram_direction, include_section_offsets=include_section_offsets, lang=lang))
             sections.append("")
         elif diagram_type == "packet":
             sections.append("## 構造図 (パケット図)\n" if is_ja else "## Structure Diagram (Packet)\n")
@@ -702,12 +897,13 @@ def generate_manual(
                     font_size=font_size,
                     bit_width=bit_width,
                     include_values=include_values,
+                    large_data_threshold=large_data_threshold,
                 )
             )
             sections.append("")
         elif diagram_type == "both":
             sections.append("## 構造図 (フローチャート)\n" if is_ja else "## Structure Diagram (Flowchart)\n")
-            sections.append(generate_mermaid_diagram(entries, direction=diagram_direction))
+            sections.append(generate_mermaid_diagram(entries, direction=diagram_direction, include_section_offsets=include_section_offsets, lang=lang))
             sections.append("")
             sections.append("## 構造図 (パケット図)\n" if is_ja else "## Structure Diagram (Packet)\n")
             sections.append(
@@ -719,6 +915,7 @@ def generate_manual(
                     font_size=font_size,
                     bit_width=bit_width,
                     include_values=include_values,
+                    large_data_threshold=large_data_threshold,
                 )
             )
             sections.append("")
@@ -764,7 +961,15 @@ def generate_manual(
                 )
                 sec_list.append("|---|---|---|---|---|---|")
 
-        for entry in v_entries:
+        compressed = _compress_consecutive_indexed_entries(v_entries)
+        for is_omitted, item in compressed:
+            if is_omitted:
+                if inc_values:
+                    sec_list.append("| ... | ... | ... | ... | ... | ... | ... |")
+                else:
+                    sec_list.append("| ... | ... | ... | ... | ... | ... |")
+                continue
+            entry = item
             rel_off = f"`+0x{entry.offset:02X}`"
             size_str = str(entry.size)
             name_str = f"`{entry.name}`" if entry.name else "-"
@@ -806,7 +1011,15 @@ def generate_manual(
                 )
                 sections.append("|---|---|---|---|---|---|---|")
 
-        for entry in entry_list:
+        compressed = _compress_consecutive_indexed_entries(entry_list)
+        for is_omitted, item in compressed:
+            if is_omitted:
+                if include_values:
+                    sections.append("| ... | ... | ... | ... | ... | ... | ... | ... |")
+                else:
+                    sections.append("| ... | ... | ... | ... | ... | ... | ... |")
+                continue
+            entry = item
             off_hex = f"`0x{entry.offset:04X}`"
             off_dec = str(entry.offset)
             size_str = str(entry.size)
@@ -855,7 +1068,15 @@ def generate_manual(
                 )
                 sections.append("|---|---|---|---|---|---|")
 
-        for entry in entry_list:
+        compressed = _compress_consecutive_indexed_entries(entry_list)
+        for is_omitted, item in compressed:
+            if is_omitted:
+                if include_values:
+                    sections.append("| ... | ... | ... | ... | ... | ... | ... |")
+                else:
+                    sections.append("| ... | ... | ... | ... | ... | ... |")
+                continue
+            entry = item
             rel_bytes = entry.offset - base_offset
             off_hex = f"`+0x{rel_bytes:02X}`" if rel_bytes < 256 else f"`+0x{rel_bytes:04X}`"
             size_str = str(entry.size)
@@ -910,6 +1131,7 @@ def generate_manual(
                     bit_width=bit_width,
                     relative_offset=True,
                     include_values=False,
+                    large_data_threshold=large_data_threshold,
                 )
                 if sec_diag:
                     sections.append(sec_diag)
@@ -926,6 +1148,7 @@ def generate_manual(
                     bit_width=bit_width,
                     relative_offset=True,
                     include_values=include_values,
+                    large_data_threshold=large_data_threshold,
                 )
                 if diag:
                     sections.append(diag)
@@ -940,6 +1163,15 @@ def generate_manual(
 
         for entry in entries:
             cap = entry.caption or entry.struct_name
+            if not cap:
+                if entry.type_name and entry.type_name.startswith("Offset["):
+                    m = re.match(r"^(.+)\[\d+\]$", entry.name) if entry.name else None
+                    base_name = m.group(1) if m else ""
+                    if not base_name or base_name in ("offsets", "offset_table"):
+                        cap = "オフセットテーブル" if is_ja else "Offset Table"
+                    else:
+                        cap = base_name
+
             if cap != current_cap:
                 if current_cap_entries:
                     caption_groups.append((current_cap, current_cap_entries))
@@ -962,12 +1194,20 @@ def generate_manual(
                         break
             is_rep, rep_spec, unit_entries, sample_count = _detect_repetition(c_entries)
 
+            if not cap:
+                if _is_offset_table_entries(c_entries):
+                    display_cap = "オフセットテーブル" if is_ja else "Offset Table"
+                else:
+                    display_cap = "データ領域" if is_ja else "Data Section"
+            else:
+                display_cap = cap
+
             if is_rep:
                 unit_size = sum(e.size for e in unit_entries)
-                if cap:
-                    sections.append(f"### {cap} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+                if include_section_offsets:
+                    sections.append(f"### {display_cap} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
                 else:
-                    sections.append(f"### (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+                    sections.append(f"### {display_cap}\n")
 
                 if cap_desc:
                     sections.append(f"{cap_desc}\n")
@@ -996,13 +1236,14 @@ def generate_manual(
                 if want_section_packets:
                     sec_diag = generate_packet_diagram(
                         unit_entries,
-                        title=f"{cap} (1要素の構造)" if cap else "要素構造",
+                        title=f"{display_cap} (1要素の構造)" if is_ja else f"{display_cap} (Unit Structure)",
                         bits_per_row=bits_per_row,
                         expand_bitfields=expand_bitfields,
                         font_size=font_size,
                         bit_width=bit_width,
                         relative_offset=True,
                         include_values=False,
+                        large_data_threshold=large_data_threshold,
                     )
                     if sec_diag:
                         sections.append(sec_diag)
@@ -1029,7 +1270,10 @@ def generate_manual(
                     for sub_title, s_desc, s_entries in sub_groups:
                         if sub_title:
                             s_size = sum(e.size for e in s_entries)
-                            sections.append(f"#### {sub_title} ({s_size}B)\n")
+                            if include_section_offsets:
+                                sections.append(f"#### {sub_title} ({s_size}B)\n")
+                            else:
+                                sections.append(f"#### {sub_title}\n")
                             if s_desc:
                                 sections.append(f"{s_desc}\n")
                         _render_relative_table_rows(s_entries, base_offset=unit_entries[0].offset)
@@ -1037,10 +1281,10 @@ def generate_manual(
                     _render_relative_table_rows(unit_entries, base_offset=unit_entries[0].offset)
 
             else:
-                if cap:
-                    sections.append(f"### {cap} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+                if include_section_offsets:
+                    sections.append(f"### {display_cap} (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
                 else:
-                    sections.append(f"### (0x{min_off:04X} - 0x{max_off:04X}, {total_size}B)\n")
+                    sections.append(f"### {display_cap}\n")
 
                 if cap_desc:
                     sections.append(f"{cap_desc}\n")
@@ -1048,13 +1292,14 @@ def generate_manual(
                 if want_section_packets:
                     sec_diag = generate_packet_diagram(
                         c_entries,
-                        title=(f"{cap} レイアウト" if is_ja else f"{cap} Layout") if cap else "",
+                        title=f"{display_cap} レイアウト" if is_ja else f"{display_cap} Layout",
                         bits_per_row=bits_per_row,
                         expand_bitfields=expand_bitfields,
                         font_size=font_size,
                         bit_width=bit_width,
                         relative_offset=True,
                         include_values=include_values,
+                        large_data_threshold=large_data_threshold,
                     )
                     if sec_diag:
                         sections.append(sec_diag)
@@ -1084,7 +1329,10 @@ def generate_manual(
                             s_min = s_entries[0].offset
                             s_max = s_entries[-1].offset + s_entries[-1].size
                             s_size = s_max - s_min
-                            sections.append(f"#### {sub_title} (0x{s_min:04X} - 0x{s_max:04X}, {s_size}B)\n")
+                            if include_section_offsets:
+                                sections.append(f"#### {sub_title} (0x{s_min:04X} - 0x{s_max:04X}, {s_size}B)\n")
+                            else:
+                                sections.append(f"#### {sub_title}\n")
                             if s_desc:
                                 sections.append(f"{s_desc}\n")
                             if want_section_packets:
@@ -1097,6 +1345,7 @@ def generate_manual(
                                     bit_width=bit_width,
                                     relative_offset=True,
                                     include_values=include_values,
+                                    large_data_threshold=large_data_threshold,
                                 )
                                 if s_diag:
                                     sections.append(s_diag)
@@ -1150,6 +1399,7 @@ def generate_manual(
                                 bit_width=bit_width,
                                 relative_offset=True,
                                 include_values=False,
+                                large_data_threshold=large_data_threshold,
                             )
                             if v_diag:
                                 sections.append(v_diag)
@@ -1240,6 +1490,9 @@ def generate_html(
     include_values: bool = True,
     theme: Literal["auto", "light", "dark"] = "auto",
     lang: Literal["auto", "en", "ja"] = "auto",
+    include_section_offsets: bool = False,
+    large_data_threshold: int = 64,
+    **kwargs: Any,
 ) -> str:
     """Generate a standalone, interactive HTML specification manual with an embedded hex inspector.
 
@@ -1260,6 +1513,8 @@ def generate_html(
         include_values: Whether to include sample values in tables.
         theme: Color theme ("auto", "light", or "dark").
         lang: Output language ("auto", "en", or "ja"). Default is "auto" (detected from system locale).
+        include_section_offsets: Whether to append offset ranges to section titles and diagrams. Default is False.
+        large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
 
     Returns:
         Complete standalone HTML document as a string.
@@ -1317,7 +1572,7 @@ def generate_html(
     # Prepare Mermaid Diagram content
     mermaid_blocks: List[str] = []
     if diagram_type in ("flowchart", "both") and entries_list:
-        f_diag = generate_mermaid_diagram(entries_list, direction=diagram_direction)
+        f_diag = generate_mermaid_diagram(entries_list, direction=diagram_direction, include_section_offsets=include_section_offsets, lang=lang)
         # Strip code fences
         clean_f = re.sub(r"^```mermaid\s*", "", f_diag).rstrip("`\n")
         mermaid_blocks.append(clean_f)
@@ -1327,6 +1582,7 @@ def generate_html(
             title=f"{resolved_title} レイアウト" if is_ja else f"{resolved_title} Layout",
             bits_per_row=bits_per_row,
             include_values=include_values,
+            large_data_threshold=large_data_threshold,
         )
         clean_p = re.sub(r"^```mermaid\s*", "", p_diag).rstrip("`\n")
         mermaid_blocks.append(clean_p)
@@ -1370,8 +1626,25 @@ def generate_html(
         hex_dump_html = "\n".join(hex_lines)
 
     # Table rows HTML
+    compressed = _compress_consecutive_indexed_entries(entries_list)
     table_rows: List[str] = []
-    for idx, e in enumerate(entries_list):
+    for idx, (is_omitted, item) in enumerate(compressed):
+        if is_omitted:
+            tr = (
+                f'<tr class="table-row table-row-omitted">\n'
+                f'  <td class="cell-mono cell-offset">...</td>\n'
+                f'  <td class="cell-mono">...</td>\n'
+                f'  <td class="cell-name"><code>...</code></td>\n'
+                f'  <td><span class="type-badge">...</span></td>\n'
+                f'  <td class="cell-dim">-</td>\n'
+            )
+            if include_values:
+                tr += f'  <td class="cell-mono cell-val">...</td>\n'
+            tr += f'  <td class="cell-desc">...</td>\n</tr>'
+            table_rows.append(tr)
+            continue
+
+        e = item
         off_start = e.offset
         off_end = e.offset + e.size
         off_hex = f"0x{e.offset:04X}"
@@ -1661,6 +1934,13 @@ def generate_html(
     }}
     .table-row.active td {{
       font-weight: 600;
+    }}
+    .table-row-omitted {{
+      cursor: default;
+      opacity: 0.6;
+    }}
+    .table-row-omitted:hover {{
+      background-color: transparent !important;
     }}
     .cell-mono {{ font-family: var(--mono-font); font-size: 0.85rem; }}
     .cell-offset {{ font-weight: 600; color: var(--accent); }}

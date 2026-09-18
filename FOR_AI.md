@@ -710,6 +710,8 @@ md = generate_manual(
     bits_per_row=32,                # for packet diagram
     include_bitfield_diagram=True,  # generates detail packet diagrams for bitfields
     lang="auto",                    # "auto" (default: OS locale) | "en" | "ja"
+    include_section_offsets=False,  # False (default): omit addresses in section titles; True: append (0x0000 - 0x0010, 16B)
+    large_data_threshold=64,        # 64 (default): auto-summarizes raw Bytes/arrays >=64B in packet diagrams
 )
 ```
 
@@ -724,6 +726,7 @@ md = generate_manual(
 - **DO** call `writer.write_html("path.html")` (or `writer.to_html()`) for interactive HTML manuals with Hex Inspector.
 - **DO** call `builder.write("path.md")` (or `builder.write_html("path.html")`) for schema-first builders.
 - **DO** use `lang="auto"` (default, auto-detects OS locale: Japanese in `ja_JP`, English otherwise) or pass `lang="ja"` / `lang="en"` explicitly.
+- **DO** leverage `include_section_offsets=False` (default) for clean reusable specs, and `large_data_threshold=64` (default) for summarizing large byte buffers/arrays in packet diagrams. Intermediate entries of `OffsetTable` and repeated structures are automatically omitted with `...`.
 
 
 ### ⚠️ RULE 2: `Variant` Tag Field Placement

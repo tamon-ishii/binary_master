@@ -13,6 +13,7 @@ from typing import (
     IO,
     List,
     Literal,
+    Mapping,
     Optional,
     Tuple,
     Union,
@@ -687,6 +688,8 @@ class BinaryBuilder:
         bit_width: Optional[int] = None,
         section_packet_diagrams: bool = False,
         lang: Optional[Literal["auto", "en", "ja"]] = None,
+        large_data_threshold: int = 64,
+        **kwargs: Any,
     ) -> str:
         """Build and return the formatted Markdown specification manual.
 
@@ -700,6 +703,8 @@ class BinaryBuilder:
             bit_width: Optional bit width for packet diagrams.
             section_packet_diagrams: Whether to include packet diagrams per struct.
             lang: Output language ('auto', 'en', or 'ja'). Defaults to builder's lang setting (default 'auto').
+            large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
+            **kwargs: Extra options forwarded to internal renderers.
 
         Returns:
             The complete Markdown document as a string.
@@ -816,6 +821,7 @@ class BinaryBuilder:
                         font_size=font_size,
                         bit_width=bit_width,
                         relative_offset=True,
+                        large_data_threshold=large_data_threshold,
                     )
                     if p_diag:
                         sections.append(p_diag)
@@ -968,6 +974,7 @@ class BinaryBuilder:
         bit_width: Optional[int] = None,
         section_packet_diagrams: bool = False,
         lang: Optional[Literal["auto", "en", "ja"]] = None,
+        large_data_threshold: int = 64,
         **kwargs: Any,
     ) -> str:
         """Alias for build().
@@ -982,6 +989,7 @@ class BinaryBuilder:
             bit_width: Optional pixel width per bit in packet diagrams.
             section_packet_diagrams: Whether to include packet diagrams per struct. Default is False.
             lang: Output language ('auto', 'en', or 'ja'). Defaults to builder's lang setting (default 'auto').
+            large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
             **kwargs: Extra options forwarded to build().
 
         Returns:
@@ -997,6 +1005,7 @@ class BinaryBuilder:
             bit_width=bit_width,
             section_packet_diagrams=section_packet_diagrams,
             lang=lang,
+            large_data_threshold=large_data_threshold,
             **kwargs,
         )
 
@@ -1012,6 +1021,7 @@ class BinaryBuilder:
         bit_width: Optional[int] = None,
         section_packet_diagrams: bool = False,
         lang: Optional[Literal["auto", "en", "ja"]] = None,
+        large_data_threshold: int = 64,
         **kwargs: Any,
     ) -> str:
         """Generate specification markdown and optionally write it to a file or stream.
@@ -1027,6 +1037,7 @@ class BinaryBuilder:
             bit_width: Optional pixel width per bit in packet diagrams.
             section_packet_diagrams: Whether to include packet diagrams per struct. Default is False.
             lang: Output language ('auto', 'en', or 'ja'). Defaults to builder's lang setting (default 'auto').
+            large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
             **kwargs: Options forwarded to build().
 
 
@@ -1043,6 +1054,7 @@ class BinaryBuilder:
             bit_width=bit_width,
             section_packet_diagrams=section_packet_diagrams,
             lang=lang,
+            large_data_threshold=large_data_threshold,
             **kwargs,
         )
         if path_or_file is not None:
@@ -1068,6 +1080,7 @@ class BinaryBuilder:
         bit_width: Optional[int] = None,
         section_packet_diagrams: bool = False,
         lang: Optional[Literal["auto", "en", "ja"]] = None,
+        large_data_threshold: int = 64,
         **kwargs: Any,
     ) -> str:
         """Generate specification markdown and write it to a file or stream.
@@ -1083,6 +1096,7 @@ class BinaryBuilder:
             bit_width: Optional pixel width per bit in packet diagrams.
             section_packet_diagrams: Whether to include packet diagrams per struct. Default is False.
             lang: Output language ('auto', 'en', or 'ja'). Defaults to builder's lang setting (default 'auto').
+            large_data_threshold: Threshold in bytes to summarize large data blocks in packet diagrams (default 64).
             **kwargs: Options forwarded to write().
 
         Returns:
@@ -1099,6 +1113,7 @@ class BinaryBuilder:
             bit_width=bit_width,
             section_packet_diagrams=section_packet_diagrams,
             lang=lang,
+            large_data_threshold=large_data_threshold,
             **kwargs,
         )
 
@@ -1341,10 +1356,11 @@ class BinaryBuilder:
                 if val is not None:
                     if elem.count is not None or isinstance(val, (list, tuple)):
                         item_list = val if isinstance(val, (list, tuple)) else [val]
+                        sp_cnt = elem.count if isinstance(elem.count, (int, str, bool)) else None
                         writer.write_repeated(
                             item_list,
                             title=elem.name or elem.struct_cls.__name__,
-                            spec_count=elem.count,
+                            spec_count=sp_cnt,
                             desc=elem.desc,
                             endian=endian or self.default_endian,
                         )
@@ -1661,7 +1677,7 @@ class BinaryBuilder:
         _, writer = self._parse_and_trace(data, endian=endian)
         return writer.dump(format=format, color=color, **kwargs)
 
-    def _eval_condition(self, condition: str, result: BuilderReadResult) -> bool:
+    def _eval_condition(self, condition: str, result: Union[BuilderReadResult, Mapping[str, Any], dict[str, Any]]) -> bool:
         """Safely evaluate a condition string against current read context."""
         ctx = dict(result)
         for v in result.values():

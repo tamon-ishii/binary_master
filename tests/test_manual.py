@@ -15,10 +15,13 @@ from binary_master import (
     Bits,
     binary_struct,
     generate_manual,
+    generate_html,
+    OffsetTable,
     Builder,
     LayoutEntry,
     generate_bitfield_packet_diagram,
     generate_packet_diagram,
+    generate_mermaid_diagram,
 )
 import binary_master
 
@@ -101,10 +104,15 @@ def test_manual_from_binary_struct():
     writer.write_struct(hdr)
     md = generate_manual(writer.entries, title="Image File Format Manual", diagram_direction="LR")
 
-    # Assert Mermaid diagram and subgraphs
+    # Assert Mermaid diagram and subgraphs (clean by default)
     assert "flowchart LR" in md
-    assert 'subgraph SG_Header ["Header (0x0000 - 0x000C, 12B)"]' in md
-    assert 'subgraph SG_Image ["Image (0x000C - 0x0014, 8B)"]' in md
+    assert 'subgraph SG_Header ["Header"]' in md
+    assert 'subgraph SG_Image ["Image"]' in md
+
+    # Assert with include_section_offsets=True
+    md_offsets = generate_manual(writer.entries, title="Image File Format Manual", diagram_direction="LR", include_section_offsets=True)
+    assert 'subgraph SG_Header ["Header (0x0000 - 0x000C, 12B)"]' in md_offsets
+    assert 'subgraph SG_Image ["Image (0x000C - 0x0014, 8B)"]' in md_offsets
 
     # Assert offset pointer relationship in Mermaid diagram
     assert '-.->|"offset: 0x000C"|' in md
@@ -228,15 +236,20 @@ def test_generate_manual_section_packet_diagrams():
 
     md = generate_manual(writer.entries, diagram_type="flowchart", section_packet_diagrams=True)
     assert "## Memory Layout Table" in md
-    assert "### Header Section (0x0000 - 0x0004, 4B)" in md
+    assert "### Header Section\n" in md
     assert "title Header Section Layout" in md
     assert '0-15: "magic (UInt16)"' in md
     assert '16-31: "version (UInt16)"' in md
 
-    assert "### Body Section (0x0004 - 0x0008, 4B)" in md
+    assert "### Body Section\n" in md
     assert "title Body Section Layout" in md
     # Notice relative offset: data starts at 0 bit inside Body Section!
     assert '0-31: "data (UInt32)"' in md
+
+    # With include_section_offsets=True
+    md_offsets = generate_manual(writer.entries, diagram_type="flowchart", section_packet_diagrams=True, include_section_offsets=True)
+    assert "### Header Section (0x0000 - 0x0004, 4B)" in md_offsets
+    assert "### Body Section (0x0004 - 0x0008, 4B)" in md_offsets
 
 
 def test_generate_manual_auto_sections_by_struct_name():
@@ -260,16 +273,21 @@ def test_generate_manual_auto_sections_by_struct_name():
     # Even without section_packet_diagrams=True, diagram_type="both" automatically produces section packet diagrams!
     md = generate_manual(writer.entries, diagram_type="both")
 
-    # Automatic sections by struct name
-    assert "### MainHeader (0x0000 - 0x0008, 8B)" in md
+    # Automatic sections by struct name (clean by default)
+    assert "### MainHeader\n" in md
     assert "MainHeader detailed docstring." in md
     assert "title MainHeader Layout" in md
 
-    assert "### SubPayload (0x0008 - 0x000C, 4B)" in md
+    assert "### SubPayload\n" in md
     assert "SubPayload detailed docstring." in md
     assert "title SubPayload Layout" in md
     assert '0-15: "x (UInt16)"' in md
     assert '16-31: "y (UInt16)"' in md
+
+    # With include_section_offsets=True
+    md_offsets = generate_manual(writer.entries, diagram_type="both", include_section_offsets=True)
+    assert "### MainHeader (0x0000 - 0x0008, 8B)" in md_offsets
+    assert "### SubPayload (0x0008 - 0x000C, 4B)" in md_offsets
 
 
 def test_generate_manual_lang_ja():
@@ -369,6 +387,197 @@ def test_resolve_language_and_auto_locale(monkeypatch):
     md_en = generate_manual(writer.entries)
     assert "## Overview" in md_en
     assert "- **Total Size**:" in md_en
+
+
+def test_offset_table_manual_omits_intermediate_entries():
+    """Verify that OffsetTable manual displays only first and last offsets, omitting intermediate ones in both tables and packet diagrams."""
+    @binary_struct
+    class LargeTableStruct:
+        magic: UInt32
+        count: UInt32
+        offsets: OffsetTable[10, UInt32]
+
+    md = generate_manual(LargeTableStruct, lang="en")
+    # First entry offsets[0] and last entry offsets[9] are present
+    assert "| `offsets[0]` |" in md
+    assert "| `offsets[9]` |" in md
+    # Intermediate entries are omitted with '...'
+    assert "| `offsets[1]` |" not in md
+    assert "| `offsets[5]` |" not in md
+    assert "| `offsets[8]` |" not in md
+    assert "| ... | ... | ... | ... | ... | ... | ... |" in md
+
+    # Packet diagram also omits intermediate entries
+    assert 'offsets[0] (Offset[UInt32])' in md
+    assert 'offsets[9] (Offset[UInt32])' in md
+    assert '"offsets[1] (Offset[UInt32])"' not in md
+    assert '"offsets[5] (Offset[UInt32])"' not in md
+    assert ': "..."' in md
+
+    # HTML manual test
+    html = generate_html(LargeTableStruct, lang="en")
+    assert "offsets[0]" in html
+    assert "offsets[9]" in html
+    assert "table-row-omitted" in html
+
+
+def test_offset_table_small_not_omitted():
+    """Verify that small OffsetTable (2 entries) retains both entries without omission."""
+    @binary_struct
+    class SmallTableStruct:
+        magic: UInt32
+        offsets: OffsetTable[2, UInt32]
+
+    md = generate_manual(SmallTableStruct, lang="en")
+    assert "| `offsets[0]` |" in md
+    assert "| `offsets[1]` |" in md
+    assert "| ... |" not in md
+
+
+def test_anonymous_offset_table_title():
+    """Verify that anonymous OffsetTable receives proper title ('オフセットテーブル' / 'Offset Table')."""
+    from binary_master import BinaryWriter
+
+    # Japanese manual
+    w = BinaryWriter()
+    w.set_caption("ヘッダー")
+    w.write_uint32(0x1234)
+    w.set_caption("")  # anonymous
+    w.write_offset_table(5)
+    w.set_caption("ボディ")
+    w.write_uint32(0x5678)
+
+    md_ja = generate_manual(w.entries, lang="ja")
+    assert "### オフセットテーブル\n" in md_ja
+    assert 'subgraph SG_grp_1 ["オフセットテーブル"]' in md_ja
+    assert "title オフセットテーブル レイアウト" in md_ja
+
+    # With include_section_offsets=True
+    md_ja_offsets = generate_manual(w.entries, lang="ja", include_section_offsets=True)
+    assert "### オフセットテーブル (0x0004 - 0x0018, 20B)" in md_ja_offsets
+    assert '["オフセットテーブル (0x0004 - 0x0018, 20B)"]' in md_ja_offsets
+
+    # English manual
+    md_en = generate_manual(w.entries, lang="en")
+    assert "### Offset Table\n" in md_en
+    assert '["Offset Table"]' in md_en
+    assert "title Offset Table Layout" in md_en
+
+
+def test_structure_diagram_repeated_elements_omitted():
+    """Verify that repeated items are omitted with '...' in packet diagram and flowchart."""
+    from binary_master import binary_struct, UInt16, FixedArray, UInt8
+
+    @binary_struct
+    class SubItem:
+        width: UInt16
+        height: UInt16
+        pixels: FixedArray[UInt8, 4]
+
+    w = BinaryWriter()
+    for _ in range(10):
+        w.write_struct(SubItem(width=100, height=200, pixels=[1, 2, 3, 4]))
+
+    md = generate_manual(w.entries, diagram_type="packet")
+    # First unit (0..8 bytes -> 0..63 bits)
+    assert '0-15: "width (UInt16)"' in md
+    assert '16-31: "height (UInt16)"' in md
+    assert '32-63: "pixels (FixedArray[UInt8, 4])"' in md
+
+    # Intermediate omitted with '...' (64..575 bits)
+    assert '64-575: "..."' in md
+
+    # Last unit (72..80 bytes -> 576..639 bits)
+    assert '576-591: "width (UInt16)"' in md
+    assert '592-607: "height (UInt16)"' in md
+    assert '608-639: "pixels (FixedArray[UInt8, 4])"' in md
+
+
+def test_flowchart_indexed_omission():
+    """Verify that flowchart omits intermediate indexed entries with '...'."""
+    w = BinaryWriter()
+    w.write_offset_table(10)
+
+    f_diag = generate_mermaid_diagram(w.entries)
+    assert '["0x0000: offsets[0] (Offset[UInt32], 4B)"]' in f_diag
+    assert '["..."]' in f_diag
+    assert '["0x0024: offsets[9] (Offset[UInt32], 4B)"]' in f_diag
+    # Intermediate should not be individual nodes
+    assert 'offsets[1]' not in f_diag
+    assert 'offsets[5]' not in f_diag
+
+
+def test_packet_diagram_large_data_summarization():
+    """Verify that large raw data blocks and large arrays are automatically summarized with byte sizes."""
+    from binary_master import binary_struct, FixedArray, UInt8, UInt32, Bytes
+
+    # 1. Raw bytes >= 64B
+    w = BinaryWriter()
+    w.write_uint32(0x12345678, name="magic")
+    w.write_bytes(b"\x00" * 10000, name="payload")
+    w.write_uint32(0x87654321, name="checksum")
+
+    diag = generate_packet_diagram(w.entries)
+    assert '0-31: "magic (UInt32)"' in diag
+    assert '32-80031: "payload (10000B)"' in diag
+    assert '80032-80063: "checksum (UInt32)"' in diag
+
+    # 2. Anonymous raw bytes >= 64B
+    w2 = BinaryWriter()
+    w2.write_bytes(b"\x00" * 256)
+    diag2 = generate_packet_diagram(w2.entries)
+    assert '0-2047: "Bytes (256B)"' in diag2
+
+    # 3. FixedArray >= 64B with type name and byte size
+    @binary_struct
+    class LargeBlockStruct:
+        magic: UInt32
+        data: FixedArray[UInt8, 1024]
+        checksum: UInt32
+
+    inst = LargeBlockStruct(magic=1, data=b"\xaa" * 1024, checksum=2)
+    w3 = BinaryWriter()
+    w3.write_struct(inst)
+    diag3 = generate_packet_diagram(w3.entries)
+    assert '0-31: "magic (UInt32)"' in diag3
+    assert '32-8223: "data (FixedArray[UInt8, 1024], 1024B)"' in diag3
+    assert '8224-8255: "checksum (UInt32)"' in diag3
+
+    # 4. Large pad entry (>= 64B) gets size tag
+    w4 = BinaryWriter()
+    w4.write_uint32(0x11223344, name="head")
+    w4.pad(128)
+    w4.write_uint32(0x55667788, name="tail")
+    diag4 = generate_packet_diagram(w4.entries)
+    assert '0-31: "head (UInt32)"' in diag4
+    assert '32-1055: "padding (Padding[128], 128B)"' in diag4
+    assert '1056-1087: "tail (UInt32)"' in diag4
+
+    # 4b. Large unallocated gap (>= 64B) gets size tag
+    w4b = BinaryWriter()
+    w4b.write_uint32(0x11223344, name="head")
+    w4b.seek(132)  # skip 128 bytes without creating entry
+    w4b.write_uint32(0x55667788, name="tail")
+    diag4b = generate_packet_diagram(w4b.entries)
+    assert '32-1055: "(padding, 128B)"' in diag4b
+
+    # 5. Custom threshold
+    w5 = BinaryWriter()
+    w5.write_bytes(b"\x00" * 32, name="small_buf")
+    # Default (64) -> not summarized
+    diag5_def = generate_packet_diagram(w5.entries)
+    assert '0-255: "small_buf (Bytes[32])"' in diag5_def
+    # threshold=16 -> summarized
+    diag5_cust = generate_packet_diagram(w5.entries, large_data_threshold=16)
+    assert '0-255: "small_buf (32B)"' in diag5_cust
+
+    # 6. Manual generation integration
+    md = w.to_markdown(diagram_type="packet")
+    assert '32-80031: "payload (10000B)"' in md
+
+
+
+
 
 
 

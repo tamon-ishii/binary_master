@@ -4,28 +4,32 @@
 
 イメージヘッダー構造体
 
-- **合計サイズ**: 16 バイト (`0x0010`)
+- **合計サイズ**: 104 バイト (`0x0068`)
 - **デフォルトエンディアン**: リトルエンディアン (Little)
-- **合計フィールド数**: 5
+- **合計フィールド数**: 41
 
 ## 構造図 (フローチャート)
 
 ```mermaid
 flowchart TD
-    subgraph SG_ImageHeader ["ImageHeader (0x0000 - 0x0008, 8B)"]
+    subgraph SG_ImageHeader ["ImageHeader"]
         N0["0x0000: magic (UInt32, 4B)"]
-        N1["0x0004: image_offset (Offset[ImagePayload], 4B)"]
+        N1["0x0004: offset_table[0] (Offset[UInt16], 2B)"]
+        N_omit_0_2["..."]
+        N10["0x0016: offset_table[9] (Offset[UInt16], 2B)"]
     end
-    subgraph SG_ImagePayload ["ImagePayload (0x0008 - 0x0010, 8B)"]
-        N2["0x0008: width (UInt16, 2B)"]
-        N3["0x000A: height (UInt16, 2B)"]
-        N4["0x000C: pixels (FixedArray[UInt8, 4], 4B)"]
+    subgraph SG_ImagePayload ["ImagePayload 🔁 x10"]
+        N11["+0x00: width (UInt16, 2B)"]
+        N12["+0x02: height (UInt16, 2B)"]
+        N13["+0x04: pixels (FixedArray[UInt8, 4], 4B)"]
     end
     N0 --> N1
-    N1 --> N2
-    N2 --> N3
-    N3 --> N4
-    N1 -.->|"offset: 0x0008"| N2
+    N1 --> N_omit_0_2
+    N_omit_0_2 --> N10
+    N10 --> N11
+    N11 --> N12
+    N12 --> N13
+    N1 -.->|"offset: 0x0018"| N11
 ```
 
 ## 構造図 (パケット図)
@@ -34,15 +38,21 @@ flowchart TD
 packet-beta
 title バイナリ仕様書 レイアウト
 0-31: "magic (UInt32)"
-32-63: "image_offset (Offset[ImagePayload])"
-64-79: "width (UInt16)"
-80-95: "height (UInt16)"
-96-127: "pixels (FixedArray[UInt8, 4])"
+32-47: "offset_table[0] (Offset[UInt16])"
+48-175: "..."
+176-191: "offset_table[9] (Offset[UInt16])"
+192-207: "width (UInt16)"
+208-223: "height (UInt16)"
+224-255: "pixels (FixedArray[UInt8, 4])"
+256-767: "..."
+768-783: "width (UInt16)"
+784-799: "height (UInt16)"
+800-831: "pixels (FixedArray[UInt8, 4])"
 ```
 
 ## メモリレイアウト表
 
-### ImageHeader (0x0000 - 0x0008, 8B)
+### ImageHeader
 
 イメージヘッダー構造体
 
@@ -50,28 +60,36 @@ title バイナリ仕様書 レイアウト
 packet-beta
 title ImageHeader レイアウト
 0-31: "magic (UInt32)"
-32-63: "image_offset (Offset[ImagePayload])"
+32-47: "offset_table[0] (Offset[UInt16])"
+48-175: "..."
+176-191: "offset_table[9] (Offset[UInt16])"
 ```
 
 | オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|---|
 | `0x0000` | 0 | 4 | `magic` | `UInt32` | Little | - |
-| `0x0004` | 4 | 4 | `image_offset` | `Offset[ImagePayload]` | Little | `-> 0x0008` |
+| `0x0004` | 4 | 2 | `offset_table[0]` | `Offset[UInt16]` | Little | Offset entry 0 (`-> 0x0018`) |
+| ... | ... | ... | ... | ... | ... | ... |
+| `0x0016` | 22 | 2 | `offset_table[9]` | `Offset[UInt16]` | Little | Offset entry 9 (`-> 0x0060`) |
 
-### ImagePayload (0x0008 - 0x0010, 8B)
+### ImagePayload
 
 イメージペイロード構造体
 
+- 🔁 **繰り返し**: 10 回
+- **1要素サイズ**: `8` バイト (0x8)
+- **サンプルデータ**: 10 件 (合計 `80` バイト)
+
 ```mermaid
 packet-beta
-title ImagePayload レイアウト
+title ImagePayload (1要素の構造)
 0-15: "width (UInt16)"
 16-31: "height (UInt16)"
 32-63: "pixels (FixedArray[UInt8, 4])"
 ```
 
-| オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
-|---|---|---|---|---|---|---|
-| `0x0008` | 8 | 2 | `width` | `UInt16` | Little | - |
-| `0x000A` | 10 | 2 | `height` | `UInt16` | Little | - |
-| `0x000C` | 12 | 4 | `pixels` | `FixedArray[UInt8, 4]` | Little | - |
+| 相対オフセット | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
+|---|---|---|---|---|---|
+| `+0x00` | 2 | `width` | `UInt16` | Little | - |
+| `+0x02` | 2 | `height` | `UInt16` | Little | - |
+| `+0x04` | 4 | `pixels` | `FixedArray[UInt8, 4]` | Little | - |

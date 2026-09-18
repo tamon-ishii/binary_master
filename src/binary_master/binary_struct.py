@@ -2439,6 +2439,7 @@ def write_struct(
                 desc=f_desc,
                 base_offset=actual_base,
                 spec_count=repeat_spec,
+                struct_name=current_struct_name,
             )
             target_list = val if isinstance(val, (list, tuple)) else getattr(val, "_targets", None)
             if target_list is not None:
@@ -2866,6 +2867,7 @@ def write_struct(
                 desc=f_desc,
                 base_offset=actual_table_base,
                 spec_count=tbl_count if isinstance(tbl_count, str) else None,
+                struct_name=current_struct_name,
             )
 
             # 3. Write child targets and record their offsets in table_handle
