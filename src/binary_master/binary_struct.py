@@ -5,6 +5,7 @@ import enum
 import inspect
 import json
 import re
+import struct
 import sys
 from dataclasses import dataclass
 from typing import (
@@ -1577,12 +1578,29 @@ binary_size = sizeof
 
 def to_bytes(self, endian: Optional[EndianType] = None) -> bytes:
     """Serialize this binary_struct instance to bytes."""
-    writer = write_struct(self, endian=endian)
+    cls = self.__class__
+    if hasattr(cls, "__binary__"):
+        plan = get_struct_plan(cls)
+        active_endian = normalize_endian(endian or plan.endian)
+        if plan.can_fast_pack and plan.fast_struct_little is not None and plan.fast_struct_big is not None:
+            st = plan.fast_struct_little if active_endian == Endian.LITTLE else plan.fast_struct_big
+            vals = tuple(getattr(self, fn) for fn in plan.fast_field_names)
+            return st.pack(*vals)
+    writer = write_struct(self, endian=endian, record_entries=False)
     return writer.to_bytes()
 
 
 def from_bytes(cls, data: Union[bytes, bytearray, memoryview], endian: Optional[EndianType] = None) -> Any:
     """Deserialize a @binary_struct instance from bytes."""
+    if hasattr(cls, "__binary__"):
+        plan = get_struct_plan(cls)
+        active_endian = normalize_endian(endian or plan.endian)
+        if plan.can_fast_unpack and plan.fast_struct_little is not None and plan.fast_struct_big is not None:
+            raw_b = bytes(data) if not isinstance(data, bytes) else data
+            if len(raw_b) >= plan.total_fixed_size:
+                st = plan.fast_struct_little if active_endian == Endian.LITTLE else plan.fast_struct_big
+                vals = st.unpack_from(raw_b, 0)
+                return cls(*vals)
     return read_struct(cls, reader=data, endian=endian)
 
 
@@ -2226,20 +2244,597 @@ def _get_field_alignment(ftype: Any, val: Any = None) -> int:
         if mapping:
             return max([_get_field_alignment(c) for c in mapping.values()], default=4)
         return 4
-    if isinstance(ftype, type) and issubclass(ftype, MagicBase):
+    if isinstance(ftype, type) and _safe_issubclass(ftype, MagicBase):
         return min(ftype.size, 8) if isinstance(ftype.value, int) else 1
-    if isinstance(ftype, type) and issubclass(ftype, ConstantBase):
+    if isinstance(ftype, type) and _safe_issubclass(ftype, ConstantBase):
         return _get_field_alignment(ftype.target_type)
-    if isinstance(ftype, type) and issubclass(ftype, ChecksumBase):
+    if isinstance(ftype, type) and _safe_issubclass(ftype, ChecksumBase):
         return min(ftype.size, 8)
-    if isinstance(ftype, tuple) and len(ftype) >= 2 and isinstance(ftype[0], type) and issubclass(ftype[0], enum.Enum):
+    if isinstance(ftype, tuple) and len(ftype) >= 2 and isinstance(ftype[0], type) and _safe_issubclass(ftype[0], enum.Enum):
         return _get_field_alignment(ftype[1])
-    if isinstance(ftype, type) and issubclass(ftype, enum.Enum):
+    if isinstance(ftype, type) and _safe_issubclass(ftype, enum.Enum):
         max_v = max([abs(m.value) for m in ftype], default=0)
         return 1 if max_v <= 255 else (2 if max_v <= 65535 else 4)
     if isinstance(ftype, VarIntTypeMeta):
         return 1
     return 1
+
+
+class FieldKind:
+    PRIMITIVE = 1          # UInt8, UInt16, UInt32, Int8, Float32, etc.
+    BOOL = 2               # Bool / Bool[N]
+    FIXED_STRING = 3       # FixedString[N]
+    BYTES = 4              # Bytes[N]
+    C_STRING = 5           # CString
+    PREFIXED_STRING = 6    # PrefixedString[N]
+    MAGIC = 7              # Magic[...]
+    CONSTANT = 8           # Constant[Type, Val]
+    RANGE = 9              # Range[Type, min, max]
+    LENGTH_OF = 10         # LengthOf[Type, target, delta]
+    COUNT_OF = 11          # CountOf[Type, target, delta]
+    CHECKSUM = 12          # Checksum[Algo, ...]
+    VARINT = 13            # VarInt / VarUInt
+    ENUM = 14              # Enum / BinaryEnum
+    NESTED_STRUCT = 15     # @binary_struct
+    FIXED_ARRAY = 16       # FixedArray[elem_t, count]
+    ARRAY = 17             # Array[elem_t]
+    OFFSET = 18            # Offset[...]
+    NAMED_OFFSET = 19      # NamedOffset[...]
+    OFFSET_TABLE = 20      # OffsetTable[...]
+    VARIANT = 21           # Variant[...]
+    PYTHON_PRIMITIVE = 22  # int, float, bool, bytes, str
+
+
+class FieldPlan:
+    __slots__ = (
+        "name",
+        "kind",
+        "align",
+        "fmt",
+        "size",
+        "f_desc",
+        "target_type",
+        "expected",
+        "raw_val",
+        "min_val",
+        "max_val",
+        "target_name",
+        "delta",
+        "elem_type",
+        "count",
+        "elem_is_bool",
+        "elem_is_uint8",
+        "elem_is_int8",
+        "elem_is_primitive",
+        "elem_is_struct",
+        "elem_bool_size",
+        "elem_fmt",
+        "elem_size",
+        "enum_cls",
+        "checksum_algo",
+        "checksum_range",
+        "varint_signed",
+        "encoding",
+        "pad_byte",
+        "prefix_bytes",
+        "offset_info",
+        "variant_info",
+        "raw_ftype",
+        "nested_cls",
+        "is_bytes_magic",
+        "py_type",
+    )
+
+    name: str
+    kind: int
+    align: int
+    fmt: str
+    size: int
+    f_desc: str
+    target_type: Any
+    expected: Any
+    raw_val: Any
+    min_val: Any
+    max_val: Any
+    target_name: str
+    delta: int
+    elem_type: Any
+    count: Any
+    elem_is_bool: bool
+    elem_is_uint8: bool
+    elem_is_int8: bool
+    elem_is_primitive: bool
+    elem_is_struct: bool
+    elem_bool_size: int
+    elem_fmt: str
+    elem_size: int
+    enum_cls: Any
+    checksum_algo: Any
+    checksum_range: Any
+    varint_signed: bool
+    encoding: str
+    pad_byte: bytes
+    prefix_bytes: int
+    offset_info: Any
+    variant_info: Any
+    raw_ftype: Any
+    nested_cls: Any
+    is_bytes_magic: bool
+    py_type: Any
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.kind = FieldKind.PRIMITIVE
+        self.align = 1
+        self.fmt = ""
+        self.size = 0
+        self.f_desc = ""
+        self.target_type = None
+        self.expected = None
+        self.raw_val = None
+        self.min_val = None
+        self.max_val = None
+        self.target_name = ""
+        self.delta = 0
+        self.elem_type = None
+        self.count = 0
+        self.elem_is_bool = False
+        self.elem_is_uint8 = False
+        self.elem_is_int8 = False
+        self.elem_is_primitive = False
+        self.elem_is_struct = False
+        self.elem_bool_size = 1
+        self.elem_fmt = ""
+        self.elem_size = 0
+        self.enum_cls = None
+        self.checksum_algo = None
+        self.checksum_range = None
+        self.varint_signed = False
+        self.encoding = "utf-8"
+        self.pad_byte = b"\x00"
+        self.prefix_bytes = 1
+        self.offset_info = None
+        self.variant_info = None
+        self.raw_ftype = None
+        self.nested_cls = None
+        self.is_bytes_magic = False
+        self.py_type = None
+
+
+class StructPlan:
+    __slots__ = (
+        "cls",
+        "endian",
+        "is_bitfield",
+        "total_bits",
+        "align_setting",
+        "auto_align",
+        "max_field_align",
+        "total_size",
+        "pad_byte",
+        "field_plans",
+        "can_fast_unpack",
+        "can_fast_pack",
+        "total_fixed_size",
+        "fast_struct_little",
+        "fast_struct_big",
+        "fast_field_names",
+    )
+
+    cls: type
+    endian: Endian
+    is_bitfield: bool
+    total_bits: Optional[int]
+    align_setting: Optional[int]
+    auto_align: bool
+    max_field_align: int
+    total_size: Optional[int]
+    pad_byte: bytes
+    field_plans: list[FieldPlan]
+    can_fast_unpack: bool
+    can_fast_pack: bool
+    total_fixed_size: int
+    fast_struct_little: Optional[struct.Struct]
+    fast_struct_big: Optional[struct.Struct]
+    fast_field_names: tuple[str, ...]
+
+    def __init__(self, cls: type) -> None:
+        self.cls = cls
+        self.endian = Endian.LITTLE
+        self.is_bitfield = False
+        self.total_bits = None
+        self.align_setting = None
+        self.auto_align = False
+        self.max_field_align = 1
+        self.total_size = None
+        self.pad_byte = b"\x00"
+        self.field_plans: list[FieldPlan] = []
+        self.can_fast_unpack = False
+        self.can_fast_pack = False
+        self.total_fixed_size = 0
+        self.fast_struct_little = None
+        self.fast_struct_big = None
+        self.fast_field_names: tuple[str, ...] = ()
+
+
+def compile_struct_plan(cls: type) -> StructPlan:
+    meta = getattr(cls, "__binary__", None)
+    if meta is None:
+        meta = {}
+    plan = StructPlan(cls)
+    plan.endian = normalize_endian(meta.get("endian", "little"))
+    total_bits = meta.get("bits")
+    plan.is_bitfield = isinstance(total_bits, int)
+    plan.total_bits = total_bits
+    plan.align_setting = meta.get("align")
+    plan.auto_align = meta.get("auto_align", False)
+    plan.total_size = meta.get("total_size")
+    pad_b = meta.get("pad_byte", b"\x00")
+    if isinstance(pad_b, int):
+        pad_b = bytes([pad_b])
+    plan.pad_byte = pad_b
+
+    fields = meta.get("fields", {})
+    descriptions = meta.get("descriptions", {})
+
+    field_aligns: list[int] = []
+    field_plans: list[FieldPlan] = []
+    all_primitive = True
+    fast_fmts: list[str] = []
+    fast_names: list[str] = []
+
+    for name, ftype in fields.items():
+        fp = FieldPlan(name)
+        fp.raw_ftype = ftype
+        f_desc = descriptions.get(name, "")
+
+        # Unwrap Annotated
+        if get_origin(ftype) is Annotated:
+            args = get_args(ftype)
+            if not f_desc:
+                for arg in args[1:]:
+                    if isinstance(arg, str):
+                        f_desc = arg
+                        break
+            ftype = args[0]
+        fp.f_desc = f_desc
+
+        fp.align = _get_field_alignment(ftype, None)
+        field_aligns.append(fp.align)
+
+        # Check Offset
+        is_offset = (
+            (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset)
+            or (get_origin(ftype) is Offset)
+        )
+        if is_offset:
+            fp.kind = FieldKind.OFFSET
+            all_primitive = False
+            target_type = None
+            offset_t = UInt32
+            base_offset = 0
+            if isinstance(ftype, tuple):
+                if len(ftype) >= 2:
+                    target_type = ftype[1]
+                offset_t, base_offset = _parse_offset_spec_args(ftype[2:])
+            elif get_args(ftype):
+                args = get_args(ftype)
+                target_type = args[0]
+                offset_t, base_offset = _parse_offset_spec_args(args[1:])
+            fmt_char, offset_size, offset_label = _normalize_offset_type(offset_t)
+            fp.fmt = fmt_char
+            fp.size = offset_size
+            fp.target_type = target_type
+            fp.offset_info = (offset_t, base_offset, offset_label, _is_offset_table_spec(target_type))
+            field_plans.append(fp)
+            continue
+
+        # Check NamedOffset
+        is_named_offset = _is_named_offset_spec(ftype)
+        if is_named_offset:
+            fp.kind = FieldKind.NAMED_OFFSET
+            all_primitive = False
+            key_arg, target_type, offset_t, base_offset = _extract_named_offset_info(ftype)
+            key_name = normalize_named_offset_key(key_arg)
+            fmt_char, offset_size, offset_label = _normalize_offset_type(offset_t)
+            fp.fmt = fmt_char
+            fp.size = offset_size
+            fp.target_type = target_type
+            fp.offset_info = (key_arg, key_name, offset_t, base_offset, offset_label)
+            field_plans.append(fp)
+            continue
+
+        # Check OffsetTable
+        is_offset_table = (
+            (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] is OffsetTable)
+            or (get_origin(ftype) is OffsetTable)
+        )
+        if is_offset_table:
+            fp.kind = FieldKind.OFFSET_TABLE
+            all_primitive = False
+            if isinstance(ftype, tuple):
+                count = ftype[1]
+                offset_t, base_offset = _parse_offset_spec_args(ftype[2:])
+            else:
+                args = get_args(ftype)
+                count = args[0]
+                offset_t, base_offset = _parse_offset_spec_args(args[1:])
+            fmt_char, offset_size, offset_label = _normalize_offset_type(offset_t)
+            fp.fmt = fmt_char
+            fp.size = offset_size
+            fp.count = count
+            fp.offset_info = (offset_t, base_offset, offset_label)
+            field_plans.append(fp)
+            continue
+
+        # Check Variant
+        is_variant = (
+            (isinstance(ftype, tuple) and len(ftype) >= 3 and ftype[0] is Variant)
+            or (get_origin(ftype) is Variant)
+        )
+        if is_variant:
+            fp.kind = FieldKind.VARIANT
+            all_primitive = False
+            tag_field = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
+            mapping = ftype[2] if isinstance(ftype, tuple) else get_args(ftype)[1]
+            fp.variant_info = (tag_field, mapping)
+            field_plans.append(fp)
+            continue
+
+        # Check FixedArray
+        is_fixed = (
+            (isinstance(ftype, tuple) and len(ftype) >= 3 and ftype[0] is FixedArray)
+            or (get_origin(ftype) is FixedArray)
+        )
+        if is_fixed:
+            fp.kind = FieldKind.FIXED_ARRAY
+            all_primitive = False
+            elem_t, count = (ftype[1], ftype[2]) if isinstance(ftype, tuple) else (get_args(ftype)[0], get_args(ftype)[1])
+            fp.elem_type = elem_t
+            fp.count = count
+            fp.elem_is_bool = elem_t is Bool or _safe_issubclass(elem_t, Bool) or elem_t is bool
+            fp.elem_bool_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
+            fp.elem_is_uint8 = elem_t is UInt8
+            fp.elem_is_int8 = elem_t is Int8
+            fp.elem_is_primitive = isinstance(elem_t, type) and _safe_issubclass(elem_t, BinaryType)
+            fp.elem_is_struct = hasattr(elem_t, "__binary__")
+            if fp.elem_is_primitive:
+                fp.elem_fmt = elem_t._fmt
+                fp.elem_size = elem_t._size
+            field_plans.append(fp)
+            continue
+
+        # Check Array
+        is_arr = (
+            (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] is Array)
+            or (get_origin(ftype) is Array)
+        )
+        if is_arr:
+            fp.kind = FieldKind.ARRAY
+            all_primitive = False
+            elem_t = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
+            fp.elem_type = elem_t
+            fp.elem_is_bool = elem_t is Bool or _safe_issubclass(elem_t, Bool) or elem_t is bool
+            fp.elem_bool_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
+            fp.elem_is_uint8 = elem_t is UInt8
+            fp.elem_is_int8 = elem_t is Int8
+            fp.elem_is_primitive = isinstance(elem_t, type) and _safe_issubclass(elem_t, BinaryType)
+            fp.elem_is_struct = hasattr(elem_t, "__binary__")
+            if fp.elem_is_primitive:
+                fp.elem_fmt = elem_t._fmt
+                fp.elem_size = elem_t._size
+            field_plans.append(fp)
+            continue
+
+        # Check nested binary_struct
+        if hasattr(ftype, "__binary__"):
+            fp.kind = FieldKind.NESTED_STRUCT
+            all_primitive = False
+            fp.nested_cls = ftype
+            field_plans.append(fp)
+            continue
+
+        # Check Bool
+        if ftype is Bool or _safe_issubclass(ftype, Bool):
+            fp.kind = FieldKind.BOOL
+            fp.size = getattr(ftype, "_size", 1)
+            fp.fmt = {1: "?", 2: "H", 4: "I", 8: "Q"}.get(fp.size, "?")
+            if fp.size == 1:
+                fast_fmts.append("?")
+                fast_names.append(name)
+            else:
+                all_primitive = False
+            field_plans.append(fp)
+            continue
+
+        # Check FixedString
+        if _safe_issubclass(ftype, FixedString):
+            fp.kind = FieldKind.FIXED_STRING
+            all_primitive = False
+            fp.size = getattr(ftype, "_size", 0)
+            fp.encoding = getattr(ftype, "encoding", "utf-8")
+            fp.pad_byte = getattr(ftype, "pad_byte", b"\x00")
+            field_plans.append(fp)
+            continue
+
+        # Check Bytes
+        if _safe_issubclass(ftype, Bytes):
+            fp.kind = FieldKind.BYTES
+            all_primitive = False
+            fp.size = getattr(ftype, "_size", 0)
+            field_plans.append(fp)
+            continue
+
+        # Check CString
+        if ftype is CString or _safe_issubclass(ftype, CString):
+            fp.kind = FieldKind.C_STRING
+            all_primitive = False
+            fp.encoding = getattr(ftype, "encoding", "utf-8")
+            field_plans.append(fp)
+            continue
+
+        # Check PrefixedString
+        if ftype is PrefixedString or _safe_issubclass(ftype, PrefixedString):
+            fp.kind = FieldKind.PREFIXED_STRING
+            all_primitive = False
+            fp.prefix_bytes = getattr(ftype, "prefix_bytes", 1)
+            fp.encoding = getattr(ftype, "encoding", "utf-8")
+            field_plans.append(fp)
+            continue
+
+        # Check Magic
+        if _safe_issubclass(ftype, MagicBase):
+            fp.kind = FieldKind.MAGIC
+            all_primitive = False
+            expected = getattr(ftype, "_value", None)
+            fp.expected = expected
+            fp.raw_val = getattr(ftype, "_raw_val", expected)
+            fp.is_bytes_magic = isinstance(expected, bytes)
+            fp.size = getattr(ftype, "_size", len(expected) if isinstance(expected, bytes) else 4)
+            fp.fmt = getattr(ftype, "_fmt", "I")
+            field_plans.append(fp)
+            continue
+
+        # Check Constant
+        if _safe_issubclass(ftype, ConstantBase):
+            fp.kind = FieldKind.CONSTANT
+            all_primitive = False
+            target_t = getattr(ftype, "_type", UInt32)
+            fp.target_type = target_t
+            fp.expected = getattr(ftype, "_value", None)
+            fp.fmt = getattr(target_t, "_fmt", "I")
+            fp.size = getattr(target_t, "_size", 4)
+            field_plans.append(fp)
+            continue
+
+        # Check Range
+        if _safe_issubclass(ftype, RangeBase):
+            fp.kind = FieldKind.RANGE
+            all_primitive = False
+            fp.fmt = getattr(ftype, "_fmt", "")
+            fp.size = getattr(ftype, "_size", 4)
+            fp.min_val = getattr(ftype, "_min", 0)
+            fp.max_val = getattr(ftype, "_max", 0)
+            field_plans.append(fp)
+            continue
+
+        # Check LengthOf
+        if _safe_issubclass(ftype, LengthOfBase):
+            fp.kind = FieldKind.LENGTH_OF
+            all_primitive = False
+            fp.fmt = getattr(ftype, "_fmt", "H")
+            fp.size = getattr(ftype, "_size", 2)
+            fp.target_name = getattr(ftype, "_target", "")
+            fp.delta = getattr(ftype, "_delta", 0)
+            field_plans.append(fp)
+            continue
+
+        # Check CountOf
+        if _safe_issubclass(ftype, CountOfBase):
+            fp.kind = FieldKind.COUNT_OF
+            all_primitive = False
+            fp.fmt = getattr(ftype, "_fmt", "I")
+            fp.size = getattr(ftype, "_size", 4)
+            fp.target_name = getattr(ftype, "_target", "")
+            fp.delta = getattr(ftype, "_delta", 0)
+            field_plans.append(fp)
+            continue
+
+        # Check ChecksumBase
+        if _safe_issubclass(ftype, ChecksumBase):
+            fp.kind = FieldKind.CHECKSUM
+            all_primitive = False
+            fp.checksum_algo = getattr(ftype, "_algorithm", "crc32")
+            fp.checksum_range = getattr(ftype, "_range", None)
+            fp.size = getattr(ftype, "_size", 4)
+            fp.fmt = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(fp.size, "I")
+            field_plans.append(fp)
+            continue
+
+        # Check VarInt / VarUInt
+        if isinstance(ftype, VarIntTypeMeta):
+            fp.kind = FieldKind.VARINT
+            all_primitive = False
+            fp.varint_signed = ftype.is_signed
+            field_plans.append(fp)
+            continue
+
+        # Check Enum
+        is_enum = False
+        enum_cls = None
+        enum_size = 4
+        if isinstance(ftype, tuple) and len(ftype) >= 2 and _safe_issubclass(ftype[0], enum.Enum):
+            is_enum = True
+            enum_cls = ftype[0]
+            enum_size = getattr(ftype[1], "_size", 4)
+        elif _safe_issubclass(ftype, enum.Enum):
+            is_enum = True
+            enum_cls = ftype
+            max_v = max([abs(m.value) for m in enum_cls], default=0)
+            enum_size = 1 if max_v <= 255 else (2 if max_v <= 65535 else 4)
+
+        if is_enum and enum_cls is not None:
+            fp.kind = FieldKind.ENUM
+            all_primitive = False
+            fp.enum_cls = enum_cls
+            fp.size = enum_size
+            fp.fmt = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(enum_size, "I")
+            field_plans.append(fp)
+            continue
+
+        # Check primitive BinaryType
+        if _safe_issubclass(ftype, BinaryType):
+            fp.kind = FieldKind.PRIMITIVE
+            fp.fmt = getattr(ftype, "_fmt", "")
+            fp.size = getattr(ftype, "_size", 0)
+            if fp.fmt:
+                fast_fmts.append(fp.fmt)
+                fast_names.append(name)
+            else:
+                all_primitive = False
+            field_plans.append(fp)
+            continue
+
+        # Standard Python types
+        fp.kind = FieldKind.PYTHON_PRIMITIVE
+        fp.py_type = ftype
+        all_primitive = False
+        field_plans.append(fp)
+
+    plan.max_field_align = max(field_aligns, default=1)
+    plan.field_plans = field_plans
+
+    # Determine if fast-path is applicable
+    if (
+        all_primitive
+        and not plan.is_bitfield
+        and plan.align_setting is None
+        and not plan.auto_align
+        and plan.total_size is None
+        and len(fast_fmts) == len(field_plans)
+        and len(fast_fmts) > 0
+    ):
+        comb = "".join(fast_fmts)
+        plan.fast_struct_little = struct.Struct(f"<{comb}")
+        plan.fast_struct_big = struct.Struct(f">{comb}")
+        plan.total_fixed_size = plan.fast_struct_little.size
+        plan.fast_field_names = tuple(fast_names)
+        plan.can_fast_unpack = True
+        plan.can_fast_pack = True
+
+    return plan
+
+
+_STRUCT_PLAN_CACHE: dict[type, StructPlan] = {}
+
+
+def get_struct_plan(cls: type) -> StructPlan:
+    """Retrieve or compile the cached execution plan for a @binary_struct class."""
+    plan = _STRUCT_PLAN_CACHE.get(cls)
+    if plan is None:
+        plan = compile_struct_plan(cls)
+        _STRUCT_PLAN_CACHE[cls] = plan
+    return plan
 
 
 def write_struct(
@@ -2252,10 +2847,9 @@ def write_struct(
     section: str = "",
     spec_count: Optional[Union[int, str, bool]] = None,
     repeat: Optional[Union[int, str, bool]] = None,
+    record_entries: bool = True,
 ) -> Any:
     """Serialize a @binary_struct instance to a BinaryWriter stream."""
-    import struct
-
     from binary_master.writer import BinaryWriter
 
     meta = getattr(instance, "__binary__", None)
@@ -2267,7 +2861,7 @@ def write_struct(
     active_endian = normalize_endian(endian or struct_endian)
 
     if writer is None:
-        writer = BinaryWriter(default_endian=active_endian)
+        writer = BinaryWriter(default_endian=active_endian, record_entries=record_entries)
         if section:
             writer.set_caption(title=section, desc=desc, spec_count=eff_spec)
         elif eff_spec is not None:
@@ -2998,110 +3592,239 @@ def read_struct(
     if reader is None:
         raise ValueError("A reader or bytes data must be provided to read_struct")
 
+    plan = get_struct_plan(cls)
+    active_endian = normalize_endian(endian or plan.endian)
+
+    # 1. Fast path for plain primitive structs
+    if plan.can_fast_unpack and plan.fast_struct_little is not None and plan.fast_struct_big is not None:
+        st = plan.fast_struct_little if active_endian == Endian.LITTLE else plan.fast_struct_big
+        if isinstance(reader, (bytes, bytearray, memoryview)):
+            raw_b = bytes(reader) if not isinstance(reader, bytes) else reader
+            if len(raw_b) >= plan.total_fixed_size:
+                vals = st.unpack_from(raw_b, 0)
+                return cls(*vals)
+        elif isinstance(reader, BinaryReader) and (not hasattr(reader, "_bit_reader") or reader._bit_reader is None):
+            if reader.remaining() >= plan.total_fixed_size:
+                raw = reader._read_exact(plan.total_fixed_size)
+                vals = st.unpack(raw)
+                return cls(*vals)
+
     if not isinstance(reader, BinaryReader):
         reader = BinaryReader(reader)
 
     struct_start_pos = reader.tell()
-    struct_endian = meta.get("endian", "little")
-    active_endian = normalize_endian(endian or struct_endian)
 
-    total_bits = meta.get("bits")
-    if isinstance(total_bits, int):
-        if total_bits <= 8:
-            packed_value = reader.read_uint8()
-        elif total_bits <= 16:
-            packed_value = reader.read_uint16(endian=active_endian)
-        elif total_bits <= 32:
-            packed_value = reader.read_uint32(endian=active_endian)
-        elif total_bits <= 64:
-            packed_value = reader.read_uint64(endian=active_endian)
-        else:
-            num_bytes = (total_bits + 7) // 8
-            raw = reader.read_bytes(num_bytes)
-            byteorder = "little" if active_endian == Endian.LITTLE else "big"
-            packed_value = int.from_bytes(raw, byteorder=byteorder)
-
-        fields = meta.get("fields", {})
-        shift = 0
-        kwargs = {}
-        for name, ftype in fields.items():
-            base_t = ftype[0] if isinstance(ftype, tuple) and len(ftype) >= 2 else ftype
-            width = ftype[1] if isinstance(ftype, tuple) and len(ftype) >= 2 else 1
-            mask = (1 << width) - 1
-            val = (packed_value >> shift) & mask
-            if base_t is Bool or (isinstance(base_t, type) and issubclass(base_t, Bool)) or base_t is bool:
-                kwargs[name] = bool(val)
+    # BitField handling
+    if plan.is_bitfield:
+        total_bits = plan.total_bits
+        if total_bits is not None:
+            if total_bits <= 8:
+                packed_value = reader.read_uint8()
+            elif total_bits <= 16:
+                packed_value = reader.read_uint16(endian=active_endian)
+            elif total_bits <= 32:
+                packed_value = reader.read_uint32(endian=active_endian)
+            elif total_bits <= 64:
+                packed_value = reader.read_uint64(endian=active_endian)
             else:
-                kwargs[name] = val
-            shift += width
-        return cls(**kwargs)
+                num_bytes = (total_bits + 7) // 8
+                raw = reader.read_bytes(num_bytes)
+                byteorder = "little" if active_endian == Endian.LITTLE else "big"
+                packed_value = int.from_bytes(raw, byteorder=byteorder)
 
-    fields = meta.get("fields", {})
-    align_setting = meta.get("align")
-    auto_align = meta.get("auto_align", False)
-    kwargs = {}
+            fields = meta.get("fields", {})
+            shift = 0
+            kwargs = {}
+            for name, ftype in fields.items():
+                base_t = ftype[0] if isinstance(ftype, tuple) and len(ftype) >= 2 else ftype
+                width = ftype[1] if isinstance(ftype, tuple) and len(ftype) >= 2 else 1
+                mask = (1 << width) - 1
+                val = (packed_value >> shift) & mask
+                if base_t is Bool or (isinstance(base_t, type) and _safe_issubclass(base_t, Bool)) or base_t is bool:
+                    kwargs[name] = bool(val)
+                else:
+                    kwargs[name] = val
+                shift += width
+            return cls(**kwargs)
+
+    kwargs: dict[str, Any] = {}
     known_counts: dict[str, int] = {}
     known_lengths: dict[str, int] = {}
+    align_setting = plan.align_setting
+    auto_align = plan.auto_align
 
-    for name, ftype in fields.items():
-        # Unwrap Annotated
-        if get_origin(ftype) is Annotated:
-            ftype = get_args(ftype)[0]
+    for fp in plan.field_plans:
+        name = fp.name
 
-        # Automatic alignment padding before field
-        if align_setting is not None or auto_align:
-            field_align = _get_field_alignment(ftype, None)
-            req_align = min(field_align, align_setting) if align_setting else field_align
+        # Alignment
+        if (align_setting is not None or auto_align) and fp.align > 1:
+            req_align = min(fp.align, align_setting) if align_setting else fp.align
             if req_align > 1:
                 reader.align(req_align)
 
-        # Check Offset[T, OffsetType, BaseOffset]
-        is_offset = (
-            (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset)
-            or (get_origin(ftype) is Offset)
-        )
-        if is_offset:
-            target_type = None
-            offset_t = UInt32
-            base_offset = 0
-            if isinstance(ftype, tuple):
-                if len(ftype) >= 2:
-                    target_type = ftype[1]
-                offset_t, base_offset = _parse_offset_spec_args(ftype[2:])
-            elif get_args(ftype):
-                args = get_args(ftype)
-                target_type = args[0]
-                offset_t, base_offset = _parse_offset_spec_args(args[1:])
-
+        kind = fp.kind
+        if kind == FieldKind.PRIMITIVE:
+            kwargs[name] = reader._unpack_read(fp.fmt, fp.size, endian=active_endian)
+        elif kind == FieldKind.BOOL:
+            kwargs[name] = reader.read_bool(size=fp.size, endian=active_endian)
+        elif kind == FieldKind.MAGIC:
+            if fp.is_bytes_magic:
+                read_b = reader.read_bytes(fp.size)
+                if read_b != fp.expected:
+                    raise InvalidMagicError(f"Magic mismatch for field '{name}': expected {fp.expected!r}, got {read_b!r}")
+                kwargs[name] = read_b
+            else:
+                val = reader._unpack_read(fp.fmt, fp.size, endian=active_endian)
+                if val != fp.raw_val:
+                    raise InvalidMagicError(f"Magic mismatch for field '{name}': expected {fp.raw_val!r}, got {val!r}")
+                kwargs[name] = val
+        elif kind == FieldKind.CONSTANT:
+            val = reader._unpack_read(fp.fmt, fp.size, endian=active_endian)
+            if val != fp.expected:
+                raise InvalidConstantError(f"Constant mismatch for field '{name}': expected {fp.expected!r}, got {val!r}")
+            kwargs[name] = val
+        elif kind == FieldKind.RANGE:
+            val = reader._unpack_read(fp.fmt, fp.size, endian=active_endian)
+            if not (fp.min_val <= val <= fp.max_val):
+                raise RangeValidationError(name, val, fp.min_val, fp.max_val)
+            kwargs[name] = val
+        elif kind == FieldKind.LENGTH_OF or kind == FieldKind.COUNT_OF:
+            val = reader._unpack_read(fp.fmt, fp.size, endian=active_endian)
+            kwargs[name] = val
+            if fp.target_name:
+                if kind == FieldKind.COUNT_OF:
+                    known_counts[fp.target_name] = val - fp.delta
+                else:
+                    known_lengths[fp.target_name] = val - fp.delta
+        elif kind == FieldKind.CHECKSUM:
+            cur_pos = reader.tell()
+            brange = fp.checksum_range
+            start_idx = struct_start_pos if (brange is None or brange.start is None) else brange.start
+            end_idx = cur_pos if (brange is None or brange.stop is None) else brange.stop
+            with reader.preserve_position():
+                reader.seek(start_idx)
+                covered_bytes = reader.read_bytes(end_idx - start_idx)
+            algo = fp.checksum_algo
+            calculated = compute_checksum(algo, covered_bytes)
+            val = reader._unpack_read(fp.fmt, fp.size, endian=active_endian)
+            if val != calculated:
+                raise ChecksumMismatchError(f"Checksum mismatch for field '{name}': computed {hex(calculated)}, got {hex(val)} in stream")
+            kwargs[name] = val
+        elif kind == FieldKind.VARINT:
+            if fp.varint_signed:
+                kwargs[name] = reader.read_varint()
+            else:
+                kwargs[name] = reader.read_varuint()
+        elif kind == FieldKind.ENUM:
+            raw_val = reader._unpack_read(fp.fmt, fp.size, endian=active_endian)
+            enum_type = fp.enum_cls
+            try:
+                kwargs[name] = enum_type(raw_val)
+            except ValueError as exc:
+                cls_n = getattr(enum_type, "__name__", str(enum_type))
+                raise InvalidEnumError(f"Invalid enum value {raw_val} for {cls_n} in field '{name}'") from exc
+        elif kind == FieldKind.NESTED_STRUCT:
+            nested_type = cast(type, fp.nested_cls)
+            kwargs[name] = read_struct(nested_type, reader=reader, endian=active_endian)
+        elif kind == FieldKind.FIXED_STRING:
+            kwargs[name] = reader.read_fixed_string(fp.size, pad_byte=fp.pad_byte, encoding=fp.encoding)
+        elif kind == FieldKind.BYTES:
+            explicit_len = known_lengths.get(name, known_counts.get(name))
+            kwargs[name] = reader.read_bytes(explicit_len if explicit_len is not None else (fp.size if fp.size > 0 else None))
+        elif kind == FieldKind.C_STRING:
+            kwargs[name] = reader.read_cstring(encoding=fp.encoding)
+        elif kind == FieldKind.PREFIXED_STRING:
+            kwargs[name] = reader.read_prefixed_string(prefix_bytes=fp.prefix_bytes, endian=active_endian, encoding=fp.encoding)
+        elif kind == FieldKind.FIXED_ARRAY:
+            count = fp.count
+            elem_t = cast(type, fp.elem_type)
+            if fp.elem_is_bool:
+                kwargs[name] = [reader.read_bool(size=fp.elem_bool_size, endian=active_endian) for _ in range(count)]
+            elif fp.elem_is_uint8:
+                kwargs[name] = reader.read_bytes(count)
+            elif fp.elem_is_int8:
+                kwargs[name] = [reader.read_int8() for _ in range(count)]
+            elif fp.elem_is_primitive:
+                kwargs[name] = [reader._unpack_read(fp.elem_fmt, fp.elem_size, endian=active_endian) for _ in range(count)]
+            elif fp.elem_is_struct:
+                kwargs[name] = [read_struct(elem_t, reader=reader, endian=active_endian) for _ in range(count)]
+            else:
+                kwargs[name] = reader.read_bytes(count)
+        elif kind == FieldKind.ARRAY:
+            elem_t = cast(type, fp.elem_type)
+            explicit_count = known_counts.get(name)
+            explicit_length = known_lengths.get(name)
+            if explicit_count is not None:
+                items: list[Any] = []
+                for _ in range(explicit_count):
+                    if fp.elem_is_bool:
+                        items.append(reader.read_bool(size=fp.elem_bool_size, endian=active_endian))
+                    elif fp.elem_is_uint8:
+                        items.append(reader.read_uint8())
+                    elif fp.elem_is_primitive:
+                        items.append(reader._unpack_read(fp.elem_fmt, fp.elem_size, endian=active_endian))
+                    elif fp.elem_is_struct:
+                        items.append(read_struct(elem_t, reader=reader, endian=active_endian))
+                    else:
+                        items.append(reader.read_uint8())
+                kwargs[name] = bytes(items) if fp.elem_is_uint8 else items
+            elif explicit_length is not None:
+                stop_pos = reader.tell() + explicit_length
+                items_len: list[Any] = []
+                while reader.tell() < stop_pos and reader.remaining() > 0:
+                    if fp.elem_is_bool:
+                        items_len.append(reader.read_bool(size=fp.elem_bool_size, endian=active_endian))
+                    elif fp.elem_is_uint8:
+                        items_len.append(reader.read_uint8())
+                    elif fp.elem_is_primitive:
+                        items_len.append(reader._unpack_read(fp.elem_fmt, fp.elem_size, endian=active_endian))
+                    elif fp.elem_is_struct:
+                        items_len.append(read_struct(elem_t, reader=reader, endian=active_endian))
+                    else:
+                        items_len.append(reader.read_uint8())
+                kwargs[name] = bytes(items_len) if fp.elem_is_uint8 else items_len
+            else:
+                if fp.elem_is_bool:
+                    b_size = fp.elem_bool_size
+                    items_rem: list[Any] = []
+                    while reader.remaining() >= b_size:
+                        items_rem.append(reader.read_bool(size=b_size, endian=active_endian))
+                    kwargs[name] = items_rem
+                elif fp.elem_is_uint8:
+                    kwargs[name] = reader.read_bytes()
+                elif fp.elem_is_primitive:
+                    items_rem_p: list[Any] = []
+                    while reader.remaining() >= fp.elem_size:
+                        items_rem_p.append(reader._unpack_read(fp.elem_fmt, fp.elem_size, endian=active_endian))
+                    kwargs[name] = items_rem_p
+                elif fp.elem_is_struct:
+                    items_rem_s: list[Any] = []
+                    while reader.remaining() > 0:
+                        items_rem_s.append(read_struct(elem_t, reader=reader, endian=active_endian))
+                    kwargs[name] = items_rem_s
+                else:
+                    kwargs[name] = reader.read_bytes()
+        elif kind == FieldKind.OFFSET:
+            target_type = fp.target_type
+            off_info = cast(tuple, fp.offset_info)
+            offset_t, base_offset, _, is_tbl = off_info
             field_pos = reader.tell()
             actual_base = _resolve_base_offset(base_offset, struct_start_pos, field_pos)
-
-            fmt_char, offset_size, _ = _normalize_offset_type(offset_t)
-            stored_offset = reader._unpack_read(fmt_char, offset_size, endian=active_endian)
+            stored_offset = reader._unpack_read(fp.fmt, fp.size, endian=active_endian)
             target_offset = stored_offset + actual_base
 
-            if _is_offset_table_spec(target_type):
-                if isinstance(target_type, tuple):
-                    tbl_count = target_type[1] if len(target_type) >= 2 else 0
-                    tbl_offset_t, tbl_base_offset = _parse_offset_spec_args(target_type[2:])
-                else:
-                    tbl_args = get_args(target_type)
-                    tbl_count = tbl_args[0] if len(tbl_args) >= 1 else 0
-                    tbl_offset_t, tbl_base_offset = _parse_offset_spec_args(tbl_args[1:])
-
+            if is_tbl:
+                tbl_count = target_type[1] if isinstance(target_type, tuple) and len(target_type) >= 2 else (get_args(target_type)[0] if get_args(target_type) else 0)
+                tbl_rest = target_type[2:] if isinstance(target_type, tuple) else get_args(target_type)[1:]
+                tbl_offset_t, _ = _parse_offset_spec_args(tbl_rest)
                 actual_count = kwargs.get(tbl_count) if isinstance(tbl_count, str) else tbl_count
                 int_count = int(actual_count) if isinstance(actual_count, (int, float, str)) else (len(actual_count) if isinstance(actual_count, (list, tuple)) else 0)
-
                 tbl_fmt_char, tbl_offset_size, _ = _normalize_offset_type(tbl_offset_t)
                 if target_offset > 0 and int_count > 0:
                     saved_pos = reader.tell()
                     reader.seek(target_offset)
-                    offs = [
-                        reader._unpack_read(tbl_fmt_char, tbl_offset_size, endian=active_endian)
-                        for _ in range(int_count)
-                    ]
+                    kwargs[name] = [reader._unpack_read(tbl_fmt_char, tbl_offset_size, endian=active_endian) for _ in range(int_count)]
                     reader.seek(saved_pos)
-                    kwargs[name] = offs
                 else:
                     kwargs[name] = []
                 continue
@@ -3119,18 +3842,13 @@ def read_struct(
                 kwargs[name] = target_obj
             else:
                 kwargs[name] = target_offset
-            continue
-
-        # Check NamedOffset[Key, TargetType, OffsetType, BaseOffset]
-        is_named_offset = _is_named_offset_spec(ftype)
-        if is_named_offset:
-            key_arg, target_type, offset_t, base_offset = _extract_named_offset_info(ftype)
-
+        elif kind == FieldKind.NAMED_OFFSET:
+            off_info = cast(tuple, fp.offset_info)
+            _, _, offset_t, base_offset, _ = off_info
+            target_type = fp.target_type
             field_pos = reader.tell()
             actual_base = _resolve_base_offset(base_offset, struct_start_pos, field_pos)
-
-            fmt_char, offset_size, _ = _normalize_offset_type(offset_t)
-            stored_offset = reader._unpack_read(fmt_char, offset_size, endian=active_endian)
+            stored_offset = reader._unpack_read(fp.fmt, fp.size, endian=active_endian)
             target_offset = stored_offset + actual_base
 
             if isinstance(target_type, str):
@@ -3146,350 +3864,58 @@ def read_struct(
                 kwargs[name] = target_obj
             else:
                 kwargs[name] = target_offset
-            continue
-
-        # Check OffsetTable[Count, OffsetType, BaseOffset]
-        is_offset_table = (
-            (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] is OffsetTable)
-            or (get_origin(ftype) is OffsetTable)
-        )
-        if is_offset_table:
-            if isinstance(ftype, tuple):
-                count = ftype[1]
-                offset_t, base_offset = _parse_offset_spec_args(ftype[2:])
-            else:
-                args = get_args(ftype)
-                count = args[0]
-                offset_t, base_offset = _parse_offset_spec_args(args[1:])
-
-            fmt_char, offset_size, _ = _normalize_offset_type(offset_t)
+        elif kind == FieldKind.OFFSET_TABLE:
+            off_info = cast(tuple, fp.offset_info)
+            offset_t, base_offset, _ = off_info
+            count = fp.count
             actual_count = kwargs.get(count) if isinstance(count, str) else count
             if actual_count is None:
-                raise ValueError(
-                    f"Count field '{count}' must precede OffsetTable field '{name}' in struct definition"
-                )
+                raise ValueError(f"Count field '{count}' must precede OffsetTable field '{name}' in struct definition")
             int_count = int(actual_count) if isinstance(actual_count, (int, float, str)) else (len(actual_count) if isinstance(actual_count, (list, tuple)) else 0)
-            offs = [
-                reader._unpack_read(fmt_char, offset_size, endian=active_endian)
-                for _ in range(int_count)
-            ]
-            kwargs[name] = offs
-            continue
-
-        # Check Variant[tag_field, mapping]
-        is_variant = (
-            (isinstance(ftype, tuple) and len(ftype) >= 3 and ftype[0] is Variant)
-            or (get_origin(ftype) is Variant)
-        )
-        if is_variant:
-            tag_field = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
-            mapping = ftype[2] if isinstance(ftype, tuple) else get_args(ftype)[1]
+            kwargs[name] = [reader._unpack_read(fp.fmt, fp.size, endian=active_endian) for _ in range(int_count)]
+        elif kind == FieldKind.VARIANT:
+            var_info = cast(tuple, fp.variant_info)
+            tag_field, mapping = var_info
             tag_val = kwargs.get(tag_field)
             if tag_val is None:
-                raise ValueError(
-                    f"Tag field '{tag_field}' must precede Variant field '{name}' in struct definition"
-                )
+                raise ValueError(f"Tag field '{tag_field}' must precede Variant field '{name}' in struct definition")
             target_cls = mapping.get(tag_val)
             if target_cls is None:
-                raise ValueError(
-                    f"Unknown variant tag {tag_val!r} for field '{name}' (known tags: {list(mapping.keys())})"
-                )
+                raise ValueError(f"Unknown variant tag {tag_val!r} for field '{name}' (known tags: {list(mapping.keys())})")
             if hasattr(target_cls, "__binary__"):
                 kwargs[name] = read_struct(target_cls, reader=reader, endian=active_endian)
             elif target_cls is bytes:
                 kwargs[name] = reader.read_bytes()
             else:
                 kwargs[name] = reader.read_bytes()
-            continue
-
-        # Check FixedArray[T, N]
-        is_fixed = (
-            (isinstance(ftype, tuple) and len(ftype) >= 3 and ftype[0] is FixedArray)
-            or (get_origin(ftype) is FixedArray)
-        )
-        if is_fixed:
-            if isinstance(ftype, tuple):
-                elem_t, count = ftype[1], ftype[2]
-            else:
-                args = get_args(ftype)
-                elem_t, count = args[0], args[1]
-
-            if elem_t is Bool or (isinstance(elem_t, type) and issubclass(elem_t, Bool)) or elem_t is bool:
-                b_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
-                kwargs[name] = [reader.read_bool(size=b_size, endian=active_endian) for _ in range(count)]
-            elif elem_t is UInt8:
-                kwargs[name] = reader.read_bytes(count)
-            elif elem_t is Int8:
-                kwargs[name] = [reader.read_int8() for _ in range(count)]
-            elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
-                kwargs[name] = [
-                    reader._unpack_read(elem_t._fmt, elem_t._size, endian=active_endian)
-                    for _ in range(count)
-                ]
-            elif hasattr(elem_t, "__binary__"):
-                kwargs[name] = [
-                    read_struct(elem_t, reader=reader, endian=active_endian)
-                    for _ in range(count)
-                ]
-            else:
-                kwargs[name] = reader.read_bytes(count)
-            continue
-
-        # Check Array[T]
-        is_arr = (
-            (isinstance(ftype, tuple) and len(ftype) >= 2 and ftype[0] is Array)
-            or (get_origin(ftype) is Array)
-        )
-        if is_arr:
-            elem_t = ftype[1] if isinstance(ftype, tuple) else get_args(ftype)[0]
-            explicit_count = known_counts.get(name)
-            explicit_length = known_lengths.get(name)
-
-            if explicit_count is not None:
-                items = []
-                for _ in range(explicit_count):
-                    if elem_t is Bool or (isinstance(elem_t, type) and issubclass(elem_t, Bool)) or elem_t is bool:
-                        b_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
-                        items.append(reader.read_bool(size=b_size, endian=active_endian))
-                    elif elem_t is UInt8:
-                        items.append(reader.read_uint8())
-                    elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
-                        items.append(reader._unpack_read(elem_t._fmt, elem_t._size, endian=active_endian))
-                    elif hasattr(elem_t, "__binary__"):
-                        items.append(read_struct(elem_t, reader=reader, endian=active_endian))
-                    else:
-                        items.append(reader.read_uint8())
-                kwargs[name] = bytes(items) if elem_t is UInt8 else items
-            elif explicit_length is not None:
-                stop_pos = reader.tell() + explicit_length
-                items = []
-                while reader.tell() < stop_pos and reader.remaining() > 0:
-                    if elem_t is Bool or (isinstance(elem_t, type) and issubclass(elem_t, Bool)) or elem_t is bool:
-                        b_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
-                        items.append(reader.read_bool(size=b_size, endian=active_endian))
-                    elif elem_t is UInt8:
-                        items.append(reader.read_uint8())
-                    elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
-                        items.append(reader._unpack_read(elem_t._fmt, elem_t._size, endian=active_endian))
-                    elif hasattr(elem_t, "__binary__"):
-                        items.append(read_struct(elem_t, reader=reader, endian=active_endian))
-                    else:
-                        items.append(reader.read_uint8())
-                kwargs[name] = bytes(items) if elem_t is UInt8 else items
-            else:
-                if elem_t is Bool or (isinstance(elem_t, type) and issubclass(elem_t, Bool)) or elem_t is bool:
-                    b_size = getattr(elem_t, "_size", 1) if elem_t is not bool else 1
-                    items = []
-                    while reader.remaining() >= b_size:
-                        items.append(reader.read_bool(size=b_size, endian=active_endian))
-                    kwargs[name] = items
-                elif elem_t is UInt8:
-                    kwargs[name] = reader.read_bytes()
-                elif isinstance(elem_t, type) and issubclass(elem_t, BinaryType):
-                    items = []
-                    while reader.remaining() >= elem_t._size:
-                        items.append(reader._unpack_read(elem_t._fmt, elem_t._size, endian=active_endian))
-                    kwargs[name] = items
-                elif hasattr(elem_t, "__binary__"):
-                    items = []
-                    while reader.remaining() > 0:
-                        items.append(read_struct(elem_t, reader=reader, endian=active_endian))
-                    kwargs[name] = items
-                else:
-                    kwargs[name] = reader.read_bytes()
-            continue
-
-        # Check nested binary_struct
-        if hasattr(ftype, "__binary__"):
-            kwargs[name] = read_struct(ftype, reader=reader, endian=active_endian)
-            continue
-
-        # Check Bool type
-        if ftype is Bool or (isinstance(ftype, type) and issubclass(ftype, Bool)):
-            kwargs[name] = reader.read_bool(size=ftype._size, endian=active_endian)
-            continue
-
-        # Check FixedString type
-        if isinstance(ftype, type) and issubclass(ftype, FixedString):
-            enc = getattr(ftype, "encoding", "utf-8")
-            pad = getattr(ftype, "pad_byte", b"\x00")
-            kwargs[name] = reader.read_fixed_string(ftype._size, pad_byte=pad, encoding=enc)
-            continue
-
-        # Check Bytes type
-        if isinstance(ftype, type) and issubclass(ftype, Bytes):
-            explicit_len = known_lengths.get(name, known_counts.get(name))
-            if explicit_len is not None:
+        elif kind == FieldKind.PYTHON_PRIMITIVE:
+            ftype = fp.py_type
+            if ftype is int:
+                kwargs[name] = reader.read_uint32(endian=active_endian)
+            elif ftype is float:
+                kwargs[name] = reader.read_float32(endian=active_endian)
+            elif ftype is bool:
+                kwargs[name] = reader.read_bool()
+            elif ftype is bytes:
+                explicit_len = known_lengths.get(name, known_counts.get(name))
                 kwargs[name] = reader.read_bytes(explicit_len)
-            else:
-                kwargs[name] = reader.read_bytes(ftype._size if ftype._size > 0 else None)
-            continue
-
-        # Check CString type
-        if ftype is CString or (isinstance(ftype, type) and issubclass(ftype, CString)):
-            enc = getattr(ftype, "encoding", "utf-8")
-            kwargs[name] = reader.read_cstring(encoding=enc)
-            continue
-
-        # Check PrefixedString type
-        if ftype is PrefixedString or (isinstance(ftype, type) and issubclass(ftype, PrefixedString)):
-            p_bytes = getattr(ftype, "prefix_bytes", 1)
-            enc = getattr(ftype, "encoding", "utf-8")
-            kwargs[name] = reader.read_prefixed_string(prefix_bytes=p_bytes, endian=active_endian, encoding=enc)
-            continue
-
-        # Check Magic type
-        if isinstance(ftype, type) and issubclass(ftype, MagicBase):
-            expected = getattr(ftype, "_value", None)
-            raw_val = getattr(ftype, "_raw_val", expected)
-            if isinstance(expected, bytes):
-                read_b = reader.read_bytes(len(expected))
-                if read_b != expected:
-                    raise InvalidMagicError(
-                        f"Magic mismatch for field '{name}': expected {expected!r}, got {read_b!r}"
-                    )
-                kwargs[name] = read_b
-            else:
-                fmt_char = getattr(ftype, "_fmt", "I")
-                size = getattr(ftype, "_size", 4)
-                val = reader._unpack_read(fmt_char, size, endian=active_endian)
-                if val != raw_val:
-                    raise InvalidMagicError(
-                        f"Magic mismatch for field '{name}': expected {raw_val!r}, got {val!r}"
-                    )
-                kwargs[name] = val
-            continue
-
-        # Check Constant type
-        if isinstance(ftype, type) and issubclass(ftype, ConstantBase):
-            target_t = getattr(ftype, "_type", UInt32)
-            expected = getattr(ftype, "_value", None)
-            fmt_char = getattr(target_t, "_fmt", "I")
-            size = getattr(target_t, "_size", 4)
-            val = reader._unpack_read(fmt_char, size, endian=active_endian)
-            if val != expected:
-                raise InvalidConstantError(
-                    f"Constant mismatch for field '{name}': expected {expected!r}, got {val!r}"
-                )
-            kwargs[name] = val
-            continue
-
-        # Check Range constraint
-        if isinstance(ftype, type) and issubclass(ftype, RangeBase):
-            fmt = getattr(ftype, "_fmt", "")
-            sz = getattr(ftype, "_size", 4)
-            val = reader._unpack_read(fmt, sz, endian=active_endian)
-            min_v = ftype._min
-            max_v = ftype._max
-            if not (min_v <= val <= max_v):
-                raise RangeValidationError(name, val, min_v, max_v)
-            kwargs[name] = val
-            continue
-
-        # Check LengthOf / CountOf
-        if isinstance(ftype, type) and issubclass(ftype, (LengthOfBase, CountOfBase)):
-            fmt_char = getattr(ftype, "_fmt", "H")
-            sz = getattr(ftype, "_size", 2)
-            val = reader._unpack_read(fmt_char, sz, endian=active_endian)
-            kwargs[name] = val
-            target_name = getattr(ftype, "_target", "")
-            delta = getattr(ftype, "_delta", 0)
-            if target_name:
-                if issubclass(ftype, CountOfBase):
-                    known_counts[target_name] = val - delta
+            elif ftype is str:
+                explicit_len = known_lengths.get(name)
+                if explicit_len is not None:
+                    kwargs[name] = reader.read_bytes(explicit_len).decode("utf-8", errors="replace")
                 else:
-                    known_lengths[target_name] = val - delta
-            continue
-
-        # Check ChecksumBase type
-        if isinstance(ftype, type) and issubclass(ftype, ChecksumBase):
-            cur_pos = reader.tell()
-            brange = getattr(ftype, "_range", None)
-            start_idx = struct_start_pos if (brange is None or brange.start is None) else brange.start
-            end_idx = cur_pos if (brange is None or brange.stop is None) else brange.stop
-            with reader.preserve_position():
-                reader.seek(start_idx)
-                covered_bytes = reader.read_bytes(end_idx - start_idx)
-            calculated = compute_checksum(ftype._algorithm, covered_bytes)
-            size = ftype._size
-            fmt_char = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(size, "I")
-            val = reader._unpack_read(fmt_char, size, endian=active_endian)
-            if val != calculated:
-                raise ChecksumMismatchError(
-                    f"Checksum mismatch for field '{name}': computed {hex(calculated)}, got {hex(val)} in stream"
-                )
-            kwargs[name] = val
-            continue
-
-        # Check VarInt / VarUInt types
-        if isinstance(ftype, VarIntTypeMeta):
-            if ftype.is_signed:
-                kwargs[name] = reader.read_varint()
+                    kwargs[name] = reader.read_cstring()
             else:
-                kwargs[name] = reader.read_varuint()
-            continue
-
-        # Check Enum / BinaryEnum types
-        is_enum = False
-        enum_cls = None
-        enum_size = 4
-        if isinstance(ftype, tuple) and len(ftype) >= 2 and isinstance(ftype[0], type) and issubclass(ftype[0], enum.Enum):
-            is_enum = True
-            enum_cls = ftype[0]
-            enum_size = getattr(ftype[1], "_size", 4)
-        elif isinstance(ftype, type) and issubclass(ftype, enum.Enum):
-            is_enum = True
-            enum_cls = ftype
-            max_v = max([abs(m.value) for m in enum_cls], default=0)
-            enum_size = 1 if max_v <= 255 else (2 if max_v <= 65535 else 4)
-
-        if is_enum and enum_cls is not None:
-            fmt_char = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(enum_size, "I")
-            raw_val = reader._unpack_read(fmt_char, enum_size, endian=active_endian)
-            try:
-                kwargs[name] = enum_cls(raw_val)
-            except ValueError as exc:
-                raise InvalidEnumError(
-                    f"Invalid enum value {raw_val} for {enum_cls.__name__} in field '{name}'"
-                ) from exc
-            continue
-
-        # Check primitive BinaryType
-        if isinstance(ftype, type) and issubclass(ftype, BinaryType):
-            fmt = ftype._fmt
-            if fmt:
-                kwargs[name] = reader._unpack_read(fmt, ftype._size, endian=active_endian)
-            continue
-
-        # Standard Python types fallback
-        if ftype is int:
-            kwargs[name] = reader.read_uint32(endian=active_endian)
-        elif ftype is float:
-            kwargs[name] = reader.read_float32(endian=active_endian)
-        elif ftype is bool:
-            kwargs[name] = reader.read_bool()
-        elif ftype is bytes:
-            explicit_len = known_lengths.get(name, known_counts.get(name))
-            kwargs[name] = reader.read_bytes(explicit_len)
-        elif ftype is str:
-            explicit_len = known_lengths.get(name)
-            if explicit_len is not None:
-                kwargs[name] = reader.read_bytes(explicit_len).decode("utf-8", errors="replace")
-            else:
-                kwargs[name] = reader.read_cstring()
-        else:
-            raise TypeError(f"Unsupported field type for {name}: {ftype}")
+                raise TypeError(f"Unsupported field type for {name}: {ftype}")
 
     # Struct size alignment padding
     if align_setting is not None or auto_align:
-        field_aligns = [_get_field_alignment(ft, None) for fn, ft in fields.items()]
-        max_field_align = max(field_aligns, default=1)
-        struct_boundary = align_setting if align_setting else max_field_align
+        struct_boundary = align_setting if align_setting else plan.max_field_align
         if struct_boundary > 1:
             reader.align(struct_boundary)
 
     # Struct total_size padding
-    total_size_setting = meta.get("total_size")
+    total_size_setting = plan.total_size
     if total_size_setting is not None:
         cur_read = reader.tell() - struct_start_pos
         if cur_read < total_size_setting:

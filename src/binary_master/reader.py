@@ -12,6 +12,16 @@ from binary_master.enums import Endian, EndianType, normalize_endian
 
 T = TypeVar("T")
 
+_STRUCT_CACHE: dict[str, struct.Struct] = {}
+
+
+def _get_struct(fmt: str) -> struct.Struct:
+    st = _STRUCT_CACHE.get(fmt)
+    if st is None:
+        st = struct.Struct(fmt)
+        _STRUCT_CACHE[fmt] = st
+    return st
+
 
 class _ReaderPositionContext:
     """Context manager for preserving reader cursor position."""
@@ -304,7 +314,8 @@ class BinaryReader:
     def _unpack_read(self, fmt_char: str, size: int, endian: EndianType = None) -> Any:
         order = normalize_endian(endian, self._default_endian)
         raw = self._read_exact(size)
-        return struct.unpack(f"{order.value}{fmt_char}", raw)[0]
+        st = _get_struct(f"{order.value}{fmt_char}")
+        return st.unpack(raw)[0]
 
     # --- Primitive Integer Readers ---
 

@@ -38,6 +38,27 @@ _FMT_TO_TYPE_NAME = {
     "?": "Bool",
 }
 
+_STRUCT_CACHE: dict[str, struct.Struct] = {}
+
+
+def _get_struct(fmt: str) -> struct.Struct:
+    st = _STRUCT_CACHE.get(fmt)
+    if st is None:
+        st = struct.Struct(fmt)
+        _STRUCT_CACHE[fmt] = st
+    return st
+
+
+_LAYOUT_ENTRY_CLS: Any = None
+
+
+def _get_layout_entry_cls() -> Any:
+    global _LAYOUT_ENTRY_CLS
+    if _LAYOUT_ENTRY_CLS is None:
+        from binary_master.manual import LayoutEntry
+        _LAYOUT_ENTRY_CLS = LayoutEntry
+    return _LAYOUT_ENTRY_CLS
+
 
 def _check_int_bounds(name: str, value: int, min_val: int, max_val: int) -> None:
     if not isinstance(value, int) or isinstance(value, bool):
@@ -194,6 +215,7 @@ class BinaryWriter:
         default_endian: EndianType = Endian.LITTLE,
         auto_close: Optional[bool] = None,
         lang: Literal["auto", "en", "ja"] = "auto",
+        record_entries: bool = True,
     ) -> None:
         """Initialize a BinaryWriter.
 
@@ -204,9 +226,11 @@ class BinaryWriter:
             auto_close: Whether closing this writer should close the underlying stream.
                         Defaults to True if a file path was opened, False if stream was provided.
             lang: Default language for generated manuals ('auto', 'en', or 'ja'). Default is 'auto' (detected from system locale).
+            record_entries: Whether to record LayoutEntry metadata for debugging or manuals. Set False for maximum serialization speed.
         """
         self.lang = lang
         self._default_endian = normalize_endian(default_endian)
+        self._record_entries = record_entries
         self._entries: list[Any] = []
         self._struct_classes: list[type] = []
         self._variants: list[dict[str, Any]] = []
@@ -562,7 +586,9 @@ class BinaryWriter:
         caption_variants: Optional[list] = None,
         caption_repeat: Optional[Union[int, str, bool]] = None,
     ) -> None:
-        from binary_master.manual import LayoutEntry
+        if not self._record_entries:
+            return
+        layout_entry_cls = _get_layout_entry_cls()
 
         active_caption = caption if caption is not None else self._current_caption
         active_caption_desc = caption_desc if caption_desc is not None else self._current_caption_desc
@@ -571,7 +597,7 @@ class BinaryWriter:
         active_variants = caption_variants if caption_variants is not None else self._current_caption_variants
         active_repeat = caption_repeat if caption_repeat is not None else self._current_caption_repeat
         self._entries.append(
-            LayoutEntry(
+            layout_entry_cls(
                 offset=offset,
                 size=size,
                 type_name=type_name,
@@ -608,17 +634,19 @@ class BinaryWriter:
             self.flush_bits()
 
         order = normalize_endian(endian, self._default_endian)
-        data = struct.pack(f"{order.value}{fmt_char}", value)
+        st = _get_struct(f"{order.value}{fmt_char}")
+        data = st.pack(value)
         offset = self.tell()
         self._stream.write(data)
-        self._record_entry(
-            offset=offset,
-            size=len(data),
-            type_name=_FMT_TO_TYPE_NAME.get(fmt_char, fmt_char),
-            value=value,
-            name=name,
-            endian=order.name.capitalize(),
-            description=desc,
+        if self._record_entries:
+            self._record_entry(
+                offset=offset,
+                size=len(data),
+                type_name=_FMT_TO_TYPE_NAME.get(fmt_char, fmt_char),
+                value=value,
+                name=name,
+                endian=order.name.capitalize(),
+                description=desc,
             struct_name=struct_name,
             struct_doc=struct_doc,
         )
@@ -1427,7 +1455,7 @@ class BinaryWriter:
                 description=f"{desc} [#{i}]" if desc else f"Offset entry {i}",
                 struct_name=struct_name,
             )
-            if spec_rep is not None:
+            if spec_rep is not None and 0 <= idx < len(self._entries):
                 self._entries[idx].caption_repeat = spec_rep
                 if not self._entries[idx].caption:
                     self._entries[idx].caption = name
