@@ -4,14 +4,14 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-283%20passed-brightgreen.svg)]()
 
-**Binary Master** は、Python 3.14+ 向けの高速・型安全なバイナリシリアライザ＆仕様書自動生成ツールキットです。  
-宣言的データクラス記法によるパケット定義、ビットフィールド、自動オフセット解決、CRC検証、Mermaid/HTML仕様書生成、多言語ヘッダー出力（C, Rust, Modern C++, C#, Go）を包括的にサポートします。
+**Binary Master** は、Python 3.14+ 向けの高速・型安全なバイナリシリアライザ兼仕様書自動生成ツールキットです。  
+宣言的データクラス記法によるパケット定義、ビットフィールド、相対オフセットの自動解決、CRC検証、Mermaid/HTML仕様書生成、5言語（C, Rust, Modern C++, C#, Go）へのコード出力を包括的にサポートします。
 
 ### 🌟 主な特徴
-- **⚡ 超高速**: `StructPlan` によるバイトコンパイルとゼロコピーパースに対応（700,000+ ops/sec）。
-- **🛡️ 型安全 & 自動検証**: `Magic` シグネチャ、`CRC32` 計算、`Range` 値域制約、`LengthOf`/`CountOf` 連動計算を宣言的に定義。
-- **📊 仕様書・多言語コード生成**: Mermaid パケット構造図、双方向 Hex Inspector 付き HTML 仕様書、5 言語（C, Rust, C++, C#, Go）コードをワンライナー出力。
-- **🧩 2つのアプローチ**: 宣言的データクラス（`@binary_struct`）と、低レイヤストリーム制御（`BinaryWriter` / `BinaryReader`）を柔軟に使い分け可能。
+- **⚡ 超高速**: `StructPlan` キャッシュとゼロコピー読み込みにより、700,000+ ops/sec の高速処理を実現。
+- **🛡️ 型安全 & 自動検証**: `Magic` シグネチャ、`CRC32` 計算、`Range` 値域制約、`LengthOf`/`CountOf` 連動計算を宣言的に定義・自動検証。
+- **📊 仕様書・多言語コード生成**: Mermaid パケット構造図、双方向 Hex Inspector 付き HTML 仕様書、5 言語のヘッダー/コードをワンライナーで生成。
+- **🧩 2つのアプローチ**: 直感的な宣言型データクラス（`@binary_struct`）と、低レイヤのストリーム制御（`BinaryWriter` / `BinaryReader`）を柔軟に使い分け可能。
 
 ```python
 from binary_master import binary_struct, Magic, UInt16, Float32, CString, CRC32
@@ -35,9 +35,8 @@ packet.write_html("sensor_spec.html", title="センサー通信パケット仕�
 print(packet.to_rust())                    # Rust 構造体を即時出力
 ```
 
-> 📖 **実践チュートリアル**: ステップバイステップで基本から応用までを学べる **[実践チュートリアル & サンプル集 (sample/)](sample/)** をご覧ください。  
-> 📓 **対話型サンプル**: 実行結果や図解付きの **[Jupyter Notebook サンプル集 (sample/)](#対話型サンプルガイド-jupyter-notebooks)** も用意されています。  
-> 🤖 **AI・LLM**: プロンプトコンテキストに最適な情報密度の **[AI向け完全リファレンス (FOR_AI.md)](FOR_AI.md)** をご利用いただけます。
+> 📖 **実践チュートリアル & ガイド**: 実行結果や図解付きで学べる対話型 **[Jupyter Notebook サンプル集 (sample/)](sample/)** および **[総合ガイド (sample/README.md)](sample/README.md)** をご覧ください。  
+> 🤖 **AI・LLM コンテキスト**: LLM へのプロンプト入力に最適な情報密度の **[AI向け完全リファレンス (FOR_AI.md)](FOR_AI.md)** も用意されています。
 
 ---
 
@@ -54,7 +53,7 @@ uv add binary-master
 
 # pip を使用する場合
 pip install git+https://github.com/tamon-ishii/binary_master.git
-# またはローカルクローンから
+# またはローカルクローンからインストール
 pip install .
 ```
 
@@ -74,7 +73,7 @@ python -m build
 
 詳細なコード例やチュートリアルは、リポジトリ内の `sample/` ディレクトリに Jupyter Notebook 形式で網羅されています。GitHub 上でも実行結果付きでそのまま閲覧可能です。
 
-| Notebook | テーマ | 主な内容・トピック |
+| Notebook | テーマ | 主な学習内容・トピック |
 |---|---|---|
 | [**01_basic_struct.ipynb**](sample/01_basic_struct.ipynb) | 基本的な宣言的構造体 | `@binary_struct`, 静的型付け基底クラス `BinaryStruct`, プリミティブ数値型, エンディアン制御, `to_dict()` / `from_dict()` |
 | [**02_bitfields_and_alignment.ipynb**](sample/02_bitfields_and_alignment.ipynb) | ビットフィールドとアライメント | `Bits[N]` によるビットパッキング, `align=4` パディング, `auto_align=True` 自然アライメント |
@@ -83,7 +82,7 @@ python -m build
 | [**05_builder_and_reader.ipynb**](sample/05_builder_and_reader.ipynb) | Builder とスキーマ駆動パース | 事前スキーマ定義 (`Builder`), 多態選択 (`add_choice`), スキーマ駆動自動リーダー (`builder.read()`) |
 | [**06_advanced_v2_features.ipynb**](sample/06_advanced_v2_features.ipynb) | 信頼性・高度プロトコル機能 | `CRC32`/`CRC16`/`Checksum8`, `BinaryEnum`, `Magic`/`Constant`, LEB128 `VarInt`, `BitWriter`/`BitReader` |
 | [**07_v0_3_0_features.ipynb**](sample/07_v0_3_0_features.ipynb) | モダン宣言的機能 & 仕様書 | `Float16`, `LengthOf`/`CountOf` 連動計算, `total_size`/`pad_to`, `Range` バリデーション, HTML仕様書 |
-| [**08_real_world_recipes.ipynb**](sample/08_real_world_recipes.ipynb) | 実践業界別レシピ集 | ゲームセーブデータ, IoT テレメトリ, 金融ティックロガー (`from_mmap`), 多態RPC (`Variant`) |
+| [**08_real_world_recipes.ipynb**](sample/08_real_world_recipes.ipynb) | 実践業界別レシピ集 | ゲームセーブデータ, IoT テレメトリ, 金融ティックログ (`from_mmap`), 多態RPCメッセージ (`Variant`) |
 
 ```bash
 # 全サンプルの自動実行・検証
@@ -139,7 +138,7 @@ data = header.to_bytes()
 print(header.hexdump())  # フィールド境界が色分けされた注釈付き Hexdump を表示
 ```
 
-また、mypy / pyright による静的型検査（`__init__` 引数やプロパティの完全な型補完）を重視する場合は、`BinaryStruct` を継承して定義することもできます：
+また、型安全性を高め、IDE のコード補完や静的型チェッカー（mypy / pyright）の警告を完全に解消したい場合は、`BinaryStruct` を継承して定義することも可能です：
 
 ```python
 from binary_master import BinaryStruct, UInt32, Float32
@@ -169,9 +168,13 @@ r = BinaryReader(data)
 val = r.read_uint16()
 msg = r.read_cstring()
 
-# カーソルを移動させずに先読み
+# カーソルを進めずに先読み
+magic = r.peek_uint16()
+
+# 一時的な位置移動と自動復帰
 with r.preserve_position():
-    peek_val = r.read_uint32()
+    r.seek(0)
+    first_bytes = r.read_bytes(4)
 ```
 
 ### 3. 仕様書 & 多言語コード生成
@@ -236,7 +239,7 @@ binary-master export my_module:SensorPacket -l rust -o packet.rs
 ## テストの実行
 
 ```bash
-# ユニットテスト (290+ tests)
+# ユニットテスト (280+ tests)
 pytest
 
 # 全 Jupyter Notebook サンプルの一括実行・検証

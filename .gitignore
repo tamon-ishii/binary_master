@@ -14,3 +14,4 @@ venv/
 /example.py
 scratch/
 *.html
+manual.md
