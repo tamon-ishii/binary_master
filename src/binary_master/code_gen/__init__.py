@@ -37,6 +37,10 @@ from binary_master.code_gen.rust import (
     generate_rust_struct,
     write_rust,
 )
+from binary_master.code_gen.wireshark import (
+    generate_wireshark_dissector,
+    write_wireshark,
+)
 
 EXTENSION_MAP = {
     ".h": "c",
@@ -48,6 +52,7 @@ EXTENSION_MAP = {
     ".cxx": "cpp",
     ".cs": "csharp",
     ".go": "go",
+    ".lua": "wireshark",
 }
 
 
@@ -64,8 +69,10 @@ def normalize_lang(lang: str) -> str:
         return "csharp"
     if norm in ("go", "golang"):
         return "go"
+    if norm in ("wireshark", "lua", "dissector"):
+        return "wireshark"
     raise ValueError(
-        f"Unsupported language: {lang!r}. Supported languages: 'c', 'rust', 'cpp', 'csharp', 'go'"
+        f"Unsupported language: {lang!r}. Supported languages: 'c', 'rust', 'cpp', 'csharp', 'go', 'wireshark'"
     )
 
 
@@ -90,6 +97,8 @@ def generate_code(builder: Any, lang: str, **kwargs) -> str:
         return generate_csharp_code(builder, **kwargs)
     if norm == "go":
         return generate_go_code(builder, **kwargs)
+    if norm == "wireshark":
+        return generate_wireshark_dissector(builder, **kwargs)
     raise ValueError(f"Unhandled language: {norm}")
 
 
@@ -157,5 +166,7 @@ __all__ = [
     "generate_go_choice",
     "generate_code",
     "write_code",
+    "generate_wireshark_dissector",
+    "write_wireshark",
     "normalize_lang",
 ]

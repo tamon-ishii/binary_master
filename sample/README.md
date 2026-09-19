@@ -20,6 +20,13 @@ GitHub や VSCode、JupyterLab 上で実行結果・ダイアグラム・注釈�
 | **Step 7** | [**07_v0_3_0_features.ipynb**](./07_v0_3_0_features.ipynb) | モダン宣言的機能 & 仕様書 | `Float16` (半精度浮動小数点), `LengthOf`/`CountOf` 自動連動計算, `total_size`/`pad_to` 固定サイズ保証, `Range` 値域バリデーション, 双方向 Hex Inspector 付き HTML 仕様書生成 (`write_html`) |
 | **Step 8** | [**08_real_world_recipes.ipynb**](./08_real_world_recipes.ipynb) | 実践業界別レシピ集 | ゲームセーブデータ・アーカイブ, IoT / 車載センサーテレメトリ, 高頻度取引 (HFT) 金融ティックロガー (`from_mmap`), 多態RPCメッセージキュー (`Variant`) |
 
+### 🌟 v0.4.0 新機能ハイライト
+- **ファイル & ストリーム直接 I/O**: `packet.to_file("data.bin")`, `Packet.from_file("data.bin")`, `Packet.from_stream(stream)` により一時バイト列変換なしで直接入出力。
+- **ビットマスクフラグ (`BinaryFlag`)**: `enum.IntFlag` を基底としたビット論理演算 (`|`, `&`, `~`) をフルサポートする型安全フラグ。
+- **透過的圧縮 (`Compressed`)**: `Compressed[T, algo="zlib"]` および `CompressedBytes[algo]`（zlib, gzip, bz2, lzma 対応）による自動圧縮・展開。
+- **Wireshark Lua ディセクタ生成**: `packet.to_wireshark(port=9999)` / `packet.write_wireshark("proto.lua")`、CLI `binary-master export --lang wireshark` によるパケット解析スクリプト自動生成。
+- **非同期 I/O (`asyncio`) ネイティブ対応**: `AsyncBinaryReader` / `AsyncBinaryWriter`、`await packet.to_async_stream(writer)`、`await Packet.from_async_stream(reader)`。
+
 ---
 
 ## 🏛️ アーキテクチャ設計選定ガイド

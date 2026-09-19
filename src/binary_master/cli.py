@@ -139,7 +139,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     builder.add_struct(struct_cls)
 
     lang = args.lang.lower()
-    ext_map = {"c": ".h", "rust": ".rs", "cpp": ".hpp", "csharp": ".cs", "go": ".go"}
+    ext_map = {"c": ".h", "rust": ".rs", "cpp": ".hpp", "csharp": ".cs", "go": ".go", "wireshark": ".lua", "lua": ".lua"}
 
     if args.output == "-":
         if lang == "c":
@@ -152,8 +152,10 @@ def cmd_export(args: argparse.Namespace) -> int:
             print(builder.to_csharp())
         elif lang == "go":
             print(builder.to_go())
+        elif lang in ("wireshark", "lua"):
+            print(builder.to_wireshark())
         else:
-            print(f"Unknown language: {lang}. Choose from c, rust, cpp, csharp, go", file=sys.stderr)
+            print(f"Unknown language: {lang}. Choose from c, rust, cpp, csharp, go, wireshark, lua", file=sys.stderr)
             return 1
         return 0
 
@@ -169,8 +171,10 @@ def cmd_export(args: argparse.Namespace) -> int:
         builder.write_csharp(out_path)
     elif lang == "go":
         builder.write_go(out_path)
+    elif lang in ("wireshark", "lua"):
+        builder.write_wireshark(out_path)
     else:
-        print(f"Unknown language: {lang}. Choose from c, rust, cpp, csharp, go", file=sys.stderr)
+        print(f"Unknown language: {lang}. Choose from c, rust, cpp, csharp, go, wireshark, lua", file=sys.stderr)
         return 1
 
     print(f"Exported {lang.upper()} code written to {out_path}")
@@ -211,9 +215,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_spec.add_argument("--lang", choices=["auto", "en", "ja"], default="auto", help="Documentation language for HTML")
 
     # export
-    p_export = subparsers.add_parser("export", help="Export struct to C, Rust, C++, C#, or Go code")
+    p_export = subparsers.add_parser("export", help="Export struct to C, Rust, C++, C#, Go, or Wireshark Lua code")
     p_export.add_argument("struct", help="Qualified @binary_struct name, e.g. 'my_module:MyHeader'")
-    p_export.add_argument("--lang", "-l", choices=["c", "rust", "cpp", "csharp", "go"], required=True, help="Target language")
+    p_export.add_argument("--lang", "-l", choices=["c", "rust", "cpp", "csharp", "go", "wireshark", "lua"], required=True, help="Target language")
     p_export.add_argument("--output", "-o", help="Output source code file path")
 
     args = parser.parse_args(argv)

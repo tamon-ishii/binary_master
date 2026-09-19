@@ -2,16 +2,17 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-283%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-299%20passed-brightgreen.svg)]()
 
-**Binary Master** は、Python 3.14+ 向けの高速・型安全なバイナリシリアライザ兼仕様書自動生成ツールキットです。  
-宣言的データクラス記法によるパケット定義、ビットフィールド、相対オフセットの自動解決、CRC検証、Mermaid/HTML仕様書生成、5言語（C, Rust, Modern C++, C#, Go）へのコード出力を包括的にサポートします。
+**Binary Master** は、Python 3.14+ 向けの高速・型安全なバイナリシリアライザ兼仕様書・コード自動生成ツールキットです。  
+宣言的データクラス記法によるパケット定義、ビットフィールド、相対オフセットの自動解決、CRC検証、圧縮ペイロード（zlib/gzip/bz2/lzma）、Mermaid/HTML仕様書生成、Wireshark Lua ディセクタおよび 5 言語（C, Rust, Modern C++, C#, Go）へのコード出力を包括的にサポートします。
 
 ### 🌟 主な特徴
 - **⚡ 超高速**: `StructPlan` キャッシュとゼロコピー読み込みにより、700,000+ ops/sec の高速処理を実現。
 - **🛡️ 型安全 & 自動検証**: `Magic` シグネチャ、`CRC32` 計算、`Range` 値域制約、`LengthOf`/`CountOf` 連動計算を宣言的に定義・自動検証。
-- **📊 仕様書・多言語コード生成**: Mermaid パケット構造図、双方向 Hex Inspector 付き HTML 仕様書、5 言語のヘッダー/コードをワンライナーで生成。
-- **🧩 2つのアプローチ**: 直感的な宣言型データクラス（`@binary_struct`）と、低レイヤのストリーム制御（`BinaryWriter` / `BinaryReader`）を柔軟に使い分け可能。
+- **🗜️ 透過的圧縮 & ビットマスク**: `Compressed[T, algo]` による構造体・バイト列の透過的圧縮（zlib/gzip/bz2/lzma）、`BinaryFlag`（`IntFlag`）による直感的なビットマスク。
+- **📡 非同期ストリーム & ファイルI/O**: `.to_file()` / `.from_file()` に加え、`asyncio` ネイティブな `AsyncBinaryReader` / `AsyncBinaryWriter` / `.to_async_stream()` を標準提供。
+- **📊 仕様書・Wireshark・多言語コード生成**: Mermaid パケット構造図、双方向 Hex Inspector 付き HTML 仕様書、Wireshark Lua ディセクタ、5 言語のヘッダー/コードをワンライナーで生成。
 
 ```python
 from binary_master import binary_struct, Magic, UInt16, Float32, CString, CRC32
@@ -25,14 +26,15 @@ class SensorPacket:
     device_name: CString                   # Null終端文字列
     checksum: CRC32                        # CRC32（シリアライズ時自動計算・読み込み時自動検証）
 
-# 2. シリアライズ & デシリアライズ
+# 2. シリアライズ & ファイル / バイト列のデシリアライズ
 packet = SensorPacket(sensor_id=101, temperature=24.5, device_name="Sensor-A")
-data = packet.to_bytes()                   # -> bytes 列 (b'PKT\x01e\x00\x00\x00\xc4A...')
-restored = SensorPacket.from_bytes(data)    # チェックサムとシグネチャを自動検証して復元
+packet.to_file("sensor.bin")               # ファイルへ直接出力
+restored = SensorPacket.from_file("sensor.bin")  # ファイルから自動復元・検証
 
-# 3. ブラウザで開ける HTML 仕様書 & 多言語コード生成
+# 3. HTML 仕様書・Wireshark ディセクタ・多言語コード生成
 packet.write_html("sensor_spec.html", title="センサー通信パケット仕様書")
-print(packet.to_rust())                    # Rust 構造体を即時出力
+packet.write_wireshark("sensor.lua", port=9999) # Wireshark で解析可能な Lua ディセクタ
+print(packet.to_rust())                         # Rust 構造体を即時出力
 ```
 
 > 📖 **実践チュートリアル & ガイド**: 実行結果や図解付きで学べる対話型 **[Jupyter Notebook サンプル集 (sample/)](sample/)** および **[総合ガイド (sample/README.md)](sample/README.md)** をご覧ください。  
@@ -177,16 +179,37 @@ with r.preserve_position():
     first_bytes = r.read_bytes(4)
 ```
 
-### 3. 仕様書 & 多言語コード生成
+### 3. 非同期ストリーミング (`asyncio` 連携)
 
-単一の構造体定義や `Builder` スキーマから、仕様書と 5 言語のヘッダー・ソースコードをワンライナーで出力できます。
+`asyncio.StreamReader` / `asyncio.StreamWriter` と連携し、ネットワークソケットやパイプからパケットを非同期送受信できます。
+
+```python
+import asyncio
+from binary_master import AsyncBinaryReader, AsyncBinaryWriter
+
+async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    # 非同期リーダーでパケットを受信
+    async_reader = AsyncBinaryReader(reader)
+    packet = await async_reader.read_struct(SensorPacket)
+    print(f"Received sensor data: {packet.temperature} °C")
+
+    # 構造体インスタンスからソケットへ直接送信
+    await packet.to_async_stream(writer)
+```
+
+### 4. 仕様書 & Wireshark / 多言語コード生成
+
+単一の構造体定義や `Builder` スキーマから、仕様書と Wireshark Lua ディセクタ、および 5 言語のヘッダー・ソースコードをワンライナーで出力できます。
 
 ```python
 # 1. 仕様書生成
 header.write_markdown("spec.md")      # Mermaid パケット図付き Markdown
 header.write_html("spec.html")        # 双方向 Hex Inspector 付き HTML 仕様書
 
-# 2. 多言語コード生成
+# 2. Wireshark Lua ディセクタ生成
+header.write_wireshark("proto.lua", port=9999)  # Wireshark 解析用スクリプト
+
+# 3. 多言語コード生成
 header.to_c()                         # C言語ヘッダー (.h)
 header.to_cpp()                       # Modern C++20 ヘッダー (.hpp)
 header.to_rust()                      # Rust 構造体 (.rs)
@@ -204,7 +227,9 @@ header.to_go()                        # Go 構造体 (.go)
 | **浮動小数点** | `Float16`<br>`Float32`<br>`Float64` | 2B<br>4B<br>8B | IEEE 754 半精度浮動小数点数<br>IEEE 754 単精度浮動小数点数<br>IEEE 754 倍精度浮動小数点数 |
 | **真偽値** | `Bool` | 1B | 1バイトブール値 (`0x00` / `0x01`) |
 | **ビットフィールド** | `Bits[N]` | N bit | `@binary_struct(bits=N)` 内で 1 ビット単位でパッキング |
+| **ビットマスクフラグ** | `BinaryFlag` (または `enum.IntFlag`) | 基底型依存 | ビット論理演算 (`\|`, `&`) をサポートする型安全フラグ |
 | **可変長整数** | `VarInt`, `VarUInt` | 1〜10B | LEB128 可変長整数 (Protocol Buffers / WebAssembly 互換) |
+| **透過的圧縮** | `Compressed[T, algo]`<br>`CompressedBytes[algo]` | 4B(長さ) + 圧縮列 | `zlib`, `gzip`, `bz2`, `lzma` による自動圧縮・展開 |
 | **文字列** | `FixedString[N, enc]`<br>`CString[enc]`<br>`PascalString[len_t, enc]` | N バイト<br>可変 (Null終端)<br>可変 (長さプレフィックス) | 固定長文字列<br>CスタイルNull終端文字列<br>Pascal文字列（UTF-8, Shift-JIS等対応） |
 | **配列** | `FixedArray[T, N]`<br>`VariableArray[T, count_expr]` | `sizeof(T) * N`<br>可変 | 固定長要素配列<br>動的要素配列 |
 | **オフセット・ポインタ** | `Offset[T, Base]`<br>`OffsetTable[T, Count, Base]` | 指定サイズ (既定 4B)<br>`sizeof(T) * Count` | 相対オフセット（自動解決・遅延バックパッチ）<br>ポインタテーブル |
@@ -230,7 +255,8 @@ binary-master diff expected.bin actual.bin --color
 # 構造体定義から仕様書（Markdown / HTML）を自動生成
 binary-master spec my_module:SensorPacket -o spec.html --html
 
-# 多言語コード（c, rust, cpp, csharp, go）のエクスポート
+# Wireshark Lua ディセクタおよび多言語コード（c, rust, cpp, csharp, go, wireshark）のエクスポート
+binary-master export my_module:SensorPacket -l wireshark -o packet.lua
 binary-master export my_module:SensorPacket -l rust -o packet.rs
 ```
 

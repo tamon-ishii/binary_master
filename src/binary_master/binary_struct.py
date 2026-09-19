@@ -8,7 +8,9 @@ import re
 import struct
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import (
+    IO,
     Annotated,
     Any,
     Generic,
@@ -34,6 +36,7 @@ def _unwrap_literal_int(val: Any) -> Any:
 
 
 from binary_master.checksum import ChecksumBase, compute_checksum
+from binary_master.compressed import CompressedBase, compress_data, decompress_data
 from binary_master.enums import Endian, EndianType, normalize_endian, normalize_offset_key
 from binary_master.exceptions import (
     ChecksumMismatchError,
@@ -358,6 +361,11 @@ class BinaryEnumMeta(enum.EnumType):
 
 class BinaryEnum(enum.IntEnum, metaclass=BinaryEnumMeta):
     """Base class for binary integer enums supporting explicit integer sizing (e.g. MyEnum[UInt8])."""
+    pass
+
+
+class BinaryFlag(enum.IntFlag, metaclass=BinaryEnumMeta):
+    """Base class for binary bitmask flags supporting bitwise operations and explicit integer sizing (e.g. MyFlags[UInt16])."""
     pass
 
 
@@ -1198,7 +1206,7 @@ def extract_field_descriptions(cls: type) -> dict[str, str]:
 class BinaryMetadata(dict):
     """Metadata container for binary_struct with lazy type hint and description resolution."""
 
-    def __init__(self, cls, endian="little", bits=None, align=None, auto_align=False, total_size=None, pad_byte=b"\x00", doc=""):
+    def __init__(self, cls, endian="little", bits=None, align=None, auto_align=False, total_size=None, pad_byte=b"\x00", doc="", localns=None):
         super().__init__({
             "endian": endian,
             "bits": bits,
@@ -1210,14 +1218,17 @@ class BinaryMetadata(dict):
             "descriptions": {},
         })
         self._cls = cls
+        self._localns = localns or {}
         self._fields = None
         self._descriptions = None
         try:
-            self._fields = get_type_hints(cls)
+            mod = sys.modules.get(cls.__module__)
+            globalns = getattr(mod, "__dict__", None)
+            self._fields = get_type_hints(cls, globalns=globalns, localns=self._localns)
             self["fields"] = self._fields
             self._descriptions = extract_field_descriptions(cls)
             self["descriptions"] = self._descriptions
-        except NameError:
+        except (NameError, TypeError):
             pass
 
     def _resolve_fields(self):
@@ -1225,10 +1236,25 @@ class BinaryMetadata(dict):
             mod = sys.modules.get(self._cls.__module__)
             globalns = getattr(mod, "__dict__", None)
             try:
-                self._fields = get_type_hints(self._cls, globalns=globalns)
+                self._fields = get_type_hints(self._cls, globalns=globalns, localns=self._localns)
                 self["fields"] = self._fields
-            except NameError:
-                return getattr(self._cls, "__annotations__", {})
+            except (NameError, TypeError):
+                raw_ann = getattr(self._cls, "__annotations__", {})
+                resolved = {}
+                import binary_master
+
+                bm_dict = binary_master.__dict__
+                combined_ns = {**bm_dict, **(globalns or {})}
+                for k, v in raw_ann.items():
+                    if isinstance(v, str):
+                        try:
+                            resolved[k] = eval(v, combined_ns, self._localns)
+                        except Exception:
+                            resolved[k] = v
+                    else:
+                        resolved[k] = v
+                self._fields = resolved
+                self["fields"] = self._fields
         return self._fields
 
     def _resolve_descriptions(self):
@@ -1615,6 +1641,69 @@ def from_bytes(cls, data: Union[bytes, bytearray, memoryview], endian: Optional[
     return read_struct(cls, reader=data, endian=endian)
 
 
+def to_file(self, path_or_file: Union[str, Path, IO[bytes]], endian: Optional[EndianType] = None) -> int:
+    """Serialize this binary_struct instance and write it to a file path or binary stream.
+
+    Args:
+        path_or_file: A filesystem path (str or Path) or a writable binary stream.
+        endian: Optional endianness override.
+
+    Returns:
+        Number of bytes written.
+    """
+    data = self.to_bytes(endian=endian)
+    if isinstance(path_or_file, (str, Path)):
+        p = Path(path_or_file)
+        if p.parent and not p.parent.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+        return p.write_bytes(data)
+    return path_or_file.write(data)
+
+
+def from_file(cls, path_or_file: Union[str, Path, IO[bytes]], endian: Optional[EndianType] = None) -> Any:
+    """Deserialize a @binary_struct instance from a file path or binary stream.
+
+    Args:
+        path_or_file: A filesystem path (str or Path) or a readable binary stream.
+        endian: Optional endianness override.
+
+    Returns:
+        Deserialized instance of `cls`.
+    """
+    if isinstance(path_or_file, (str, Path)):
+        data = Path(path_or_file).read_bytes()
+        return cls.from_bytes(data, endian=endian)
+    return read_struct(cls, reader=path_or_file, endian=endian)
+
+
+def from_stream(cls, stream: IO[bytes], endian: Optional[EndianType] = None) -> Any:
+    """Deserialize a @binary_struct instance from a readable binary stream.
+
+    Args:
+        stream: A readable binary stream (e.g. io.BytesIO or file).
+        endian: Optional endianness override.
+
+    Returns:
+        Deserialized instance of `cls`.
+    """
+    return read_struct(cls, reader=stream, endian=endian)
+
+
+async def to_async_stream(self, writer: Any, endian: Optional[EndianType] = None, drain: bool = True) -> None:
+    """Serialize a @binary_struct instance and send asynchronously to an asyncio.StreamWriter."""
+    from binary_master.async_stream import async_write_struct
+
+    await async_write_struct(writer, self, endian=endian, drain=drain)
+
+
+async def from_async_stream(cls, reader: Any, endian: Optional[EndianType] = None) -> Any:
+    """Deserialize a @binary_struct instance asynchronously from an asyncio.StreamReader."""
+    from binary_master.async_stream import async_read_struct
+
+    return await async_read_struct(reader, cls, endian=endian)
+
+
+
 def to_c_struct_method(cls, name: Optional[str] = None, desc: str = "") -> str:
     """Generate a C typedef struct definition for this @binary_struct class."""
     from binary_master.code_gen.c import to_c_struct
@@ -1648,6 +1737,39 @@ def to_go_struct_method(cls, name: Optional[str] = None, desc: str = "") -> str:
     from binary_master.code_gen.go import generate_go_struct
 
     return generate_go_struct(cls, name=name, desc=desc)
+
+
+def to_wireshark_method(
+    cls,
+    protocol_name: Optional[str] = None,
+    description: Optional[str] = None,
+    port: Optional[int] = None,
+) -> str:
+    """Generate a Wireshark Lua Dissector for this @binary_struct class."""
+    from binary_master.code_gen.wireshark import generate_wireshark_dissector
+
+    return generate_wireshark_dissector(
+        cls, protocol_name=protocol_name, description=description, port=port
+    )
+
+
+def write_wireshark_method(
+    cls,
+    path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+    protocol_name: Optional[str] = None,
+    description: Optional[str] = None,
+    port: Optional[int] = None,
+) -> str:
+    """Generate a Wireshark Lua Dissector and optionally save to file or stream."""
+    from binary_master.code_gen.wireshark import write_wireshark
+
+    return write_wireshark(
+        cls,
+        path_or_file=path_or_file,
+        protocol_name=protocol_name,
+        description=description,
+        port=port,
+    )
 
 
 class _ToMarkdownDescriptor:
@@ -1907,6 +2029,14 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
 
         target_cls = dataclass(slots=True)(target_cls)
         doc = inspect.cleandoc(target_cls.__doc__) if target_cls.__doc__ else ""
+        cur_frame = inspect.currentframe()
+        caller_locals: dict[str, Any] = {}
+        f = cur_frame.f_back if cur_frame else None
+        while f is not None:
+            if f.f_code.co_filename != __file__:
+                caller_locals = dict(f.f_locals)
+                break
+            f = f.f_back
         target_cls.__binary__ = BinaryMetadata(
             target_cls,
             endian=endian,
@@ -1916,6 +2046,7 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
             total_size=total_size,
             pad_byte=pad_byte,
             doc=doc,
+            localns=caller_locals,
         )
 
         explicit_defaults = {**magic_const_defaults, **user_defaults}
@@ -1962,6 +2093,11 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
 
         target_cls.to_bytes = to_bytes
         target_cls.from_bytes = classmethod(from_bytes)
+        target_cls.to_file = to_file
+        target_cls.from_file = classmethod(from_file)
+        target_cls.from_stream = classmethod(from_stream)
+        target_cls.to_async_stream = to_async_stream
+        target_cls.from_async_stream = classmethod(from_async_stream)
         target_cls.to_dict = to_dict_method
         target_cls.from_dict = classmethod(from_dict_method)
         target_cls.to_json = to_json_method
@@ -1976,6 +2112,10 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
         target_cls.to_csharp = classmethod(to_csharp_struct_method)
         target_cls.to_go_struct = classmethod(to_go_struct_method)
         target_cls.to_go = classmethod(to_go_struct_method)
+        target_cls.to_wireshark = classmethod(to_wireshark_method)
+        target_cls.write_wireshark = classmethod(write_wireshark_method)
+        target_cls.to_lua = classmethod(to_wireshark_method)
+        target_cls.write_lua = classmethod(write_wireshark_method)
         target_cls.to_markdown = _ToMarkdownDescriptor()
         target_cls.write_markdown = _WriteMarkdownDescriptor()
         target_cls.to_html = _ToHtmlDescriptor()
@@ -2025,6 +2165,29 @@ class BinaryStruct:
         """Deserialize struct from bytes."""
         return from_bytes(cls, data, endian=endian)
 
+    def to_file(self, path_or_file: Union[str, Path, IO[bytes]], endian: Optional[EndianType] = None) -> int:
+        """Serialize struct and write to a file or stream."""
+        return to_file(self, path_or_file, endian=endian)
+
+    @classmethod
+    def from_file(cls: type[T], path_or_file: Union[str, Path, IO[bytes]], endian: Optional[EndianType] = None) -> T:
+        """Deserialize struct from a file path or stream."""
+        return from_file(cls, path_or_file, endian=endian)
+
+    @classmethod
+    def from_stream(cls: type[T], stream: IO[bytes], endian: Optional[EndianType] = None) -> T:
+        """Deserialize struct from a readable binary stream."""
+        return from_stream(cls, stream, endian=endian)
+
+    async def to_async_stream(self, writer: Any, endian: Optional[EndianType] = None, drain: bool = True) -> None:
+        """Serialize struct and write to an asyncio.StreamWriter."""
+        await to_async_stream(self, writer, endian=endian, drain=drain)
+
+    @classmethod
+    async def from_async_stream(cls: type[T], reader: Any, endian: Optional[EndianType] = None) -> T:
+        """Deserialize struct from an asyncio.StreamReader."""
+        return await from_async_stream(cls, reader, endian=endian)
+
     def to_dict(self, bytes_format: str = "hex") -> dict[str, Any]:
         """Convert struct to a dictionary."""
         return to_dict_method(self, bytes_format=bytes_format)
@@ -2067,6 +2230,27 @@ class BinaryStruct:
     def to_go_struct(cls, name: Optional[str] = None, desc: str = "") -> str:
         """Generate Go struct definition."""
         return to_go_struct_method(cls, name=name, desc=desc)
+
+    @classmethod
+    def to_wireshark(
+        cls,
+        protocol_name: Optional[str] = None,
+        description: Optional[str] = None,
+        port: Optional[int] = None,
+    ) -> str:
+        """Generate Wireshark Lua Dissector."""
+        return to_wireshark_method(cls, protocol_name=protocol_name, description=description, port=port)
+
+    @classmethod
+    def write_wireshark(
+        cls,
+        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+        protocol_name: Optional[str] = None,
+        description: Optional[str] = None,
+        port: Optional[int] = None,
+    ) -> str:
+        """Generate Wireshark Lua Dissector and optionally save to file or stream."""
+        return write_wireshark_method(cls, path_or_file=path_or_file, protocol_name=protocol_name, description=description, port=port)
 
     def __len__(self) -> int:
         return sizeof(self)
@@ -2292,6 +2476,7 @@ class FieldKind:
     OFFSET_TABLE = 20      # OffsetTable[...]
     VARIANT = 21           # Variant[...]
     PYTHON_PRIMITIVE = 22  # int, float, bool, bytes, str
+    COMPRESSED = 23        # Compressed[T, algo]
 
 
 class FieldPlan:
@@ -2506,7 +2691,18 @@ def compile_struct_plan(cls: type) -> StructPlan:
                         f_desc = arg
                         break
             ftype = args[0]
-        fp.f_desc = f_desc
+        if isinstance(ftype, str):
+            import binary_master
+
+            mod = sys.modules.get(cls.__module__)
+            lookup_ns = {**binary_master.__dict__, **(getattr(mod, "__dict__", {}) if mod else {})}
+            if ftype in lookup_ns:
+                ftype = lookup_ns[ftype]
+            else:
+                try:
+                    ftype = eval(ftype, lookup_ns)
+                except Exception:
+                    pass
 
         fp.align = _get_field_alignment(ftype, None)
         field_aligns.append(fp.align)
@@ -2762,6 +2958,15 @@ def compile_struct_plan(cls: type) -> StructPlan:
             fp.checksum_range = getattr(ftype, "_range", None)
             fp.size = getattr(ftype, "_size", 4)
             fp.fmt = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(fp.size, "I")
+            field_plans.append(fp)
+            continue
+
+        # Check Compressed
+        if _safe_issubclass(ftype, CompressedBase):
+            fp.kind = FieldKind.COMPRESSED
+            all_primitive = False
+            fp.target_type = getattr(ftype, "_target_type", bytes)
+            fp.checksum_algo = getattr(ftype, "_algo", "zlib")
             field_plans.append(fp)
             continue
 
@@ -3252,6 +3457,24 @@ def write_struct(
                 )
             continue
 
+        # Check Compressed
+        if isinstance(ftype, type) and issubclass(ftype, CompressedBase):
+            algo = getattr(ftype, "_algo", "zlib")
+            if hasattr(val, "to_bytes"):
+                raw_bytes = val.to_bytes()
+            elif isinstance(val, (bytes, bytearray, memoryview)):
+                raw_bytes = bytes(val)
+            elif val is None:
+                raw_bytes = b""
+            else:
+                raw_bytes = bytes(val)
+            comp_bytes = compress_data(raw_bytes, algo=algo)
+            writer._pack_write("I", len(comp_bytes), endian=active_endian, name=f"{name}_len", desc=f"Compressed length ({algo})")
+            writer.write_bytes(comp_bytes, name=name, desc=f_desc or f"Compressed[{algo}]")
+            if hasattr(writer, "_entries") and writer._entries:
+                writer._entries[-1].type_name = repr(ftype)
+            continue
+
         # Check nested binary_struct
         if hasattr(val, "__binary__"):
             write_struct(
@@ -3406,6 +3629,7 @@ def write_struct(
             except Exception:
                 pass
             continue
+
 
         # Check VarInt / VarUInt types
         if isinstance(ftype, VarIntTypeMeta):
@@ -3729,6 +3953,16 @@ def read_struct(
             if val != calculated:
                 raise ChecksumMismatchError(f"Checksum mismatch for field '{name}': computed {hex(calculated)}, got {hex(val)} in stream")
             kwargs[name] = val
+        elif kind == FieldKind.COMPRESSED:
+            comp_len = reader._unpack_read("I", 4, endian=active_endian)
+            comp_bytes = reader.read_bytes(comp_len)
+            algo = fp.checksum_algo or "zlib"
+            decomp_bytes = decompress_data(comp_bytes, algo=algo)
+            target_t = fp.target_type
+            if hasattr(target_t, "__binary__"):
+                kwargs[name] = read_struct(target_t, reader=decomp_bytes, endian=active_endian)
+            else:
+                kwargs[name] = decomp_bytes
         elif kind == FieldKind.VARINT:
             if fp.varint_signed:
                 kwargs[name] = reader.read_varint()

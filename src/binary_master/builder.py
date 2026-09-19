@@ -1251,6 +1251,40 @@ class Builder:
 
         return write_go(self, path_or_file=path_or_file, package_name=package_name)
 
+    def to_wireshark(
+        self,
+        protocol_name: Optional[str] = None,
+        description: Optional[str] = None,
+        port: Optional[int] = None,
+    ) -> str:
+        """Generate Wireshark Lua Dissector script for this schema."""
+        from binary_master.code_gen.wireshark import generate_wireshark_dissector
+
+        return generate_wireshark_dissector(
+            self,
+            protocol_name=protocol_name,
+            description=description,
+            port=port,
+        )
+
+    def write_wireshark(
+        self,
+        path_or_file: Optional[Union[str, Path, IO[str]]] = None,
+        protocol_name: Optional[str] = None,
+        description: Optional[str] = None,
+        port: Optional[int] = None,
+    ) -> str:
+        """Generate Wireshark Lua Dissector and optionally save to file or stream."""
+        from binary_master.code_gen.wireshark import write_wireshark
+
+        return write_wireshark(
+            self,
+            path_or_file=path_or_file,
+            protocol_name=protocol_name,
+            description=description,
+            port=port,
+        )
+
     def to_code(self, lang: str, **kwargs) -> str:
         """Generate source code in the specified language ('c', 'rust', 'cpp', 'csharp', 'go')."""
         from binary_master.code_gen import generate_code
