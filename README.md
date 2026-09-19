@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-272%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-276%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの宣言的バイナリ構造化＆仕様書自動生成ライブラリです。
 
@@ -642,6 +642,50 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
   - スコープ内の相対キーは自動的に `"chunk_0/payload"` のように階層化されます。
   - ネスト（入れ子）や `auto_id=True` による自動採番（`chunk_0`, `chunk_1`...）に対応。
   - スコープ内から先頭スラッシュ `/` 付きキー（例: `NamedOffset["/global_footer"]`）を指定すると、ルート名前空間を直接参照できます。
+
+- **型ヒント併用による自動デリファレンス (`NamedOffset["key", TargetStruct]`)**:
+  ターゲット構造体型を指定することで、読み込み時に対象構造体を自動インスタンス化して復元できます。
+  ```python
+  @binary_struct
+  class ImageData:
+      width: UInt16
+      height: UInt16
+
+  @binary_struct
+  class ImageContainer:
+      magic: UInt32
+      # 型ヒントを併用して宣言
+      image: NamedOffset["img_payload", ImageData]
+
+  # 書き込み: インスタンスを渡しておけば write_named_offset で自動書き出し！
+  container = ImageContainer(magic=0x494D4730, image=ImageData(width=640, height=480))
+  writer.write_struct(container)
+  writer.write_string("可変長メタデータ...")
+  writer.write_named_offset("img_payload") # container.image が自動配置される
+
+  # 読み込み: 自動で ImageData インスタンスとして復元！
+  restored = ImageContainer.from_bytes(writer.to_bytes())
+  print(restored.image.width, restored.image.height)  # => 640 480
+  ```
+
+- **Enum / Symbol キーのサポート (`NamedOffset[MyEnum.KEY]`)**:
+  キーのタイポ（打ち間違い）を IDE や静的型チェッカーで防止するため、Python の `Enum` メンバーをキーとして直接指定できます。
+  ```python
+  from enum import Enum
+
+  class PacketKey(Enum):
+      PAYLOAD = "payload"
+      FOOTER = "footer"
+
+  @binary_struct
+  class Packet:
+      magic: UInt32
+      payload_ptr: NamedOffset[PacketKey.PAYLOAD, ImageData]
+
+  writer.write_struct(Packet(magic=1))
+  writer.align_to(16)
+  writer.write_named_offset(PacketKey.PAYLOAD, ImageData(width=100, height=200))
+  ```
 
 
 #### 配列 (`FixedArray` & `Array`)

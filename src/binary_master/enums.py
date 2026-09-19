@@ -1,7 +1,7 @@
 """Endian and binary type enumerations."""
 
 from enum import Enum
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 
 class Endian(Enum):
@@ -59,3 +59,17 @@ UInt16 = BinaryType("UInt16", "H", 2)
 UInt32 = BinaryType("UInt32", "I", 4)
 UInt64 = BinaryType("UInt64", "Q", 8)
 Bool   = BinaryType("Bool",   "?", 1)
+
+
+def normalize_named_offset_key(key: Any) -> str:
+    """Normalize a NamedOffset key (str, Enum, or object) to a standard string identifier."""
+    if isinstance(key, str):
+        return key
+    if isinstance(key, Enum):
+        if isinstance(key.value, str):
+            return key.value
+        return f"{key.__class__.__name__}.{key.name}"
+    if hasattr(key, "name") and isinstance(key.name, str):
+        return key.name
+    return str(key)
+

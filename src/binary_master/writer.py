@@ -11,7 +11,7 @@ from typing import Any, IO, Iterable, Iterator, Literal, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from binary_master.bitstream import BitWriter
 
-from binary_master.enums import Endian, EndianType, normalize_endian
+from binary_master.enums import Endian, EndianType, normalize_endian, normalize_named_offset_key
 
 
 # Integer boundary constants
@@ -1089,21 +1089,22 @@ class BinaryWriter:
         """Get the currently active namespace path (empty string if at root)."""
         return "/".join(self._namespace_stack)
 
-    def _qualify_name(self, name: str) -> str:
+    def _qualify_name(self, name: Any) -> str:
         """Qualify a named offset key with the active namespace stack.
 
         If `name` starts with '/', it is treated as an absolute/root key
         and the leading slash is stripped. Otherwise, if inside a namespace,
         the active namespace path is prepended with '/'.
         """
-        if name.startswith("/"):
-            return name[1:]
+        str_name = normalize_named_offset_key(name)
+        if str_name.startswith("/"):
+            return str_name[1:]
         if self._namespace_stack:
-            return f"{'/'.join(self._namespace_stack)}/{name}"
-        return name
+            return f"{'/'.join(self._namespace_stack)}/{str_name}"
+        return str_name
 
     @contextmanager
-    def namespace(self, name: str = "", *, auto_id: bool = False) -> Iterator[str]:
+    def namespace(self, name: Any = "", *, auto_id: bool = False) -> Iterator[str]:
         """Create a scoped namespace context for NamedOffset keys.
 
         Inside this block, relative NamedOffset keys are automatically qualified
@@ -1120,7 +1121,8 @@ class BinaryWriter:
         Raises:
             ValueError: If `name` is empty and `auto_id` is False.
         """
-        prefix = name if name else ("scope" if auto_id else "")
+        str_name = normalize_named_offset_key(name) if name else ""
+        prefix = str_name if str_name else ("scope" if auto_id else "")
         if auto_id:
             idx = self._namespace_counters.get(prefix, 0)
             self._namespace_counters[prefix] = idx + 1
@@ -1139,17 +1141,19 @@ class BinaryWriter:
 
     def _register_named_offset_slot(
         self,
-        name: str,
+        name: Any,
         placeholder_pos: int,
         fmt_char: str = "I",
         endian: Optional[EndianType] = None,
         actual_base: int = 0,
         entry_idx: int = -1,
         *,
+        target_obj: Optional[Any] = None,
         _is_qualified: bool = False,
     ) -> None:
         """Internal method to register a placeholder slot for a named offset."""
-        qualified_name = name if _is_qualified else self._qualify_name(name)
+        str_name = normalize_named_offset_key(name)
+        qualified_name = str_name if _is_qualified else self._qualify_name(str_name)
         if qualified_name not in self._named_offset_slots:
             self._named_offset_slots[qualified_name] = []
         self._named_offset_slots[qualified_name].append({
@@ -1160,6 +1164,7 @@ class BinaryWriter:
             "entry_idx": entry_idx,
             "resolved": False,
             "target_offset": None,
+            "target_obj": target_obj,
         })
 
     def reserve_named_offset(
@@ -1260,6 +1265,12 @@ class BinaryWriter:
                 f"Named offset key {qualified_name!r} has already been resolved with write_named_offset. "
                 "Use rewrite_named_offset() to explicitly update it."
             )
+
+        if target is None:
+            for slot in self._named_offset_slots[qualified_name]:
+                if slot.get("target_obj") is not None:
+                    target = slot["target_obj"]
+                    break
 
         target_pos = self.tell()
 

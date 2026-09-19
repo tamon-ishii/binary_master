@@ -18,7 +18,7 @@ def _unwrap_literal_int(val: Any) -> Any:
     return val
 
 
-from binary_master.enums import Endian, EndianType, normalize_endian
+from binary_master.enums import Endian, EndianType, normalize_endian, normalize_named_offset_key
 from binary_master.exceptions import (
     ChecksumMismatchError,
     InvalidConstantError,
@@ -863,6 +863,50 @@ def _parse_offset_spec_args(args: tuple[Any, ...]) -> tuple[Any, Any]:
 T1 = TypeVar("T1")
 T2 = TypeVar("T2", default=Any)
 T3 = TypeVar("T3", default=Any)
+T4 = TypeVar("T4", default=Any)
+
+
+def _parse_named_offset_args(args: Any) -> tuple[Any, Optional[Any], Any, Any]:
+    """Parses arguments for NamedOffset: (key, target_type, offset_type, base_offset)."""
+    if not isinstance(args, tuple):
+        return args, None, UInt32, 0
+
+    key = args[0]
+    rest = args[1:]
+    target_type = None
+    offset_type = UInt32
+    base_offset = 0
+
+    for a in rest:
+        if _is_base_offset_arg(a):
+            base_offset = a
+        elif _is_offset_type_arg(a):
+            offset_type = a
+        elif isinstance(a, int) and a not in (1, 2, 4, 8) and base_offset == 0:
+            base_offset = a
+        else:
+            target_type = a
+
+    return key, target_type, offset_type, base_offset
+
+
+def _is_named_offset_spec(ftype: Any) -> bool:
+    """Check if ftype is a NamedOffset specification."""
+    return (
+        (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is NamedOffset)
+        or (get_origin(ftype) is NamedOffset)
+    )
+
+
+def _extract_named_offset_info(ftype: Any) -> tuple[Any, Optional[Any], Any, Any]:
+    """Extract (key, target_type, offset_type, base_offset) from a NamedOffset field type."""
+    if isinstance(ftype, tuple):
+        if len(ftype) >= 5 and ftype[0] is NamedOffset:
+            return ftype[1], ftype[2], ftype[3], ftype[4]
+        return _parse_named_offset_args(ftype[1:])
+    elif get_args(ftype):
+        return _parse_named_offset_args(get_args(ftype))
+    return None, None, UInt32, 0
 
 
 class Offset(Generic[T1, T2, T3]):
@@ -896,24 +940,30 @@ class Offset(Generic[T1, T2, T3]):
         return f"Offset(target={self.target!r}, offset={self.offset!r})"
 
 
-class NamedOffset(Generic[T1, T2, T3]):
-    """名前キーで参照される遅延解決オフセット: NamedOffset["key", OffsetType=UInt32, BaseOffset=0]"""
+class NamedOffset(Generic[T1, T2, T3, T4]):
+    """名前キーで参照される遅延解決オフセット:
+    NamedOffset["key"]
+    NamedOffset["key", TargetStruct]
+    NamedOffset["key", TargetStruct, OffsetType]
+    NamedOffset["key", TargetStruct, OffsetType, BaseOffset]
+    NamedOffset["key", OffsetType, BaseOffset]
+    """
 
-    def __init__(self, offset: Optional[int] = None):
+    def __init__(self, target: Any = None, offset: Optional[int] = None):
+        self.target = target
         self.offset = offset
 
+    def __getattr__(self, name: str) -> Any:
+        if self.target is not None and hasattr(self.target, name):
+            return getattr(self.target, name)
+        raise AttributeError(f"'NamedOffset' object has no attribute '{name}'")
+
     def __class_getitem__(cls, args):
-        if isinstance(args, tuple):
-            key = args[0]
-            offset_t, base_offset = _parse_offset_spec_args(args[1:])
-        else:
-            key = args
-            offset_t = UInt32
-            base_offset = 0
-        return cls, key, offset_t, base_offset
+        key, target_t, offset_t, base_offset = _parse_named_offset_args(args)
+        return cls, key, target_t, offset_t, base_offset
 
     def __repr__(self) -> str:
-        return f"NamedOffset(offset={self.offset!r})"
+        return f"NamedOffset(target={self.target!r}, offset={self.offset!r})"
 
 
 class Array(Generic[T]):
@@ -1192,7 +1242,7 @@ class _BinarySizeDescriptor:
         return 0
 
 
-def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool = True) -> int:
+def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool = True, instance: Any = None) -> int:
     """Calculate size of a single field, either statically or dynamically from an instance."""
     if get_origin(ftype) is Annotated:
         ftype = get_args(ftype)[0]
@@ -1237,7 +1287,11 @@ def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool =
             return 0
 
     # Static or shared evaluation
-    if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] in (Offset, NamedOffset)) or get_origin(ftype) in (Offset, NamedOffset):
+    if _is_named_offset_spec(ftype):
+        _, _, offset_t, _ = _extract_named_offset_info(ftype)
+        _, size, _ = _normalize_offset_type(offset_t)
+        return size
+    elif (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset) or get_origin(ftype) is Offset:
         if isinstance(ftype, tuple):
             offset_t = ftype[2] if len(ftype) >= 3 else UInt32
         else:
@@ -1385,7 +1439,7 @@ def offsetof(target: Any, field_name: str) -> int:
         if name == field_name:
             return current_offset
 
-        current_offset += _calculate_field_size(name, ftype, val, is_cls=is_cls)
+        current_offset += _calculate_field_size(name, ftype, val, is_cls=is_cls, instance=target if not is_cls else None)
 
     raise AttributeError(f"Field '{field_name}' not found in {cls.__name__}")
 
@@ -2104,7 +2158,11 @@ def _get_field_alignment(ftype: Any, val: Any = None) -> int:
 
     if ftype in (int, float) or isinstance(val, (int, float)):
         return 4
-    if (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] in (Offset, NamedOffset)) or get_origin(ftype) in (Offset, NamedOffset):
+    if _is_named_offset_spec(ftype):
+        _, _, offset_t, _ = _extract_named_offset_info(ftype)
+        _, size, _ = _normalize_offset_type(offset_t)
+        return size
+    elif (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is Offset) or get_origin(ftype) is Offset:
         if isinstance(ftype, tuple):
             offset_t = ftype[2] if len(ftype) >= 3 else UInt32
         else:
@@ -2358,28 +2416,22 @@ def write_struct(
                 raise TypeError(f"Offset field {name} expected binary_struct, OffsetTable, or int, got {type(target).__name__}")
             continue
 
-        # Check NamedOffset[Key, OffsetType, BaseOffset]
-        is_named_offset = (
-            (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is NamedOffset)
-            or (get_origin(ftype) is NamedOffset)
-        )
+        # Check NamedOffset[Key, TargetType, OffsetType, BaseOffset]
+        is_named_offset = _is_named_offset_spec(ftype)
         if is_named_offset:
-            key_name = ""
-            offset_t = UInt32
-            base_offset = 0
-            if isinstance(ftype, tuple):
-                if len(ftype) >= 2:
-                    key_name = ftype[1]
-                offset_t, base_offset = _parse_offset_spec_args(ftype[2:])
-            elif get_args(ftype):
-                args = get_args(ftype)
-                key_name = args[0]
-                offset_t, base_offset = _parse_offset_spec_args(args[1:])
+            key_arg, target_type, offset_t, base_offset = _extract_named_offset_info(ftype)
+            key_name = normalize_named_offset_key(key_arg)
 
             fmt_char, offset_size, offset_label = _normalize_offset_type(offset_t)
             qualified_key = writer._qualify_name(key_name) if hasattr(writer, "_qualify_name") else key_name
+            target_str = ""
+            if target_type is not None:
+                t_name = getattr(target_type, "__name__", str(target_type))
+                target_str = f", {t_name}"
             if offset_label != "UInt32":
-                type_label = f"NamedOffset[{qualified_key!r}, {offset_label}]"
+                type_label = f"NamedOffset[{qualified_key!r}{target_str}, {offset_label}]"
+            elif target_str:
+                type_label = f"NamedOffset[{qualified_key!r}{target_str}]"
             else:
                 type_label = f"NamedOffset[{qualified_key!r}]"
 
@@ -2391,6 +2443,7 @@ def write_struct(
             if offset_placeholder_idx >= 0 and offset_placeholder_idx < len(writer._entries):
                 writer._entries[offset_placeholder_idx].type_name = type_label
 
+            target_val = val if (val is not None and hasattr(val, "__binary__")) else None
             if hasattr(writer, "_register_named_offset_slot"):
                 writer._register_named_offset_slot(
                     key_name,
@@ -2399,6 +2452,7 @@ def write_struct(
                     endian=active_endian,
                     actual_base=actual_base,
                     entry_idx=offset_placeholder_idx,
+                    target_obj=target_val,
                 )
             continue
 
@@ -3032,19 +3086,10 @@ def read_struct(
                 kwargs[name] = target_offset
             continue
 
-        # Check NamedOffset[Key, OffsetType, BaseOffset]
-        is_named_offset = (
-            (isinstance(ftype, tuple) and len(ftype) >= 1 and ftype[0] is NamedOffset)
-            or (get_origin(ftype) is NamedOffset)
-        )
+        # Check NamedOffset[Key, TargetType, OffsetType, BaseOffset]
+        is_named_offset = _is_named_offset_spec(ftype)
         if is_named_offset:
-            offset_t = UInt32
-            base_offset = 0
-            if isinstance(ftype, tuple):
-                offset_t, base_offset = _parse_offset_spec_args(ftype[2:])
-            elif get_args(ftype):
-                args = get_args(ftype)
-                offset_t, base_offset = _parse_offset_spec_args(args[1:])
+            key_arg, target_type, offset_t, base_offset = _extract_named_offset_info(ftype)
 
             field_pos = reader.tell()
             actual_base = _resolve_base_offset(base_offset, struct_start_pos, field_pos)
@@ -3052,7 +3097,20 @@ def read_struct(
             fmt_char, offset_size, _ = _normalize_offset_type(offset_t)
             stored_offset = reader._unpack_read(fmt_char, offset_size, endian=active_endian)
             target_offset = stored_offset + actual_base
-            kwargs[name] = target_offset
+
+            if isinstance(target_type, str):
+                mod = sys.modules.get(cls.__module__)
+                if mod and hasattr(mod, target_type):
+                    target_type = getattr(mod, target_type)
+
+            if target_type and hasattr(target_type, "__binary__") and target_offset > 0:
+                saved_pos = reader.tell()
+                reader.seek(target_offset)
+                target_obj = read_struct(target_type, reader=reader, endian=active_endian)
+                reader.seek(saved_pos)
+                kwargs[name] = target_obj
+            else:
+                kwargs[name] = target_offset
             continue
 
         # Check OffsetTable[Count, OffsetType, BaseOffset]

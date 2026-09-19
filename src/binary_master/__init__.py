@@ -3,7 +3,7 @@ from typing import Literal
 L = Literal
 
 
-from .enums import Endian, EndianType, normalize_endian
+from .enums import Endian, EndianType, normalize_endian, normalize_named_offset_key
 
 from .writer import BinaryWriter, Writer, OffsetTableHandle
 from .reader import BinaryReader, Reader
@@ -129,7 +129,7 @@ from .debug import (
 
 
 
-__version__ = "0.3.7"
+__version__ = "0.3.8"
 
 
 __all__ = [
@@ -185,6 +185,7 @@ __all__ = [
     "NamedOffsetError",
     "DuplicateNamedOffsetError",
     "NamedOffsetNotFoundError",
+    "normalize_named_offset_key",
     "ChecksumBase",
     "CRC32",
     "CRC16",

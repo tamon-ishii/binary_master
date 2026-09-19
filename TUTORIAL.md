@@ -500,28 +500,57 @@ print(restored.table_offset)  # => [8, 14] (各 LeafItem への相対オフセ�
 
 ---
 
-### 3.3 自由配置・ヘッダー先行書き込み (`NamedOffset["key"]`)
+### 3.3 自由配置・ヘッダー先行書き込み (`NamedOffset[Key, Target=None]`)
 
-`Offset[...]` は親構造体の直後に自動追記されますが、**「ヘッダーを先に書いて、その後に任意の文字列や可変長データを挟み、後からオフセットの指す先を確定させたい」** 場合には、`NamedOffset["key"]` を使用します。
+`Offset[...]` は親構造体の直後に自動追記されますが、**「ヘッダーを先に書いて、その後に任意の文字列や可変長データを挟み、後からオフセットの指す先を確定させたい」** 場合には、`NamedOffset` を使用します。
+さらに、**型ヒント併用（ターゲット構造体型の指定）** と **Enum / Symbol キー** にも対応しており、デシリアライズ時の自動デリファレンスやタイポ防止が可能です。
 
 ```python
-from binary_master import binary_struct, BinaryStruct, UInt16, BinaryWriter, NamedOffset, read_struct
+from enum import Enum
+from binary_master import (
+    binary_struct,
+    BinaryStruct,
+    UInt16,
+    BinaryWriter,
+    NamedOffset,
+    read_struct,
+    FixedString,
+)
+
+# 1. キー名を Enum で定義してタイポを防止
+class SectionKey(str, Enum):
+    PAYLOAD = "payload"
+    METADATA = "metadata"
+
+@binary_struct
+class ChunkPayload:
+    width: UInt16
+    height: UInt16
 
 @binary_struct
 class Header(BinaryStruct):
     magic: UInt16
-    offset: NamedOffset["payload_pos"]  # "payload_pos" というキー名でオフセット枠を宣言
+    # 第2引数にターゲット型を指定することで、デシリアライズ時に自動デリファレンス！
+    payload: NamedOffset[SectionKey.PAYLOAD, ChunkPayload]
 
+# 書き込み
 writer = BinaryWriter()
-h = Header(magic=0x1234)
+p = ChunkPayload(width=800, height=600)
+# インスタンス生成時にターゲット構造体を渡すとスロットに保持されます
+writer.write_struct(Header(magic=0x1234, payload=p))
+writer.write_string("任意の可変長メタデータ...")  # 途中にデータを挟む
 
-writer.write_struct(h)                    # 1. まずヘッダーを出力（オフセット位置は未確定）
-writer.write_string("任意の可変長データ...") # 2. 途中に自由なデータを書き込む
-writer.write_named_offset("payload_pos")  # 3. ここで "payload_pos" のオフセットを現在位置に確定・自動バックパッチ！
+# write_named_offset(Key) を呼ぶと、保持されていた構造体が自動配置されオフセットがバックパッチされる！
+writer.write_named_offset(SectionKey.PAYLOAD)
 
+# 読み込み（自動デリファレンス）
 raw = writer.to_bytes()
 restored = read_struct(Header, raw)
-print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
+
+# restored.payload は int としてオフセット値を持ちつつ、ターゲット構造体の属性を透過プロキシ！
+print(int(restored.payload))       # => オフセット数値
+print(restored.payload.width)       # => 800 (直接アクセス可能)
+print(restored.payload.target.height)  # => 600 (.target でもアクセス可能)
 ```
 
 #### 同一キーの多重登録と例外安全性
@@ -531,7 +560,7 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
 
 #### 名前空間スコープ (`with writer.namespace(...)`)
 
-同じ構造体クラス（例: `ChunkHeader`）を複数のチャンクで繰り返し書き出す際、同一のキー名（例: `"payload"`）がグローバル空間でバッティングするのを防ぐため、`with writer.namespace(...)` コンテキストマネージャでスコープを分割できます。
+同じ構造体クラス（例: `ChunkHeader`）を複数のチャンクで繰り返し書き出す際、同一のキー名（例: `"payload"` や `SectionKey.PAYLOAD`）がグローバル空間でバッティングするのを防ぐため、`with writer.namespace(...)` コンテキストマネージャでスコープを分割できます。
 
 ```python
 from binary_master import (
@@ -551,7 +580,7 @@ class ChunkPayload:
 @binary_struct
 class ChunkHeader:
     chunk_id: UInt16
-    payload_offset: NamedOffset["payload"]  # 汎用的なキー名で定義
+    payload_offset: NamedOffset["payload", ChunkPayload]  # 汎用的なキー名で定義
 
 writer = BinaryWriter()
 
@@ -567,12 +596,12 @@ for i in range(2):
 
 data = writer.to_bytes()
 
-# 読み込み検証: ヘッダーのオフセットから直接ペイロードをデシリアライズ可能
+# 読み込み検証: 型ヒント付き NamedOffset によりオフセット位置のデシリアライズもシームレス
 h0 = read_struct(ChunkHeader, data[:6])
-p0 = read_struct(ChunkPayload, data[h0.payload_offset:h0.payload_offset + 4])
-print(f"Chunk 1 payload: {p0.width}x{p0.height}")  # => 100x200
+print(f"Chunk 1 offset: {int(h0.payload_offset)}")
 ```
 
+- **Enum 名前空間のサポート**: `with writer.namespace(SectionKey.PAYLOAD):` のように Enum を名前空間名に渡すことも可能です。
 - **自動採番 (`auto_id=True`)**: ループ内で `with writer.namespace("chunk", auto_id=True):` とすると、`chunk_0`, `chunk_1`... と自動で連番が付与されます。
 - **明示的な名前空間**: `with writer.namespace("chunk_a"):` のように任意の文字列でスコープを指定することも可能です。
 - **ネスト（階層化）**: `with writer.namespace("sec"): with writer.namespace("sub"):` のようにネストすると `"sec/sub/key"` と連結されます。

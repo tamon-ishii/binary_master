@@ -42,7 +42,7 @@ L = Literal
 type FixedArray[T, *Args] = bytes | list[T]
 type Array[T] = list[T]
 type Offset[Target, *Args] = Target | None
-type NamedOffset[Key, *Args] = Any
+type NamedOffset[Key, Target = Any, *Args] = Target | None
 type OffsetTable[Count, *Args] = list[Any] | None
 type Bits[Width] = int
 type Variant[Tag, Mapping, *Args] = Any

@@ -144,3 +144,117 @@ def test_named_offset_direct_reserve_in_namespace():
         writer.write_named_offset("my_offset")
 
     assert struct.unpack("<I", writer.to_bytes()[0:4])[0] == 14
+
+
+def test_named_offset_with_enum_keys():
+    """Verify that Enum members can be used as NamedOffset keys seamlessly."""
+    from enum import Enum
+
+    class ChunkKey(Enum):
+        HEADER = "header_key"
+        BODY = "body_key"
+
+    @binary_struct
+    class EnumKeyStruct:
+        magic: UInt32
+        body_offset: NamedOffset[ChunkKey.BODY]
+
+    writer = BinaryWriter()
+    writer.write_struct(EnumKeyStruct(magic=0x11223344))
+    writer.write_bytes(b"padding")  # 7 bytes
+    writer.write_named_offset(ChunkKey.BODY, target=b"PAYLOAD_DATA")
+
+    raw = writer.to_bytes()
+    assert len(raw) == 4 + 4 + 7 + len(b"PAYLOAD_DATA")
+    offset_val = struct.unpack("<I", raw[4:8])[0]
+    assert offset_val == 4 + 4 + 7  # 15
+
+
+def test_named_offset_with_target_type_auto_dereferencing():
+    """Verify NamedOffset[key, TargetStruct] automatically deserializes TargetStruct on read."""
+    @binary_struct
+    class ImageData:
+        width: UInt16
+        height: UInt16
+
+    @binary_struct
+    class ImageContainer:
+        magic: UInt32
+        image: NamedOffset["img_payload", ImageData]
+
+    payload = ImageData(width=640, height=480)
+    container = ImageContainer(magic=0x494D4730, image=payload)
+
+    writer = BinaryWriter()
+    writer.write_struct(container)
+    writer.write_string("some arbitrary metadata string")
+    # write_named_offset without explicit target automatically uses container.image!
+    writer.write_named_offset("img_payload")
+
+    data = writer.to_bytes()
+
+    # Deserialize: restored.image should be an instance of ImageData!
+    restored = ImageContainer.from_bytes(data)
+    assert restored.magic == 0x494D4730
+    assert isinstance(restored.image, ImageData)
+    assert restored.image.width == 640
+    assert restored.image.height == 480
+
+
+def test_named_offset_with_target_type_and_enum_key():
+    """Verify combination of Enum key, target type, offset type, and relative base."""
+    from enum import Enum
+    from binary_master import Base
+
+    class MyKeys(Enum):
+        SUB_RECORD = "sub_record"
+
+    @binary_struct
+    class SubRecord:
+        val: UInt32
+
+    @binary_struct
+    class MasterRecord:
+        magic: UInt32
+        sub: NamedOffset[MyKeys.SUB_RECORD, SubRecord, UInt16, Base.SELF]
+
+    sub_obj = SubRecord(val=0xDEADBEEF)
+    master = MasterRecord(magic=0xAA55AA55, sub=sub_obj)
+
+    writer = BinaryWriter()
+    writer.write_struct(master)
+    writer.pad(8)
+    writer.write_named_offset(MyKeys.SUB_RECORD)
+
+    data = writer.to_bytes()
+    # Header: magic(4) + sub(2) = 6 bytes. Base.SELF is offset 0.
+    # Target starts at 6 + 8 = 14 bytes.
+    stored_off = struct.unpack("<H", data[4:6])[0]
+    assert stored_off == 14
+
+    restored = MasterRecord.from_bytes(data)
+    assert isinstance(restored.sub, SubRecord)
+    assert restored.sub.val == 0xDEADBEEF
+
+
+def test_named_offset_type_label_in_manual():
+    """Verify that generate_manual renders target type and enum key in the specification table."""
+    from enum import Enum
+    from binary_master.manual import generate_manual
+
+    class FileKeys(Enum):
+        PAYLOAD = "payload"
+
+    @binary_struct
+    class ChunkPayload:
+        code: UInt32
+
+    @binary_struct
+    class Container:
+        magic: UInt32
+        payload_ptr: NamedOffset[FileKeys.PAYLOAD, ChunkPayload, UInt16]
+
+    md = generate_manual(Container, lang="en")
+    assert "`NamedOffset['payload', ChunkPayload, UInt16]`" in md
+
+

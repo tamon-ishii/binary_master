@@ -49,7 +49,7 @@ from binary_master import (
     CString,             # CString: Null-terminated string (str)
     PrefixedString,      # PrefixedString[N]: Length-prefixed string (str)
     Offset,              # Offset[Target, OffsetType=UInt32, BaseOffset=0]
-    NamedOffset,         # NamedOffset["key", OffsetType=UInt32, BaseOffset=0]
+    NamedOffset,         # NamedOffset[Key, Target=None, OffsetType=UInt32, BaseOffset=0]
     OffsetTable,         # OffsetTable[Count, OffsetType=UInt32, BaseOffset=0]
     Variant,             # Variant[tag_field_name, {tag_val: StructCls, ...}]
     Array,               # Array[T]: Dynamic length sequence
@@ -149,7 +149,7 @@ from binary_master import (
 | `CountOf[Type, target]` | `sizeof(Type)` | `int` | Auto-calculates target element count on write; bounds target array read on deserialization. |
 | `Bits[N]` | `N` bits | `int` | Bitfield slice. Must be within struct decorated with `@binary_struct(bits=Total)`. |
 | `Offset[Target, Type, Base]` | 1, 2, 4, or 8 bytes | Instance of `Target` or `int` | Pointer offset. Backpatched automatically on write; auto-dereferenced on read. Default: `UInt32`, Base `0`. |
-| `NamedOffset[Key, Type, Base]` | 1, 2, 4, or 8 bytes | `int` | Named placeholder offset resolved via `writer.write_named_offset("key")`. |
+| `NamedOffset[Key, Target, Type, Base]` | 1, 2, 4, or 8 bytes | `Target` instance (if typed) or `int` | Named placeholder offset resolved via `writer.write_named_offset(key)`. Supports `Enum` keys and auto-dereference on read. |
 | `OffsetTable[Count, Type, Base]` | `Count * sizeof(Type)` | `list[Target]` or `OffsetTableHandle` | Fixed-count table of pointer offsets. |
 | `Variant[tag_field, mapping]` | Dynamic | Target struct instance | Polymorphic tagged union dispatched by `tag_field`. |
 | `Base.SELF`, `Base.STRUCT`, `Base.FIELD` | 0 (Symbolic) | `RelativeBase` | Offset base origin. Supports arithmetic: `Base.SELF + 0x20`. |
@@ -308,22 +308,45 @@ container.table_offset = [
 raw = container.to_bytes()
 ```
 
-#### NamedOffset for Arbitrary Positioning (`NamedOffset["key"]`)
-When header is written first, arbitrary data/padding is streamed, and target offset is determined later:
+#### NamedOffset for Arbitrary Positioning (`NamedOffset[Key, Target=None]`)
+When header is written first, arbitrary data/padding is streamed, and target offset is determined later. Supports typed targets for automatic deserialization dereference and `Enum`/`Symbol` keys to prevent typos.
 ```python
-from binary_master import BinaryWriter, NamedOffset, DuplicateNamedOffsetError, NamedOffsetNotFoundError
+from enum import Enum
+from binary_master import BinaryWriter, BinaryReader, NamedOffset, binary_struct, UInt16, FixedString
+
+class Slot(Enum):
+    PAYLOAD = "payload"
+    FOOTER = "footer"
+
+@binary_struct
+class ChunkPayload:
+    tag: FixedString[4]
+    data: UInt16
 
 @binary_struct
 class Header:
     magic: UInt16
-    payload_offset: NamedOffset["my_payload"]
+    # Typed NamedOffset with Enum key: auto-dereferenced on read!
+    payload_offset: NamedOffset[Slot.PAYLOAD, ChunkPayload]
 
+# 1. Write Header & Payload
 writer = BinaryWriter()
-writer.write_struct(Header(magic=0x1234))
-writer.write_string("variable length padding or metadata...")
-# Backpatch "my_payload" offset to current position (or write target struct):
-writer.write_named_offset("my_payload") 
-# Multiple offsets can share the same key (e.g. multiple pointers referencing the same payload); all will be backpatched.
+payload = ChunkPayload(tag="DATA", data=0x42)
+# Provide payload directly in Header instance, or omit and pass to write_named_offset:
+writer.write_struct(Header(magic=0x1234, payload_offset=payload))
+writer.write_string("arbitrary padding / variable metadata...")
+# Backpatch offset; if target struct was provided in Header, target is automatically placed:
+writer.write_named_offset(Slot.PAYLOAD)
+
+# 2. Read & Auto-Dereference
+reader = BinaryReader(writer.to_bytes())
+hdr = reader.read_struct(Header)
+# payload_offset acts as an int (the offset value) and proxies fields to the target struct:
+assert int(hdr.payload_offset) == 0x2e
+assert hdr.payload_offset.tag == "DATA"
+assert hdr.payload_offset.target.data == 0x42
+
+# Multiple offsets can share the same key (all will be backpatched).
 # Calling write_named_offset more than once on the same key raises DuplicateNamedOffsetError (use rewrite_named_offset to re-patch).
 # Calling write_named_offset or rewrite_named_offset with unknown key raises NamedOffsetNotFoundError.
 ```
@@ -333,12 +356,13 @@ Avoid key collisions across repeated chunks/sections without altering struct def
 ```python
 with writer.namespace("chunk_0"):
     writer.write_struct(Header(magic=0x1111))
-    writer.write_named_offset("my_payload")  # Qualified as "chunk_0/my_payload"
+    writer.write_named_offset("payload")  # Qualified as "chunk_0/payload"
 
 with writer.namespace("chunk_1"):
     writer.write_struct(Header(magic=0x2222))
-    writer.write_named_offset("my_payload")  # Qualified as "chunk_1/my_payload" (no collision)
+    writer.write_named_offset("payload")  # Qualified as "chunk_1/payload" (no collision)
 
+# Supports Enum namespaces: with writer.namespace(Slot.PAYLOAD): ...
 # Supports nesting: with writer.namespace("sec"): with writer.namespace("sub"): ...
 # Root escape with leading slash: NamedOffset["/global_footer"] bypasses active namespace.
 # Auto-incrementing IDs: with writer.namespace("chunk", auto_id=True): (generates chunk_0, chunk_1...)
