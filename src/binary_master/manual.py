@@ -815,6 +815,10 @@ def generate_packet_diagram(
     relative_offset: bool = False,
     include_values: bool = False,
     large_data_threshold: int = 64,
+    compact_tables: bool = False,
+    compact_large_entries: bool = False,
+    max_field_bits: Optional[int] = None,
+    lang: Literal["auto", "en", "ja"] = "auto",
 ) -> str:
     """Generate a Mermaid packet-beta diagram for the overall binary layout."""
     if not entries:
@@ -842,37 +846,61 @@ def generate_packet_diagram(
 
     base_offset = entries[0].offset if (relative_offset and entries) else 0
     current_bit = 0
+    last_physical_end = base_offset
+    is_ja = resolve_language(lang) == "ja"
 
     diagram_entries = _aggregate_entries_for_diagram(entries, relative_offset=relative_offset)
     for e in diagram_entries:
-        entry_start_bit = (e.offset - base_offset) * 8
-        entry_end_bit = entry_start_bit + (e.size * 8)
-
-        if entry_start_bit > current_bit:
+        if e.offset > last_physical_end:
+            gap_bytes = e.offset - last_physical_end
+            gap_bits = gap_bytes * 8
             gap_start = current_bit
-            gap_end = entry_start_bit - 1
-            gap_bytes = (gap_end - gap_start + 1) // 8
+            gap_end = current_bit + gap_bits - 1
             if large_data_threshold > 0 and gap_bytes >= large_data_threshold:
                 lines.append(f'{gap_start}-{gap_end}: "(padding, {gap_bytes}B)"')
             elif gap_start == gap_end:
                 lines.append(f'{gap_start}: "(padding)"')
             else:
                 lines.append(f'{gap_start}-{gap_end}: "(padding)"')
-            current_bit = entry_start_bit
+            current_bit = gap_end + 1
+
+        last_physical_end = e.offset + e.size
+        raw_bits = e.size * 8
+
+        is_compact = False
+        if compact_tables and getattr(e, "_is_indexed_summary", False):
+            target_max = max_field_bits if max_field_bits is not None else bits_per_row
+            if raw_bits > target_max:
+                is_compact = True
+        elif compact_large_entries and max_field_bits is not None and raw_bits > max_field_bits:
+            is_compact = True
+        elif compact_large_entries and large_data_threshold > 0 and e.size >= large_data_threshold:
+            if raw_bits > bits_per_row * 2:
+                is_compact = True
+
+        if is_compact:
+            cap_bits = max_field_bits if max_field_bits is not None else bits_per_row
+            rem = (bits_per_row - (current_bit % bits_per_row)) % bits_per_row
+            span_bits = (rem + cap_bits) if rem > 0 else cap_bits
+        else:
+            span_bits = raw_bits
 
         if expand_bitfields and e.subfields:
+            entry_start_bit = current_bit
+            entry_end_bit = current_bit + span_bits
             sorted_subs = sorted(e.subfields, key=lambda s: s.get("bit_start", 0))
+            sub_current_bit = entry_start_bit
             for sub in sorted_subs:
                 b_start = entry_start_bit + sub.get("bit_start", 0)
                 b_end = entry_start_bit + sub.get("bit_end", sub.get("bit_start", 0) + sub.get("width", 1))
-                if b_start > current_bit:
-                    g_start = current_bit
+                if b_start > sub_current_bit:
+                    g_start = sub_current_bit
                     g_end = b_start - 1
                     if g_start == g_end:
                         lines.append(f'{g_start}: "(reserved)"')
                     else:
                         lines.append(f'{g_start}-{g_end}: "(reserved)"')
-                    current_bit = b_start
+                    sub_current_bit = b_start
 
                 s_start = b_start
                 s_end = b_end - 1
@@ -884,19 +912,19 @@ def generate_packet_diagram(
                     lines.append(f'{s_start}: "{label}"')
                 else:
                     lines.append(f'{s_start}-{s_end}: "{label}"')
-                current_bit = b_end
+                sub_current_bit = b_end
 
-            if current_bit < entry_end_bit:
-                g_start = current_bit
+            if sub_current_bit < entry_end_bit:
+                g_start = sub_current_bit
                 g_end = entry_end_bit - 1
                 if g_start == g_end:
                     lines.append(f'{g_start}: "(reserved)"')
                 else:
                     lines.append(f'{g_start}-{g_end}: "(reserved)"')
-                current_bit = entry_end_bit
+            current_bit = entry_end_bit
         else:
-            s_start = entry_start_bit
-            s_end = entry_end_bit - 1
+            s_start = current_bit
+            s_end = current_bit + span_bits - 1
             name = e.name or e.type_name
             if getattr(e, "_is_rep_summary", False):
                 label = f"{name} ({e.size}B)"
@@ -917,12 +945,17 @@ def generate_packet_diagram(
                         label = f"{e.type_name} ({e.size}B)"
             else:
                 label = f"{name} ({e.type_name})"
+
+            if is_compact:
+                compact_tag = " [縮約]" if is_ja else " [compact]"
+                label = f"{label}{compact_tag}"
+
             label = label.replace('"', '\\"')
             if s_start == s_end:
                 lines.append(f'{s_start}: "{label}"')
             else:
                 lines.append(f'{s_start}-{s_end}: "{label}"')
-            current_bit = entry_end_bit
+            current_bit = s_end + 1
 
     lines.append("```")
     return "\n".join(lines)
@@ -945,6 +978,9 @@ def generate_manual(
     include_section_offsets: bool = False,
     large_data_threshold: int = 64,
     full_packet_diagram: bool = False,
+    compact_tables: bool = True,
+    compact_large_entries: bool = False,
+    max_packet_field_bits: Optional[int] = None,
     **kwargs: Any,
 ) -> str:
     """Generate a comprehensive Markdown specification manual with Mermaid diagrams.
@@ -1096,6 +1132,10 @@ def generate_manual(
                     bit_width=bit_width,
                     include_values=include_values,
                     large_data_threshold=large_data_threshold,
+                    compact_tables=compact_tables,
+                    compact_large_entries=compact_large_entries,
+                    max_field_bits=max_packet_field_bits,
+                    lang=lang,
                 )
             )
             sections.append("")
@@ -1119,6 +1159,10 @@ def generate_manual(
                         bit_width=bit_width,
                         include_values=include_values,
                         large_data_threshold=large_data_threshold,
+                        compact_tables=compact_tables,
+                        compact_large_entries=compact_large_entries,
+                        max_field_bits=max_packet_field_bits,
+                        lang=lang,
                     )
                 )
                 sections.append("")
@@ -1333,6 +1377,10 @@ def generate_manual(
                     relative_offset=True,
                     include_values=False,
                     large_data_threshold=large_data_threshold,
+                    compact_tables=compact_tables,
+                    compact_large_entries=compact_large_entries,
+                    max_field_bits=max_packet_field_bits,
+                    lang=lang,
                 )
                 if sec_diag:
                     sections.append(sec_diag)
@@ -1350,6 +1398,10 @@ def generate_manual(
                     relative_offset=True,
                     include_values=include_values,
                     large_data_threshold=large_data_threshold,
+                    compact_tables=compact_tables,
+                    compact_large_entries=compact_large_entries,
+                    max_field_bits=max_packet_field_bits,
+                    lang=lang,
                 )
                 if diag:
                     sections.append(diag)
@@ -1447,6 +1499,10 @@ def generate_manual(
                         relative_offset=True,
                         include_values=False,
                         large_data_threshold=large_data_threshold,
+                        compact_tables=compact_tables,
+                        compact_large_entries=compact_large_entries,
+                        max_field_bits=max_packet_field_bits,
+                        lang=lang,
                     )
                     if sec_diag:
                         sections.append(sec_diag)
@@ -1503,6 +1559,10 @@ def generate_manual(
                         relative_offset=True,
                         include_values=include_values,
                         large_data_threshold=large_data_threshold,
+                        compact_tables=compact_tables,
+                        compact_large_entries=compact_large_entries,
+                        max_field_bits=max_packet_field_bits,
+                        lang=lang,
                     )
                     if sec_diag:
                         sections.append(sec_diag)
@@ -1549,6 +1609,10 @@ def generate_manual(
                                     relative_offset=True,
                                     include_values=include_values,
                                     large_data_threshold=large_data_threshold,
+                                    compact_tables=compact_tables,
+                                    compact_large_entries=compact_large_entries,
+                                    max_field_bits=max_packet_field_bits,
+                                    lang=lang,
                                 )
                                 if s_diag:
                                     sections.append(s_diag)
@@ -1603,6 +1667,10 @@ def generate_manual(
                                 relative_offset=True,
                                 include_values=False,
                                 large_data_threshold=large_data_threshold,
+                                compact_tables=compact_tables,
+                                compact_large_entries=compact_large_entries,
+                                max_field_bits=max_packet_field_bits,
+                                lang=lang,
                             )
                             if v_diag:
                                 sections.append(v_diag)
@@ -1696,6 +1764,9 @@ def generate_html(
     include_section_offsets: bool = False,
     large_data_threshold: int = 64,
     full_packet_diagram: bool = False,
+    compact_tables: bool = True,
+    compact_large_entries: bool = False,
+    max_packet_field_bits: Optional[int] = None,
     **kwargs: Any,
 ) -> str:
     """Generate a standalone, interactive HTML specification manual with an embedded hex inspector.
@@ -1830,6 +1901,10 @@ def generate_html(
             bits_per_row=bits_per_row,
             include_values=include_values,
             large_data_threshold=large_data_threshold,
+            compact_tables=compact_tables,
+            compact_large_entries=compact_large_entries,
+            max_field_bits=max_packet_field_bits,
+            lang=lang,
         )
         clean_p = re.sub(r"^```mermaid\s*", "", p_diag).rstrip("`\n")
         mermaid_blocks.append(clean_p)

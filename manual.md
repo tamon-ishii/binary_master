@@ -38,7 +38,7 @@ flowchart TD
 packet-beta
 title ImageHeader レイアウト
 0-31: "magic (UInt32)"
-32-1631: "offset_table (OffsetTable[100, UInt16], 200B)"
+32-63: "offset_table (OffsetTable[100, UInt16], 200B) [縮約]"
 ```
 
 | オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |

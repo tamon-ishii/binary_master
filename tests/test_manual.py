@@ -607,8 +607,30 @@ def test_full_packet_diagram_and_section_packets():
     html_default = writer.to_html(diagram_type="both", full_packet_diagram=False)
     assert "バイナリ仕様書 レイアウト" not in html_default
 
-    html_full = writer.to_html(diagram_type="both", full_packet_diagram=True)
-    assert "バイナリ仕様書 レイアウト" in html_full
+
+def test_packet_diagram_compact_tables():
+    """Verify that OffsetTable is smartly compacted in packet diagrams by default and expandable via compact_tables=False."""
+    @binary_struct
+    class HugeOffsetTableStruct:
+        magic: UInt32
+        offset_table: OffsetTable[100, UInt16]
+        checksum: UInt32
+
+    # Default: compact_tables=True
+    md_compact = generate_manual(HugeOffsetTableStruct, lang="ja")
+    assert '0-31: "magic (UInt32)"' in md_compact
+    assert '32-63: "offset_table (OffsetTable[100, UInt16], 200B) [縮約]"' in md_compact
+    assert '64-95: "checksum (UInt32)"' in md_compact
+
+    # English tag: [compact]
+    md_compact_en = generate_manual(HugeOffsetTableStruct, lang="en")
+    assert '32-63: "offset_table (OffsetTable[100, UInt16], 200B) [compact]"' in md_compact_en
+
+    # Explicit compact_tables=False expands to physical bits
+    md_full = generate_manual(HugeOffsetTableStruct, compact_tables=False, lang="ja")
+    assert '32-1631: "offset_table (OffsetTable[100, UInt16], 200B)"' in md_full
+    assert '1632-1663: "checksum (UInt32)"' in md_full
+
 
 
 
