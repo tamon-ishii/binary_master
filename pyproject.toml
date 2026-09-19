@@ -3,8 +3,13 @@ name = "binary-master"
 version = "0.3.8"
 
 requires-python = ">=3.14"
-dependencies = [
+dependencies = []
+
+[dependency-groups]
+dev = [
     "pytest>=9.1.1",
+    "mypy>=1.15.0",
+    "ruff>=0.9.9",
 ]
 
 [project.scripts]
@@ -12,3 +17,20 @@ binary-master = "binary_master.cli:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501", "E402", "E741"]
+
+[tool.mypy]
+python_version = "3.14"
+packages = ["binary_master"]
+mypy_path = "src"
+strict_optional = true
+warn_unused_ignores = true
+check_untyped_defs = true

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, IO, Optional, Union
+from typing import IO, Any, Optional, Union
 
 from binary_master.code_gen.c import (
     generate_c_choice,
@@ -134,6 +134,7 @@ __all__ = [
     "generate_c_header",
     "write_c_header",
     "generate_c_struct",
+    "generate_c_choice",
     "generate_rust_code",
     "write_rust",
     "generate_rust_struct",

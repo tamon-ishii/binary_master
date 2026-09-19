@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import struct
 import zlib
-from typing import Any, Callable, Generic, Optional, TypeVar, Union
+from typing import Any, Callable, Optional, cast
 
 
 def calc_crc32(data: bytes | bytearray | memoryview) -> int:
@@ -83,7 +82,7 @@ def register_checksum_algorithm(name: str, func: Callable[[bytes], int], size: i
 def get_checksum_algorithm(name_or_func: str | Callable[[bytes], int]) -> tuple[Callable[[bytes], int], int]:
     """Resolve a checksum algorithm and its byte size."""
     if callable(name_or_func):
-        return name_or_func, 4
+        return cast(Callable[[bytes], int], name_or_func), 4
     key = str(name_or_func).lower()
     if key in _ALGORITHMS:
         return _ALGORITHMS[key]

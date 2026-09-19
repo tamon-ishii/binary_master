@@ -7,10 +7,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
+    IO,
     Any,
     Callable,
     Dict,
-    IO,
     List,
     Literal,
     Mapping,
@@ -28,7 +28,6 @@ from binary_master.manual import (
     resolve_language,
 )
 from binary_master.reader import BinaryReader
-
 
 
 @dataclass
@@ -154,7 +153,7 @@ class BuilderReadResult(dict):
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to a plain dictionary recursively."""
-        out = {}
+        out: dict[str, Any] = {}
         for k in dict.keys(self):
             v = dict.__getitem__(self, k)
             if isinstance(v, BuilderReadResult):
@@ -801,9 +800,9 @@ class BinaryBuilder:
                     rep_lbl = "繰り返し回数" if is_ja else "Repetition Count"
                     sections.append(f"> [!NOTE]\n> **{rep_lbl}**: `{elem.count}`\n")
 
-                doc = elem.desc or getattr(elem.struct_cls, "__doc__", "") or ""
-                if doc:
-                    sections.append(f"{inspect.cleandoc(doc)}\n")
+                doc_str = elem.desc or getattr(elem.struct_cls, "__doc__", "") or ""
+                if doc_str:
+                    sections.append(f"{inspect.cleandoc(doc_str)}\n")
 
                 if is_ja:
                     sections.append(f"- **合計サイズ**: {total_size} バイト (`0x{total_size:04X}`)\n")
@@ -1465,13 +1464,13 @@ class BinaryBuilder:
                 if elem.count is not None:
                     # Repeated struct
                     n_count = self._resolve_count(elem.count, result)
-                    items = [
+                    items: list[Any] = [
                         reader.read_struct(elem.struct_cls, endian=endian or self.default_endian)
                         for _ in range(n_count)
                     ]
                     result[key] = items
                 else:
-                    obj = reader.read_struct(elem.struct_cls, endian=endian or self.default_endian)
+                    obj: Any = reader.read_struct(elem.struct_cls, endian=endian or self.default_endian)
                     result[key] = obj
 
             elif isinstance(elem, ChoiceElement):
@@ -1480,7 +1479,7 @@ class BinaryBuilder:
                 variant_cls = self._match_variant(elem.variants, tag_val)
                 if variant_cls is None:
                     raise ValueError(f"Tag value {tag_val!r} did not match any variant for choice '{elem.name}'")
-                variant_obj = reader.read_struct(variant_cls, endian=endian or self.default_endian)
+                variant_obj: Any = reader.read_struct(variant_cls, endian=endian or self.default_endian)
                 result[elem.name] = variant_obj
 
             elif isinstance(elem, FieldElement):
@@ -1545,9 +1544,9 @@ class BinaryBuilder:
                 key = elem.name or elem.struct_cls.__name__
                 if elem.count is not None:
                     n_count = self._resolve_count(elem.count, result)
-                    items = []
+                    items: list[Any] = []
                     for _ in range(n_count):
-                        obj = reader.read_struct(elem.struct_cls, endian=endian or self.default_endian)
+                        obj: Any = reader.read_struct(elem.struct_cls, endian=endian or self.default_endian)
                         writer.write_struct(obj)
                         items.append(obj)
                     result[key] = items
@@ -1561,7 +1560,7 @@ class BinaryBuilder:
                 variant_cls = self._match_variant(elem.variants, tag_val)
                 if variant_cls is None:
                     raise ValueError(f"Tag value {tag_val!r} did not match any variant for choice '{elem.name}'")
-                variant_obj = reader.read_struct(variant_cls, endian=endian or self.default_endian)
+                variant_obj: Any = reader.read_struct(variant_cls, endian=endian or self.default_endian)
                 writer.write_struct(variant_obj)
                 result[elem.name] = variant_obj
 

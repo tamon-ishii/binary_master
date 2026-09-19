@@ -53,8 +53,8 @@ def _extract_target(
     Returns:
         (data_bytes, entries_list, cursor_offset_or_None, target_description)
     """
-    from binary_master.writer import BinaryWriter
     from binary_master.reader import BinaryReader
+    from binary_master.writer import BinaryWriter
 
     if isinstance(target, BinaryWriter):
         return target.to_bytes(), list(target.entries), target.tell(), "BinaryWriter"

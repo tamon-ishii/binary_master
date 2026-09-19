@@ -6,8 +6,9 @@ import inspect
 import re
 from pathlib import Path
 from typing import (
-    Any,
     IO,
+    Annotated,
+    Any,
     List,
     Optional,
     Set,
@@ -15,10 +16,10 @@ from typing import (
     Union,
     get_args,
     get_origin,
-    Annotated,
 )
 
 from binary_master.binary_struct import (
+    Bool,
     FixedArray,
     Float16,
     Float32,
@@ -33,7 +34,6 @@ from binary_master.binary_struct import (
     UInt16,
     UInt32,
     UInt64,
-    Bool,
 )
 
 
@@ -92,7 +92,24 @@ def c_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
         return "float", None, None
     if field_type is Float64:
         return "double", None, None
-    if field_type is bool or field_type is Bool or (isinstance(field_type, type) and issubclass(field_type, Bool)):
+    import enum
+
+    from binary_master.binary_struct import (
+        Bytes,
+        ConstantBase,
+        CountOfBase,
+        CString,
+        FixedString,
+        LengthOfBase,
+        MagicBase,
+        PrefixedString,
+        RangeBase,
+        _safe_issubclass,
+    )
+    from binary_master.checksum import ChecksumBase
+    from binary_master.varint import VarIntTypeMeta
+
+    if field_type is bool or field_type is Bool or _safe_issubclass(field_type, Bool):
         size = getattr(field_type, "_size", 1) if field_type is not bool else 1
         if size == 1:
             return "bool", None, None
@@ -105,72 +122,57 @@ def c_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
         else:
             return "uint8_t", size, f"{size}-byte boolean"
 
-    from binary_master.binary_struct import (
-        Bytes,
-        FixedString,
-        CString,
-        PrefixedString,
-        MagicBase,
-        ConstantBase,
-        RangeBase,
-        LengthOfBase,
-        CountOfBase,
-    )
-    from binary_master.checksum import ChecksumBase
-    from binary_master.varint import VarIntTypeMeta
-    import enum
-
-    if isinstance(field_type, type) and issubclass(field_type, RangeBase):
+    if _safe_issubclass(field_type, RangeBase):
         c_name, arr_cnt, _ = c_type_of(field_type._type)
         return c_name, arr_cnt, f"Range: [{field_type._min}, {field_type._max}]"
 
-    if isinstance(field_type, type) and issubclass(field_type, LengthOfBase):
+    if _safe_issubclass(field_type, LengthOfBase):
         c_name, arr_cnt, _ = c_type_of(field_type._type)
         return c_name, arr_cnt, f"Length of '{field_type._target_field}'"
 
-    if isinstance(field_type, type) and issubclass(field_type, CountOfBase):
+    if _safe_issubclass(field_type, CountOfBase):
         c_name, arr_cnt, _ = c_type_of(field_type._type)
         return c_name, arr_cnt, f"Count of '{field_type._target_field}'"
 
-    if isinstance(field_type, type) and issubclass(field_type, MagicBase):
+    if _safe_issubclass(field_type, MagicBase):
         expected = getattr(field_type, "_value", None)
         if isinstance(expected, bytes):
             return "uint8_t", len(expected), f"Magic: {expected!r}"
         else:
             fmt = getattr(field_type, "_fmt", "I")
-            c_map = {"B": "uint8_t", "H": "uint16_t", "I": "uint32_t", "Q": "uint64_t"}
-            return c_map.get(fmt, "uint32_t"), None, f"Magic: {getattr(field_type, '_raw_val', '')!r}"
+            fmt_map = {"B": "uint8_t", "H": "uint16_t", "I": "uint32_t", "Q": "uint64_t"}
+            return fmt_map.get(fmt, "uint32_t"), None, f"Magic: {getattr(field_type, '_raw_val', '')!r}"
 
-    if isinstance(field_type, type) and issubclass(field_type, ConstantBase):
+    if _safe_issubclass(field_type, ConstantBase):
         t = getattr(field_type, "_type", UInt32)
         val = getattr(field_type, "_value", None)
         c_name, _, _ = c_type_of(t)
         return c_name, None, f"Constant: {val!r}"
 
-    if isinstance(field_type, type) and issubclass(field_type, ChecksumBase):
+    if _safe_issubclass(field_type, ChecksumBase):
         sz = getattr(field_type, "_size", 4)
-        c_map = {1: "uint8_t", 2: "uint16_t", 4: "uint32_t", 8: "uint64_t"}
-        return c_map.get(sz, "uint32_t"), None, f"{getattr(field_type, '_algorithm', 'checksum').upper()} Checksum"
+        sz_map = {1: "uint8_t", 2: "uint16_t", 4: "uint32_t", 8: "uint64_t"}
+        return sz_map.get(sz, "uint32_t"), None, f"{getattr(field_type, '_algorithm', 'checksum').upper()} Checksum"
 
     if isinstance(field_type, VarIntTypeMeta):
         return "int64_t" if field_type.is_signed else "uint64_t", None, "Variable-length integer (LEB128)"
 
-    if isinstance(field_type, tuple) and len(field_type) >= 2 and isinstance(field_type[0], type) and issubclass(field_type[0], enum.Enum):
+    if isinstance(field_type, tuple) and len(field_type) >= 2 and _safe_issubclass(field_type[0], enum.Enum):
         c_name, _, _ = c_type_of(field_type[1])
         return c_name, None, f"Enum: {field_type[0].__name__}"
 
-    if isinstance(field_type, type) and issubclass(field_type, enum.Enum):
+    if _safe_issubclass(field_type, enum.Enum):
         max_v = max([abs(m.value) for m in field_type], default=0)
         c_name = "uint8_t" if max_v <= 255 else ("uint16_t" if max_v <= 65535 else "uint32_t")
         return c_name, None, f"Enum: {field_type.__name__}"
 
-    if isinstance(field_type, type) and issubclass(field_type, Bytes):
+    if _safe_issubclass(field_type, Bytes):
         return "uint8_t", field_type._size, "raw bytes"
-    if isinstance(field_type, type) and issubclass(field_type, FixedString):
+    if _safe_issubclass(field_type, FixedString):
         return "char", field_type._size, "fixed-length string"
-    if field_type is CString or (isinstance(field_type, type) and issubclass(field_type, CString)):
+    if field_type is CString or _safe_issubclass(field_type, CString):
         return "char*", None, "null-terminated string"
-    if field_type is PrefixedString or (isinstance(field_type, type) and issubclass(field_type, PrefixedString)):
+    if field_type is PrefixedString or _safe_issubclass(field_type, PrefixedString):
         p_bytes = getattr(field_type, "prefix_bytes", 1)
         return "char*", None, f"prefixed string ({p_bytes}-byte length prefix)"
 

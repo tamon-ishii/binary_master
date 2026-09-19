@@ -1551,8 +1551,13 @@ binary-master inspect data.bin
 # 2つのバイナリファイルの差分比較（ビジュアル diff）
 binary-master diff expected.bin actual.bin
 
-# 構造体クラスから仕様書 Markdown を生成
+# 構造体クラスから仕様書 Markdown を生成（spec / manual コマンド）
 binary-master spec my_module.MyPacket -o spec.md
+binary-master manual my_module.MyPacket -o spec.md
+
+# インタラクティブな HTML 仕様書（Mermaidダイアグラム、フィールド検索フィルター付き）を生成
+binary-master spec my_module.MyPacket --html -o spec.html
+binary-master manual my_module.MyPacket --html --lang ja -o spec.html
 
 # 構造体クラスから各プログラミング言語のコードを標準出力 / ファイルへエクスポート
 binary-master export my_module.MyPacket --lang rust -o -

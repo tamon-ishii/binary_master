@@ -294,3 +294,76 @@ class TestUnifiedDispatcher:
 
         with pytest.raises(ValueError, match="Cannot infer language"):
             builder.write_code(tmp_path / "packet.unknown")
+
+
+class TestNewFeaturesCodeGen:
+    def test_advanced_constraints_code_gen(self):
+        from binary_master import (
+            Array,
+            Bytes,
+            Constant,
+            CountOf,
+            CRC32,
+            Int16,
+            LengthOf,
+            Magic,
+            Range,
+            UInt8,
+            UInt16,
+        )
+
+        @binary_struct
+        class AdvancedPacket:
+            magic: Magic[b"PKT\x01"]
+            version: Constant[UInt8, 1]
+            temp: Range[Int16, -40, 125]
+            payload_len: LengthOf[UInt16, "payload"]
+            payload: Bytes
+            item_count: CountOf[UInt8, "items"]
+            items: Array[UInt16]
+            checksum: CRC32
+
+        # 1. Rust
+        rs = AdvancedPacket.to_rust()
+        assert "pub magic: [u8; 4]" in rs
+        assert "pub version: u8" in rs
+        assert "Range: [-40, 125]" in rs
+        assert "Length of 'payload'" in rs
+        assert "Count of 'items'" in rs
+        assert "CRC32 Checksum" in rs
+
+        # 2. C++
+        cpp = AdvancedPacket.to_cpp()
+        assert "std::array<uint8_t, 4> magic;" in cpp
+        assert "uint8_t version;" in cpp
+        assert "Range: [-40, 125]" in cpp
+        assert "Length of 'payload'" in cpp
+        assert "Count of 'items'" in cpp
+        assert "CRC32 Checksum" in cpp
+
+        # 3. C
+        c_code = AdvancedPacket.to_c()
+        assert "uint8_t magic[4];" in c_code
+        assert "uint8_t version;" in c_code
+        assert "Range: [-40, 125]" in c_code
+        assert "Length of 'payload'" in c_code
+        assert "Count of 'items'" in c_code
+        assert "CRC32 Checksum" in c_code
+
+        # 4. C#
+        cs = AdvancedPacket.to_csharp()
+        assert "Magic:" in cs
+        assert "Constant:" in cs
+        assert "Range: [-40, 125]" in cs
+        assert "Length of 'payload'" in cs
+        assert "Count of 'items'" in cs
+        assert "CRC32 Checksum" in cs
+
+        # 5. Go
+        go_code = AdvancedPacket.to_go()
+        assert "[4]byte" in go_code
+        assert "Range: [-40, 125]" in go_code
+        assert "Length of 'payload'" in go_code
+        assert "Count of 'items'" in go_code
+        assert "CRC32 Checksum" in go_code
+

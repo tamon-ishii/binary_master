@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import io
-from typing import BinaryIO, IO, Optional, Union
+from typing import IO, Any, BinaryIO, Optional, Union, cast
 
 
 class BitWriter:
@@ -95,7 +95,7 @@ class BitWriter:
         self.flush_bits(pad_bit=pad_bit)
         if self._stream is not None:
             if hasattr(self._stream, "getvalue"):
-                return self._stream.getvalue()
+                return cast(Any, self._stream).getvalue()
         return bytes(self._buffer)
 
 

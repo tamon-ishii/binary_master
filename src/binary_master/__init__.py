@@ -3,131 +3,127 @@ from typing import Literal
 L = Literal
 
 
-from .enums import Endian, EndianType, normalize_endian, normalize_named_offset_key
-
-from .writer import BinaryWriter, Writer, OffsetTableHandle
-from .reader import BinaryReader, Reader
 from .binary_struct import (
+    Array,
+    Base,
+    BinaryEnum,
+    BinaryStruct,
     BinaryType,
-    UInt8,
-    UInt16,
-    UInt32,
-    UInt64,
+    Bits,
+    Bool,
+    Bytes,
+    Constant,
+    CountOf,
+    CString,
+    Double,
+    FixedArray,
+    FixedString,
+    Float,
+    Float16,
+    Float32,
+    Float64,
     Int8,
     Int16,
     Int32,
     Int64,
-    Float16,
-    Float32,
-    Float64,
-    Float,
-    Double,
-    Bool,
-    Bytes,
-    FixedString,
-    CString,
-    PrefixedString,
-    Offset,
+    LengthOf,
+    Magic,
     NamedOffset,
+    Offset,
     OffsetTable,
-    Variant,
-    Array,
-    FixedArray,
-    Bits,
-    binary_struct,
-    BinaryStruct,
+    PrefixedString,
+    Range,
+    RelativeBase,
     Struct,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    Variant,
+    binary_size,
+    binary_struct,
+    bit_offsetof,
+    from_bytes,
+    offsetof,
+    read_struct,
+    sizeof,
+    to_bytes,
     write_struct,
     write_variant,
-    read_struct,
-    to_bytes,
-    from_bytes,
-    sizeof,
-    binary_size,
-    offsetof,
-    bit_offsetof,
-    Base,
-    RelativeBase,
-    BinaryEnum,
-    Magic,
-    Constant,
-    Range,
-    LengthOf,
-    CountOf,
 )
+from .bitstream import BitReader, BitWriter
+from .builder import BinaryBuilder, Builder, BuilderReadResult
+from .c_header import to_c_header, to_c_struct, write_c_header
+from .checksum import (
+    CRC16,
+    CRC16_ARC,
+    CRC16_CCITT,
+    CRC32,
+    Adler32,
+    Checksum8,
+    Checksum16,
+    ChecksumBase,
+    Fletcher16,
+    compute_checksum,
+)
+from .code_gen import (
+    generate_code,
+    generate_cpp_code,
+    generate_csharp_code,
+    generate_go_code,
+    generate_rust_code,
+    write_code,
+    write_cpp,
+    write_csharp,
+    write_go,
+    write_rust,
+)
+from .debug import (
+    debug_dump,
+    diff_dump,
+    dump_dict,
+    dump_json,
+    dump_table,
+    hexdump,
+)
+from .enums import Endian, EndianType, normalize_endian, normalize_named_offset_key
 from .exceptions import (
     BinaryMasterError,
     ChecksumMismatchError,
-    InvalidMagicError,
+    DuplicateNamedOffsetError,
     InvalidConstantError,
     InvalidEnumError,
+    InvalidMagicError,
+    NamedOffsetError,
+    NamedOffsetNotFoundError,
     RangeValidationError,
     TotalSizeExceededError,
-    NamedOffsetError,
-    DuplicateNamedOffsetError,
-    NamedOffsetNotFoundError,
 )
-from .checksum import (
-    ChecksumBase,
-    CRC32,
-    CRC16,
-    CRC16_CCITT,
-    CRC16_ARC,
-    Checksum8,
-    Checksum16,
-    Fletcher16,
-    Adler32,
-    compute_checksum,
-)
-from .varint import (
-    VarUInt,
-    VarInt,
-    VarUInt32,
-    VarInt32,
-    VarUInt64,
-    VarInt64,
-    encode_varuint,
-    decode_varuint,
-    encode_varint,
-    decode_varint,
-)
-from .bitstream import BitWriter, BitReader
 from .manual import (
     LayoutEntry,
-    generate_manual,
+    generate_bitfield_packet_diagram,
     generate_html,
-    write_html,
+    generate_manual,
     generate_mermaid_diagram,
     generate_packet_diagram,
-    generate_bitfield_packet_diagram,
     inspect_struct_layout,
     resolve_language,
+    write_html,
 )
-
-from .builder import BinaryBuilder, Builder, BuilderReadResult
-from .c_header import to_c_header, write_c_header, to_c_struct
-from .code_gen import (
-    generate_code,
-    write_code,
-    generate_rust_code,
-    write_rust,
-    generate_cpp_code,
-    write_cpp,
-    generate_csharp_code,
-    write_csharp,
-    generate_go_code,
-    write_go,
+from .reader import BinaryReader, Reader
+from .varint import (
+    VarInt,
+    VarInt32,
+    VarInt64,
+    VarUInt,
+    VarUInt32,
+    VarUInt64,
+    decode_varint,
+    decode_varuint,
+    encode_varint,
+    encode_varuint,
 )
-from .debug import (
-    hexdump,
-    debug_dump,
-    diff_dump,
-    dump_table,
-    dump_json,
-    dump_dict,
-)
-
-
+from .writer import BinaryWriter, OffsetTableHandle, Writer
 
 __version__ = "0.3.8"
 

@@ -1385,11 +1385,11 @@ builder.write_c("protocol_types.h")
 - `BitReader(data_or_stream, msb_first=True)`: `read_bits(bit_count)`, `peek_bits(bit_count)`, `align_to_byte()`.
 - `writer.write_bits(val, count)` & `reader.read_bits(count)`: Integrated directly into `BinaryWriter` and `BinaryReader`. Non-bit write methods automatically flush unaligned bits.
 
-### 12.8 CLI Binary Inspector
+### 12.8 CLI Binary Inspector & Manual Generator
 `pyproject.toml` script entry point: `binary-master`.
-- `binary-master inspect <file>`: Formatted, annotated Hexdump.
+- `binary-master inspect <file>`: Formatted, annotated Hexdump (`--format {hexdump,table,json}`, `--color`).
 - `binary-master diff <file1> <file2>`: Visual byte diff.
-- `binary-master spec <module:Class> [-o output.md]`: Markdown protocol manual generation.
+- `binary-master spec <module:Class> [-o output.md]` (alias: `binary-master manual`): Markdown or HTML protocol manual generation (`--html`, `--lang {auto,en,ja}`).
 - `binary-master export <module:Class> --lang <rust|c|cpp|csharp|go> [-o output]`: Multi-language code generation (pass `-o -` for stdout).
 
 ### 12.9 Direct Struct Export & Descriptors

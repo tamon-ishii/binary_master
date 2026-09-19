@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
 import struct
 from contextlib import contextmanager
-from typing import Any, IO, Iterable, Iterator, Literal, Optional, TYPE_CHECKING, Union
+from pathlib import Path
+from typing import IO, TYPE_CHECKING, Any, Iterable, Iterator, Literal, Optional, Union
 
 if TYPE_CHECKING:
     from binary_master.bitstream import BitWriter
 
 from binary_master.enums import Endian, EndianType, normalize_endian, normalize_named_offset_key
-
 
 # Integer boundary constants
 INT8_MIN, INT8_MAX = -128, 127
@@ -224,7 +223,7 @@ class BinaryWriter:
         self._namespace_stack: list[str] = []
         self._namespace_counters: dict[str, int] = {}
         if stream is None:
-            self._stream = io.BytesIO()
+            self._stream: Any = io.BytesIO()
             self._close_stream = auto_close if auto_close is not None else False
             self._is_memory = True
         else:
@@ -364,11 +363,6 @@ class BinaryWriter:
     @property
     def current_caption_spec_count(self) -> Optional[Union[int, str, bool]]:
         """Active specification repetition count for the current caption."""
-        return self._current_caption_spec_count
-
-    @property
-    def current_caption_repeat(self) -> Optional[Union[int, str, bool]]:
-        """Alias for current_caption_spec_count."""
         return self._current_caption_spec_count
 
     @property
@@ -720,7 +714,7 @@ class BinaryWriter:
         elif size == 8:
             data = struct.pack(f"{order.value}Q", bool_int)
         else:
-            byteorder = "little" if order == Endian.LITTLE else "big"
+            byteorder: Literal["little", "big"] = "little" if order == Endian.LITTLE else "big"
             data = bool_int.to_bytes(size, byteorder=byteorder)
         self._stream.write(data)
         type_str = "Bool" if size == 1 else f"Bool[{size}]"

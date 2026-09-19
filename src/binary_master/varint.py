@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import io
-from typing import Any, BinaryIO, Optional, Union
+from typing import BinaryIO
 
 
 def encode_varuint(val: int) -> bytes:
@@ -24,7 +23,7 @@ def encode_varuint(val: int) -> bytes:
 
 def decode_varuint(source: bytes | bytearray | BinaryIO, offset: int = 0) -> tuple[int, int]:
     """Decode an unsigned integer using unsigned LEB128.
-    
+
     Returns (decoded_value, bytes_consumed).
     """
     result = 0
@@ -82,7 +81,7 @@ def encode_varint(val: int) -> bytes:
 
 def decode_varint(source: bytes | bytearray | BinaryIO, offset: int = 0) -> tuple[int, int]:
     """Decode a signed integer using signed LEB128.
-    
+
     Returns (decoded_value, bytes_consumed).
     """
     result = 0

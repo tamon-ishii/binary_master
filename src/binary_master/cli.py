@@ -50,7 +50,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         from binary_master.writer import BinaryWriter
 
         try:
-            instance = read_struct(struct_cls, data)
+            instance: Any = read_struct(struct_cls, data)
         except Exception as e:
             print(f"Error decoding binary with {struct_cls.__name__}: {e}", file=sys.stderr)
             return 1
@@ -91,7 +91,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
 
 
 def cmd_spec(args: argparse.Namespace) -> int:
-    """Generate Markdown specification from a struct class."""
+    """Generate Markdown or HTML specification from a struct class."""
     try:
         struct_cls = _load_struct_class(args.struct)
     except Exception as e:
@@ -101,6 +101,20 @@ def cmd_spec(args: argparse.Namespace) -> int:
     from binary_master.builder import Builder
     builder = Builder(title=f"{struct_cls.__name__} Specification")
     builder.add_struct(struct_cls)
+
+    is_html = getattr(args, "html", False) or getattr(args, "format", "markdown") == "html"
+    if args.output and (args.output.endswith(".html") or args.output.endswith(".htm")):
+        is_html = True
+
+    if is_html:
+        lang: Any = getattr(args, "lang", "auto")
+        if args.output == "-":
+            print(builder.to_html(lang=lang))
+            return 0
+        out_path = args.output or f"{struct_cls.__name__.lower()}_spec.html"
+        builder.write_html(out_path, lang=lang)
+        print(f"HTML specification written to {out_path}")
+        return 0
 
     if args.output == "-":
         print(builder.to_markdown())
@@ -184,10 +198,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_diff.add_argument("file2", help="Path to second binary file")
     p_diff.add_argument("--color", "-c", action="store_true", help="Enable terminal ANSI colors")
 
-    # spec
-    p_spec = subparsers.add_parser("spec", help="Generate Markdown specification for a struct")
+    # spec / manual
+    p_spec = subparsers.add_parser(
+        "spec",
+        aliases=["manual"],
+        help="Generate Markdown or HTML specification manual for a struct",
+    )
     p_spec.add_argument("struct", help="Qualified @binary_struct name, e.g. 'my_module:MyHeader'")
-    p_spec.add_argument("--output", "-o", help="Output Markdown file path")
+    p_spec.add_argument("--output", "-o", help="Output specification file path (.md or .html)")
+    p_spec.add_argument("--format", "-f", choices=["markdown", "html"], default="markdown", help="Output format (markdown or html)")
+    p_spec.add_argument("--html", action="store_true", help="Generate HTML specification instead of Markdown")
+    p_spec.add_argument("--lang", choices=["auto", "en", "ja"], default="auto", help="Documentation language for HTML")
 
     # export
     p_export = subparsers.add_parser("export", help="Export struct to C, Rust, C++, C#, or Go code")
@@ -201,7 +222,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_inspect(args)
     elif args.command == "diff":
         return cmd_diff(args)
-    elif args.command == "spec":
+    elif args.command in ("spec", "manual"):
         return cmd_spec(args)
     elif args.command == "export":
         return cmd_export(args)

@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, IO, List, Literal, Optional, Union
+from typing import IO, Any, Dict, List, Literal, Optional, Union, cast
 
 
 def resolve_language(lang: Optional[str] = "auto") -> Literal["en", "ja"]:
@@ -89,7 +89,8 @@ def create_dummy_instance(struct_cls: type) -> Any:
     """Create a dummy instance of a @binary_struct class for layout inspection."""
     if not hasattr(struct_cls, "__binary__"):
         return None
-    from typing import get_origin, get_args, Annotated
+    from typing import Annotated, get_args, get_origin
+
     import binary_master as bm
 
     _BinaryType = getattr(bm, "BinaryType", None)
@@ -112,7 +113,7 @@ def create_dummy_instance(struct_cls: type) -> Any:
     meta: dict[str, Any] = getattr(struct_cls, "__binary__", {})
     fields = meta.get("fields", {})
     if meta.get("bits") is not None:
-        dummy_kwargs = {fn: 0 for fn in fields}
+        dummy_kwargs: dict[str, Any] = {fn: 0 for fn in fields}
         try:
             return struct_cls(**dummy_kwargs)
         except Exception:
@@ -143,9 +144,10 @@ def create_dummy_instance(struct_cls: type) -> Any:
             or (get_origin(ft) is _OffsetTable)
         )
 
+        import enum
+
         from binary_master.checksum import ChecksumBase
         from binary_master.varint import VarIntTypeMeta
-        import enum
 
         if _safe_issubclass(ft, _MagicBase):
             expected = getattr(ft, "_value", None)
@@ -183,7 +185,7 @@ def create_dummy_instance(struct_cls: type) -> Any:
             if elem_t is _UInt8:
                 dummy_kwargs[fn] = b"\x00" * cnt
             elif hasattr(elem_t, "__binary__"):
-                dummy_kwargs[fn] = [create_dummy_instance(elem_t)] * cnt
+                dummy_kwargs[fn] = [create_dummy_instance(cast(type, elem_t))] * cnt
             else:
                 dummy_kwargs[fn] = [0] * cnt
         elif is_arr:
@@ -1804,7 +1806,7 @@ def generate_html(
         resolved_title = title
 
 
-    raw_entries = entries
+    _raw_entries = entries
     extracted_sample_data = sample_data
 
     if hasattr(entries, "__binary__"):
@@ -1917,7 +1919,7 @@ def generate_html(
         for line_start in range(0, len(b_data), 16):
             chunk = b_data[line_start : line_start + 16]
             off_str = f"{line_start:08X}"
-            
+
             # Format 16 bytes
             byte_spans = []
             for i in range(16):
@@ -1953,16 +1955,16 @@ def generate_html(
     for idx, (is_omitted, item) in enumerate(compressed):
         if is_omitted:
             tr = (
-                f'<tr class="table-row table-row-omitted">\n'
-                f'  <td class="cell-mono cell-offset">...</td>\n'
-                f'  <td class="cell-mono">...</td>\n'
-                f'  <td class="cell-name"><code>...</code></td>\n'
-                f'  <td><span class="type-badge">...</span></td>\n'
-                f'  <td class="cell-dim">-</td>\n'
+                '<tr class="table-row table-row-omitted">\n'
+                '  <td class="cell-mono cell-offset">...</td>\n'
+                '  <td class="cell-mono">...</td>\n'
+                '  <td class="cell-name"><code>...</code></td>\n'
+                '  <td><span class="type-badge">...</span></td>\n'
+                '  <td class="cell-dim">-</td>\n'
             )
             if include_values:
-                tr += f'  <td class="cell-mono cell-val">...</td>\n'
-            tr += f'  <td class="cell-desc">...</td>\n</tr>'
+                tr += '  <td class="cell-mono cell-val">...</td>\n'
+            tr += '  <td class="cell-desc">...</td>\n</tr>'
             table_rows.append(tr)
             continue
 

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
+import mmap
 import struct
-from typing import IO, Any, Optional, TypeVar, Union
+from pathlib import Path
+from typing import IO, Any, BinaryIO, Optional, TypeVar, Union, cast
 
 from binary_master.enums import Endian, EndianType, normalize_endian
 
@@ -31,32 +32,35 @@ class BinaryReader:
 
     def __init__(
         self,
-        source: Union[bytes, bytearray, IO[bytes], str, Path],
+        source: Union[bytes, bytearray, IO[bytes], BinaryIO, mmap.mmap, str, Path],
         default_endian: EndianType = Endian.LITTLE,
         auto_close: Optional[bool] = None,
     ) -> None:
         """Initialize a BinaryReader.
 
         Args:
-            source: Binary data source (bytes, bytearray, readable binary stream, or file path).
+            source: Binary data source (bytes, bytearray, readable binary stream, mmap, or file path).
             default_endian: The default byte order (Endian.LITTLE, Endian.BIG, or string alias).
             auto_close: Whether closing this reader should close the underlying stream.
         """
         self._default_endian = normalize_endian(default_endian)
 
         if isinstance(source, (bytes, bytearray)):
-            self._stream: IO[bytes] = io.BytesIO(source)
+            self._stream: BinaryIO = io.BytesIO(source)
             self._auto_close = True if auto_close is None else auto_close
         elif isinstance(source, (str, Path)):
             self._stream = open(source, "rb")
             self._auto_close = True if auto_close is None else auto_close
         elif hasattr(source, "read"):
-            self._stream = source
+            self._stream = cast(BinaryIO, source)
             self._auto_close = False if auto_close is None else auto_close
         else:
             raise TypeError(
-                f"source must be bytes, bytearray, readable stream, or file path, got {type(source).__name__}"
+                f"source must be bytes, bytearray, readable stream, mmap, or file path, got {type(source).__name__}"
             )
+        self._mmap: Any = None
+        self._mmap_file: Any = None
+        self._bit_reader: Any = None
 
     @classmethod
     def from_bytes(

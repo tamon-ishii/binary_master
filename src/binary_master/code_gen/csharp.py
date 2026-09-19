@@ -5,8 +5,9 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 from typing import (
-    Any,
     IO,
+    Annotated,
+    Any,
     List,
     Optional,
     Set,
@@ -14,10 +15,10 @@ from typing import (
     Union,
     get_args,
     get_origin,
-    Annotated,
 )
 
 from binary_master.binary_struct import (
+    Bool,
     FixedArray,
     Float16,
     Float32,
@@ -32,7 +33,6 @@ from binary_master.binary_struct import (
     UInt16,
     UInt32,
     UInt64,
-    Bool,
 )
 from binary_master.code_gen.c import to_pascal_case
 
@@ -65,7 +65,24 @@ def csharp_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
         return "float", None, None
     if field_type is Float64:
         return "double", None, None
-    if field_type is bool or field_type is Bool or (isinstance(field_type, type) and issubclass(field_type, Bool)):
+    import enum
+
+    from binary_master.binary_struct import (
+        Bytes,
+        ConstantBase,
+        CountOfBase,
+        CString,
+        FixedString,
+        LengthOfBase,
+        MagicBase,
+        PrefixedString,
+        RangeBase,
+        _safe_issubclass,
+    )
+    from binary_master.checksum import ChecksumBase
+    from binary_master.varint import VarIntTypeMeta
+
+    if field_type is bool or field_type is Bool or _safe_issubclass(field_type, Bool):
         size = getattr(field_type, "_size", 1) if field_type is not bool else 1
         if size == 1:
             return "bool", None, None
@@ -78,72 +95,57 @@ def csharp_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
         else:
             return "byte", size, f"{size}-byte boolean"
 
-    from binary_master.binary_struct import (
-        Bytes,
-        FixedString,
-        CString,
-        PrefixedString,
-        MagicBase,
-        ConstantBase,
-        RangeBase,
-        LengthOfBase,
-        CountOfBase,
-    )
-    from binary_master.checksum import ChecksumBase
-    from binary_master.varint import VarIntTypeMeta
-    import enum
-
-    if isinstance(field_type, type) and issubclass(field_type, RangeBase):
+    if _safe_issubclass(field_type, RangeBase):
         cs_name, arr_cnt, _ = csharp_type_of(field_type._type)
         return cs_name, arr_cnt, f"Range: [{field_type._min}, {field_type._max}]"
 
-    if isinstance(field_type, type) and issubclass(field_type, LengthOfBase):
+    if _safe_issubclass(field_type, LengthOfBase):
         cs_name, arr_cnt, _ = csharp_type_of(field_type._type)
         return cs_name, arr_cnt, f"Length of '{field_type._target_field}'"
 
-    if isinstance(field_type, type) and issubclass(field_type, CountOfBase):
+    if _safe_issubclass(field_type, CountOfBase):
         cs_name, arr_cnt, _ = csharp_type_of(field_type._type)
         return cs_name, arr_cnt, f"Count of '{field_type._target_field}'"
 
-    if isinstance(field_type, type) and issubclass(field_type, MagicBase):
+    if _safe_issubclass(field_type, MagicBase):
         expected = getattr(field_type, "_value", None)
         if isinstance(expected, bytes):
             return "byte[]", len(expected), f"Magic: {expected!r}"
         else:
             fmt = getattr(field_type, "_fmt", "I")
-            cs_map = {"B": "byte", "H": "ushort", "I": "uint", "Q": "ulong"}
-            return cs_map.get(fmt, "uint"), None, f"Magic: {getattr(field_type, '_raw_val', '')!r}"
+            fmt_map = {"B": "byte", "H": "ushort", "I": "uint", "Q": "ulong"}
+            return fmt_map.get(fmt, "uint"), None, f"Magic: {getattr(field_type, '_raw_val', '')!r}"
 
-    if isinstance(field_type, type) and issubclass(field_type, ConstantBase):
+    if _safe_issubclass(field_type, ConstantBase):
         t = getattr(field_type, "_type", UInt32)
         val = getattr(field_type, "_value", None)
         cs_name, _, _ = csharp_type_of(t)
         return cs_name, None, f"Constant: {val!r}"
 
-    if isinstance(field_type, type) and issubclass(field_type, ChecksumBase):
+    if _safe_issubclass(field_type, ChecksumBase):
         sz = getattr(field_type, "_size", 4)
-        cs_map = {1: "byte", 2: "ushort", 4: "uint", 8: "ulong"}
-        return cs_map.get(sz, "uint"), None, f"{getattr(field_type, '_algorithm', 'checksum').upper()} Checksum"
+        sz_map = {1: "byte", 2: "ushort", 4: "uint", 8: "ulong"}
+        return sz_map.get(sz, "uint"), None, f"{getattr(field_type, '_algorithm', 'checksum').upper()} Checksum"
 
     if isinstance(field_type, VarIntTypeMeta):
         return "long" if field_type.is_signed else "ulong", None, "Variable-length integer (LEB128)"
 
-    if isinstance(field_type, tuple) and len(field_type) >= 2 and isinstance(field_type[0], type) and issubclass(field_type[0], enum.Enum):
+    if isinstance(field_type, tuple) and len(field_type) >= 2 and _safe_issubclass(field_type[0], enum.Enum):
         cs_name, _, _ = csharp_type_of(field_type[1])
         return cs_name, None, f"Enum: {field_type[0].__name__}"
 
-    if isinstance(field_type, type) and issubclass(field_type, enum.Enum):
+    if _safe_issubclass(field_type, enum.Enum):
         max_v = max([abs(m.value) for m in field_type], default=0)
         cs_name = "byte" if max_v <= 255 else ("ushort" if max_v <= 65535 else "uint")
         return cs_name, None, f"Enum: {field_type.__name__}"
 
-    if isinstance(field_type, type) and issubclass(field_type, Bytes):
+    if _safe_issubclass(field_type, Bytes):
         return "byte[]", field_type._size, "raw bytes"
-    if isinstance(field_type, type) and issubclass(field_type, FixedString):
+    if _safe_issubclass(field_type, FixedString):
         return "string", field_type._size, "fixed-length string"
-    if field_type is CString or (isinstance(field_type, type) and issubclass(field_type, CString)):
+    if field_type is CString or _safe_issubclass(field_type, CString):
         return "string", None, "null-terminated string"
-    if field_type is PrefixedString or (isinstance(field_type, type) and issubclass(field_type, PrefixedString)):
+    if field_type is PrefixedString or _safe_issubclass(field_type, PrefixedString):
         p_bytes = getattr(field_type, "prefix_bytes", 1)
         return "string", None, f"prefixed string ({p_bytes}-byte length prefix)"
 
@@ -305,7 +307,7 @@ def generate_csharp_struct(
                     pad_len = total_size - curr_size
                     lines.append(f"    /// <summary>Struct padding to total size {total_size}</summary>")
                     lines.append(f"    [MarshalAs(UnmanagedType.ByValArray, SizeConst = {pad_len})]")
-                    lines.append(f"    public byte[] _Padding;")
+                    lines.append("    public byte[] _Padding;")
             except Exception:
                 pass
 

@@ -7,7 +7,21 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from typing import Annotated, Any, Callable, Generic, Literal, Optional, TypeVar, Union, dataclass_transform, get_args, get_origin, get_type_hints
+from typing import (
+    Annotated,
+    Any,
+    Generic,
+    Literal,
+    Optional,
+    TypeVar,
+    Union,
+    cast,
+    dataclass_transform,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
+
 
 def _unwrap_literal_int(val: Any) -> Any:
     """Extracts int value if val is a Literal[int], else returns val."""
@@ -18,6 +32,7 @@ def _unwrap_literal_int(val: Any) -> Any:
     return val
 
 
+from binary_master.checksum import ChecksumBase, compute_checksum
 from binary_master.enums import Endian, EndianType, normalize_endian, normalize_named_offset_key
 from binary_master.exceptions import (
     ChecksumMismatchError,
@@ -27,8 +42,7 @@ from binary_master.exceptions import (
     RangeValidationError,
     TotalSizeExceededError,
 )
-from binary_master.checksum import ChecksumBase, compute_checksum, get_checksum_algorithm
-from binary_master.varint import VarIntTypeMeta, encode_varint, encode_varuint, decode_varint, decode_varuint
+from binary_master.varint import VarIntTypeMeta, encode_varint, encode_varuint
 
 # ==========================================================
 # Binary Primitive Types
@@ -339,10 +353,10 @@ class PrefixedString(BinaryType, metaclass=PrefixedStringMeta):
 class BinaryEnumMeta(enum.EnumType):
     """Metaclass for BinaryEnum allowing member lookup or parameterized type e.g. MyEnum[UInt8]."""
 
-    def __getitem__(cls, item: Any) -> Any:
-        if isinstance(item, str) and item in cls._member_map_:
-            return cls._member_map_[item]
-        return (cls, item)
+    def __getitem__(cls, name: Any) -> Any:
+        if isinstance(name, str) and name in cls._member_map_:
+            return cls._member_map_[name]
+        return (cls, name)
 
 
 class BinaryEnum(enum.IntEnum, metaclass=BinaryEnumMeta):
@@ -1242,6 +1256,20 @@ class _BinarySizeDescriptor:
         return 0
 
 
+def _safe_issubclass(cls: Any, base: Any) -> bool:
+    """Safely check if cls is a subclass of base, handling TypeAliasType, tuples, and non-class types."""
+    if not isinstance(cls, type) or base is None:
+        return False
+    if isinstance(base, tuple):
+        valid_bases = tuple(b for b in base if isinstance(b, type))
+        if not valid_bases:
+            return False
+        return issubclass(cls, valid_bases)
+    if not isinstance(base, type):
+        return False
+    return issubclass(cls, base)
+
+
 def _calculate_field_size(name: str, ftype: Any, val: Any = None, is_cls: bool = True, instance: Any = None) -> int:
     """Calculate size of a single field, either statically or dynamically from an instance."""
     if get_origin(ftype) is Annotated:
@@ -1553,7 +1581,7 @@ def to_bytes(self, endian: Optional[EndianType] = None) -> bytes:
     return writer.to_bytes()
 
 
-def from_bytes(cls, data: Union[bytes, bytearray], endian: Optional[EndianType] = None) -> Any:
+def from_bytes(cls, data: Union[bytes, bytearray, memoryview], endian: Optional[EndianType] = None) -> Any:
     """Deserialize a @binary_struct instance from bytes."""
     return read_struct(cls, reader=data, endian=endian)
 
@@ -1607,6 +1635,7 @@ class _WriteMarkdownDescriptor:
         target = instance if instance is not None else owner
         def _write_markdown(path, **kwargs):
             from pathlib import Path
+
             from binary_master.manual import generate_manual
             md = generate_manual(target, **kwargs)
             Path(path).write_text(md, encoding="utf-8")
@@ -1628,6 +1657,7 @@ class _WriteHtmlDescriptor:
         target = instance if instance is not None else owner
         def _write_html(path, **kwargs):
             from pathlib import Path
+
             from binary_master.manual import generate_html
             content = generate_html(target, **kwargs)
             Path(path).write_text(content, encoding="utf-8")
@@ -1678,11 +1708,12 @@ def _serialize_dict_value(val: Any, bytes_format: str = "hex") -> Any:
 
 def to_dict_method(self, bytes_format: str = "hex") -> dict[str, Any]:
     """Convert struct instance to dictionary.
-    
+
     Args:
         bytes_format: 'hex' (default, e.g. '0x...'), 'base64', or 'list' (list of integers).
     """
-    from dataclasses import fields as dc_fields, is_dataclass
+    from dataclasses import fields as dc_fields
+    from dataclasses import is_dataclass
 
     result = {}
     field_names = [f.name for f in dc_fields(self)] if is_dataclass(self) else getattr(self, "__binary__", {}).get("fields", {}).keys()
@@ -1775,7 +1806,11 @@ def to_json_method(self, indent: Optional[int] = None, bytes_format: str = "hex"
 
 def from_json_method(cls: type[T], json_str: str) -> T:
     """Reconstruct a @binary_struct instance from a JSON string."""
-    return cls.from_dict(json.loads(json_str))
+    data = json.loads(json_str)
+    from_dict_fn = getattr(cls, "from_dict", None)
+    if callable(from_dict_fn):
+        return cast(T, from_dict_fn(data))
+    return cls(**data)
 
 
 @dataclass_transform()
@@ -2220,6 +2255,7 @@ def write_struct(
 ) -> Any:
     """Serialize a @binary_struct instance to a BinaryWriter stream."""
     import struct
+
     from binary_master.writer import BinaryWriter
 
     meta = getattr(instance, "__binary__", None)
@@ -2780,7 +2816,7 @@ def write_struct(
             enum_size = 1 if max_v <= 255 else (2 if max_v <= 65535 else 4)
 
         if is_enum and enum_cls is not None:
-            int_val = val.value if isinstance(val, enum.Enum) else int(val)
+            int_val = val.value if isinstance(val, enum.Enum) else (int(val) if val is not None else 0)
             fmt_char = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(enum_size, "I")
             writer._pack_write(fmt_char, int_val, endian=active_endian, name=name, desc=f_desc or f"Enum {enum_cls.__name__}", struct_name=current_struct_name, struct_doc=struct_doc)
             if hasattr(writer, "_entries") and writer._entries:
@@ -3054,16 +3090,15 @@ def read_struct(
                     tbl_offset_t, tbl_base_offset = _parse_offset_spec_args(tbl_args[1:])
 
                 actual_count = kwargs.get(tbl_count) if isinstance(tbl_count, str) else tbl_count
-                if actual_count is None:
-                    actual_count = 0
+                int_count = int(actual_count) if isinstance(actual_count, (int, float, str)) else (len(actual_count) if isinstance(actual_count, (list, tuple)) else 0)
 
                 tbl_fmt_char, tbl_offset_size, _ = _normalize_offset_type(tbl_offset_t)
-                if target_offset > 0 and actual_count > 0:
+                if target_offset > 0 and int_count > 0:
                     saved_pos = reader.tell()
                     reader.seek(target_offset)
                     offs = [
                         reader._unpack_read(tbl_fmt_char, tbl_offset_size, endian=active_endian)
-                        for _ in range(actual_count)
+                        for _ in range(int_count)
                     ]
                     reader.seek(saved_pos)
                     kwargs[name] = offs
@@ -3133,9 +3168,10 @@ def read_struct(
                 raise ValueError(
                     f"Count field '{count}' must precede OffsetTable field '{name}' in struct definition"
                 )
+            int_count = int(actual_count) if isinstance(actual_count, (int, float, str)) else (len(actual_count) if isinstance(actual_count, (list, tuple)) else 0)
             offs = [
                 reader._unpack_read(fmt_char, offset_size, endian=active_endian)
-                for _ in range(actual_count)
+                for _ in range(int_count)
             ]
             kwargs[name] = offs
             continue
