@@ -11,9 +11,9 @@
 
 ### 1.1 Architectural Layers
 1. **Declarative Layer (`@binary_struct`)**: Dataclass-based declarative schema definition with bitfields, offsets, variants, and alignment.
-2. **Schema-First Builder Layer (`Builder` / `BinaryBuilder`)**: Specification-first protocol modeling, conditional logic, multi-language code export, and schema-driven automated deserialization (`builder.read`).
+2. **Schema-First Builder Layer (`Builder`)**: Specification-first protocol modeling, conditional logic, multi-language code export, and schema-driven automated deserialization (`builder.read`).
 3. **Procedural Layer (`BinaryWriter` / `BinaryReader`)**: Low-level stream-oriented sequential reader/writer with strict bounds checking, string encodings, cursor navigation, and alignment.
-4. **Code Generation Layer (`code_gen` / `c_header`)**: Exporting schemas to C typedefs, Modern C++, Rust structs/enums, C# structs, and Go structs.
+4. **Code Generation Layer (`code_gen`)**: Exporting schemas to C typedefs, Modern C++, Rust structs/enums, C# structs, and Go structs.
 5. **Debug & Inspection Layer (`debug`)**: Annotated terminal hexdumps with field correlation, tabular traces, JSON/dict dumps, and binary diffs.
 6. **Documentation Layer (`manual`)**: Automated Markdown manual generation with Mermaid Flowcharts and Packet bit diagrams.
 
@@ -22,15 +22,13 @@
 from binary_master import (
     # Core Structures & Decorators
     binary_struct,       # Class decorator for declarative structs
-    BinaryStruct,        # Base class providing static typing for IDEs/ty/mypy/pyright (alias: Struct)
-    Struct,              # Alias for BinaryStruct
+    BinaryStruct,        # Base class providing static typing for IDEs/ty/mypy/pyright
     to_bytes,            # Standalone struct serializer to bytes: to_bytes(struct_instance)
     from_bytes,          # Standalone struct deserializer from bytes: from_bytes(StructCls, data)
     write_struct,        # Procedural struct serializer
     write_variant,       # Procedural variant serializer with candidate validation
     read_struct,         # Procedural struct deserializer
-    sizeof,              # Binary size in bytes (alias: binary_size)
-    binary_size,         # Alias for sizeof
+    sizeof,              # Binary size in bytes (e.g. sizeof(Cls) or sizeof(instance))
     offsetof,            # Byte offset of a field (supports dot notation)
     bit_offsetof,        # (byte_offset, bit_offset) tuple
 
@@ -40,7 +38,6 @@ from binary_master import (
     UInt8, UInt16, UInt32, UInt64,
     Int8,  Int16,  Int32,  Int64,
     Float16, Float32, Float64,
-    Float, Double,  # Convenient aliases: Float = Float32, Double = Float64
 
     # Generic & Advanced Type Annotations
     Bits,                # Bits[N]: Bitfield slice (used with @binary_struct(bits=N))
@@ -48,17 +45,13 @@ from binary_master import (
     FixedString,         # FixedString[N]: Static fixed-length string (str)
     CString,             # CString: Null-terminated string (str)
     PrefixedString,      # PrefixedString[N]: Length-prefixed string (str)
-    Offset,              # Offset[Target, OffsetType=UInt32, BaseOffset=0]
-    NamedOffset,         # NamedOffset[Key, Target=None, OffsetType=UInt32, BaseOffset=0]
+    Offset,              # Direct: Offset[Target, Size=UInt32, Base=0], Named: Offset["key", Target=None, Size=UInt32, Base=0]
     OffsetTable,         # OffsetTable[Count, OffsetType=UInt32, BaseOffset=0]
     Variant,             # Variant[tag_field_name, {tag_val: StructCls, ...}]
     Array,               # Array[T]: Dynamic length sequence
     FixedArray,          # FixedArray[T, N]: Static N-element array
-    Literal,             # typing.Literal re-export for PEP-compliant type parameters
-    L,                   # Short alias for Literal: FixedArray[UInt8, L[4]]
     Base,                # Base.SELF, Base.STRUCT, Base.FIELD origin markers
     RelativeBase,        # Result of Base + delta arithmetic
-
 
     # v0.2.0 & v0.3.0 Declarative Types & Constraints
     BinaryEnum,          # IntEnum with explicit sizing: MyEnum[UInt8]
@@ -71,7 +64,6 @@ from binary_master import (
     compute_checksum,
     VarUInt, VarInt, VarUInt32, VarInt32, VarUInt64, VarInt64,
     encode_varuint, decode_varuint, encode_varint, decode_varint,
-    BitWriter, BitReader,
 
     # Exceptions
     BinaryMasterError,
@@ -81,23 +73,24 @@ from binary_master import (
     InvalidEnumError,
     RangeValidationError,
     TotalSizeExceededError,
+    OffsetError,
+    DuplicateOffsetError,
+    OffsetNotFoundError,
 
     # Protocol Builder & Automated Deserialization
-    Builder,             # Top-level protocol schema builder (alias: BinaryBuilder)
-    BinaryBuilder,       # Alias for Builder
+    Builder,             # Top-level protocol schema builder
     BuilderReadResult,   # Deserialized dictionary & attribute accessible object
 
     # Procedural Writer & Reader
-    Writer,              # Low-level binary writer (alias: BinaryWriter)
-    BinaryWriter,        # Alias for Writer
-    Reader,              # Low-level binary reader (alias: BinaryReader)
-    BinaryReader,        # Alias for Reader
+    BinaryWriter,        # Low-level binary writer
+    BinaryReader,        # Low-level binary reader
     OffsetTableHandle,   # Handle returned by write_offset_table for delayed patching
 
     # Enums & Endianness
     Endian,              # Enum: Endian.LITTLE ('<'), Endian.BIG ('>'), Endian.NATIVE ('=')
     EndianType,          # Union[Endian, str, None] ('little', 'big', 'native', '<', '>', '=')
     normalize_endian,    # Normalization helper returning Endian enum
+    normalize_offset_key,# Normalization helper for Offset string/enum keys
 
     # Multi-Language Code Generation
     generate_code,       # generate_code(builder, lang="c"|"rust"|"cpp"|"csharp"|"go")
@@ -114,10 +107,12 @@ from binary_master import (
     diff_dump,           # diff_dump(target_a, target_b, color=False)
     dump_table, dump_json, dump_dict,
 
-    # Manual, HTML & Mermaid Generation
+    # Manual & HTML Generation
     generate_manual,
     generate_html,
     write_html,
+)
+from binary_master.manual import (
     generate_mermaid_diagram,
     generate_packet_diagram,
     generate_bitfield_packet_diagram,
@@ -136,7 +131,7 @@ from binary_master import (
 |---|---|---|---|
 | `UInt8`, `UInt16`, `UInt32`, `UInt64` | 1, 2, 4, 8 bytes | `int` | Unsigned standard integers |
 | `Int8`, `Int16`, `Int32`, `Int64` | 1, 2, 4, 8 bytes | `int` | Signed 2's complement integers |
-| `Float16`, `Float32` (`Float`), `Float64` (`Double`) | 2, 4, 8 bytes | `float` | IEEE 754 half / single / double precision (`Float` = `Float32`, `Double` = `Float64`) |
+| `Float16`, `Float32`, `Float64` | 2, 4, 8 bytes | `float` | IEEE 754 half / single / double precision |
 | `Bool` / `bool` | 1 byte (or `Bool[N]` bytes) | `bool` | `0x00` = False, non-zero = True (supports `Bool[1]`, `Bool[2]`, `Bool[4]`) |
 | `Bytes[N]` | `N` bytes | `bytes` | Static raw bytes buffer. Example: `Bytes[16]` |
 | `FixedString[N]` | `N` bytes | `str` | Static fixed-length string (null/space-padded). Example: `FixedString[8]` |
@@ -148,8 +143,8 @@ from binary_master import (
 | `LengthOf[Type, target]` | `sizeof(Type)` | `int` | Auto-calculates target byte length on write; bounds target read on deserialization. |
 | `CountOf[Type, target]` | `sizeof(Type)` | `int` | Auto-calculates target element count on write; bounds target array read on deserialization. |
 | `Bits[N]` | `N` bits | `int` | Bitfield slice. Must be within struct decorated with `@binary_struct(bits=Total)`. |
-| `Offset[Target, Type, Base]` | 1, 2, 4, or 8 bytes | Instance of `Target` or `int` | Pointer offset. Backpatched automatically on write; auto-dereferenced on read. Default: `UInt32`, Base `0`. |
-| `NamedOffset[Key, Target, Type, Base]` | 1, 2, 4, or 8 bytes | `Target` instance (if typed) or `int` | Named placeholder offset resolved via `writer.write_named_offset(key)`. Supports `Enum` keys and auto-dereference on read. |
+| `Offset[Target, Type, Base]` | 1, 2, 4, or 8 bytes | Instance of `Target` or `int` | Direct pointer offset. Backpatched automatically on write; auto-dereferenced on read. Default: `UInt32`, Base `0`. |
+| `Offset[Key, Target, Type, Base]` | 1, 2, 4, or 8 bytes | `Target` instance (if typed) or `int` | Named placeholder offset resolved via `writer.write_named_offset(key)`. Supports `Enum` keys and auto-dereference on read. |
 | `OffsetTable[Count, Type, Base]` | `Count * sizeof(Type)` | `list[Target]` or `OffsetTableHandle` | Fixed-count table of pointer offsets. |
 | `Variant[tag_field, mapping]` | Dynamic | Target struct instance | Polymorphic tagged union dispatched by `tag_field`. |
 | `Base.SELF`, `Base.STRUCT`, `Base.FIELD` | 0 (Symbolic) | `RelativeBase` | Offset base origin. Supports arithmetic: `Base.SELF + 0x20`. |
@@ -308,11 +303,11 @@ container.table_offset = [
 raw = container.to_bytes()
 ```
 
-#### NamedOffset for Arbitrary Positioning (`NamedOffset[Key, Target=None]`)
+#### Named Offset for Arbitrary Positioning (`Offset[Key, Target=None]`)
 When header is written first, arbitrary data/padding is streamed, and target offset is determined later. Supports typed targets for automatic deserialization dereference and `Enum`/`Symbol` keys to prevent typos.
 ```python
 from enum import Enum
-from binary_master import BinaryWriter, BinaryReader, NamedOffset, binary_struct, UInt16, FixedString
+from binary_master import BinaryWriter, BinaryReader, Offset, binary_struct, UInt16, FixedString
 
 class Slot(Enum):
     PAYLOAD = "payload"
@@ -326,8 +321,8 @@ class ChunkPayload:
 @binary_struct
 class Header:
     magic: UInt16
-    # Typed NamedOffset with Enum key: auto-dereferenced on read!
-    payload_offset: NamedOffset[Slot.PAYLOAD, ChunkPayload]
+    # Typed named Offset with Enum key: auto-dereferenced on read!
+    payload_offset: Offset[Slot.PAYLOAD, ChunkPayload]
 
 # 1. Write Header & Payload
 writer = BinaryWriter()
@@ -347,11 +342,11 @@ assert hdr.payload_offset.tag == "DATA"
 assert hdr.payload_offset.target.data == 0x42
 
 # Multiple offsets can share the same key (all will be backpatched).
-# Calling write_named_offset more than once on the same key raises DuplicateNamedOffsetError (use rewrite_named_offset to re-patch).
-# Calling write_named_offset or rewrite_named_offset with unknown key raises NamedOffsetNotFoundError.
+# Calling write_named_offset more than once on the same key raises DuplicateOffsetError (use rewrite_named_offset to re-patch).
+# Calling write_named_offset or rewrite_named_offset with unknown key raises OffsetNotFoundError.
 ```
 
-##### Scoped Namespaces for NamedOffset (`with writer.namespace(...)`)
+##### Scoped Namespaces for Named Offset (`with writer.namespace(...)`)
 Avoid key collisions across repeated chunks/sections without altering struct definitions:
 ```python
 with writer.namespace("chunk_0"):
@@ -364,7 +359,7 @@ with writer.namespace("chunk_1"):
 
 # Supports Enum namespaces: with writer.namespace(Slot.PAYLOAD): ...
 # Supports nesting: with writer.namespace("sec"): with writer.namespace("sub"): ...
-# Root escape with leading slash: NamedOffset["/global_footer"] bypasses active namespace.
+# Root escape with leading slash: Offset["/global_footer"] bypasses active namespace.
 # Auto-incrementing IDs: with writer.namespace("chunk", auto_id=True): (generates chunk_0, chunk_1...)
 ```
 
@@ -394,15 +389,36 @@ restored = DynamicPacket.from_bytes(raw)
 assert isinstance(restored.payload, TextPayload)
 ```
 
+### 3.12 High-Performance Serialization & Zero-Copy Deserialization (StructPlan & Fast-Path)
+`binary-master` achieves near C-level throughput (> 700,000 ops/sec) through automatic `StructPlan` compilation and caching:
+1. **Automatic Fast-Path (`to_bytes()` / `from_bytes()`)**:
+   - Structs composed of fixed-size primitives (`UInt*`, `Int*`, `Float*`), `Bool`, and fixed-size `Bytes[N]` qualify for single-instruction `struct.Struct` pack/unpack.
+   - Bypasses procedural loops and runtime reflection entirely.
+2. **Zero-Copy Deserialization**:
+   - `Struct.from_bytes(data)` natively supports Python's buffer protocol (`memoryview`, `bytearray`, `bytes`).
+   - Passing a `memoryview` parses directly into struct fields without allocating or copying buffer memory:
+     ```python
+     mv = memoryview(network_buffer)
+     packet = Packet.from_bytes(mv)  # Zero-copy unpack
+     ```
+3. **Optimized Stream Writing (`record_entries=False`)**:
+   - By default, `BinaryWriter` records metadata (`LayoutEntry`) for interactive manual and diagram generation.
+   - For high-throughput network streaming or batch file export where documentation is not needed, initialize with `record_entries=False`:
+     ```python
+     writer = BinaryWriter(record_entries=False)
+     for pkt in high_speed_packets:
+         writer.write_struct(pkt)  # 20x-30x faster streaming writes
+     ```
+
 ---
 
-## 4. Schema-First Builder Layer: `Builder` (`BinaryBuilder`)
+## 4. Schema-First Builder Layer: `Builder`
 
 ### 4.0 Why Builder? (Builder vs Writer Core Rationale)
 While `BinaryWriter` can generate specs and C headers directly from serialized data, `Builder` remains essential for three primary architectural reasons:
 1. **Zero-Data Specification Authoring (Design Phase)**: Define protocol layouts, narrative chapters (`add_document`), and multi-language exports upfront *before* any serializing code or binary test data exists.
 2. **Schema-Driven Automated Deserialization (`builder.read`)**: Parses arbitrary raw byte streams into structured Python objects by evaluating tags and conditions dynamically, eliminating the need to write custom procedural `Reader` loops.
-3. **Compiler Intermediate Representation (IR)**: `Builder` serves as the internal AST/IR for all code generators (`c_header`, `code_gen/*`). Methods like `writer.to_c_header()` actually convert writer traces to a `Builder` via `writer.to_builder()` under the hood.
+3. **Compiler Intermediate Representation (IR)**: `Builder` serves as the internal AST/IR for all code generators (`code_gen/*`). Methods like `writer.to_c_header()` actually convert writer traces to a `Builder` via `writer.to_builder()` under the hood.
 
 **Rule of Thumb**:
 - Use `BinaryWriter` for daily binary generation and execution-trace documentation.
@@ -805,7 +821,7 @@ AI（LLM）がユーザー要件やプロトコル仕様からコードを生成
 | **エラー検知・完全性検証 (CRC/チェックサム)** | `checksum: CRC32` または `CRC16`, `Adler32` | 自前で `zlib.crc32` を呼んで手動バックパッチ | シリアライズ時に直前バイトまでを自動計算して書き込み、デシリアライズ時に自動検証（不一致で `ChecksumMismatchError`）。 |
 | **固定長フレーム（通信規格・セクタサイズ合わせ）** | `@binary_struct(total_size=512, pad_byte=b"\x00")` | 自前で `b"\x00" * (512 - len(data))` を末尾追加 | サイズ不足を自動パディング。万が一フィールド合計が 512B を超えた場合は `TotalSizeExceededError` で即検知。多言語出力時もパディング配列が自動生成される。 |
 | **構造体先頭相対のポインタ・データ参照** | `offset: Offset[TargetCls, UInt32, Base.SELF]` | 手続き的にオフセットを手動計算して書き込む | シリアライズ時に対象構造体を末尾に配置しオフセットを自動バックパッチ。デシリアライズ時に対象クラスを自動インスタンス化。 |
-| **離れた場所への遅延バックパッチ** | `NamedOffset["target_key"]` + `writer.write_named_offset(...)` | グローバル変数や `seek()` の手動計算 | 文字列キーで直感的に遅延解決。同一キーの多重登録で複数箇所の一括バックパッチも可能。 |
+| **離れた場所への遅延バックパッチ** | `Offset["target_key"]` + `writer.write_named_offset(...)` | グローバル変数や `seek()` の手動計算 | 文字列キーで直感的に遅延解決。同一キーの多重登録で複数箇所の一括バックパッチも可能。 |
 | **反復ブロック内でのキー衝突防止** | `with writer.namespace("block", auto_id=True):` | キー名を手動で `"block_0_payload"` のように結合 | コンテキストマネージャでスコープ化され、構造体定義を変更せずにキー衝突を完全に回避。 |
 | **種別タグに応じた構造体の切り替え** | `Variant["tag_field", {1: ClsA, 2: ClsB}]` | パケットごとに `if type == 1:` と分岐パーサーを手書き | 宣言的なタグ付き共用体。`Variant` より前に必ず `tag_field` を宣言する。 |
 | **状態・コマンドなどの限定値** | `state: MyEnum[UInt8]` (subclass of `BinaryEnum`) | 生の `UInt8` で定義して自前バリデーション | Python の `Enum` オブジェクトとして直接読み書きされ、未定義値は `InvalidEnumError` で弾かれる。 |
@@ -935,19 +951,19 @@ assert restored.primary_file.content_id == 1
 assert restored.primary_file.data == "FILE_DATA_ALPHA_"
 ```
 
-### Recipe 3: 階層化名前空間と同一オフセットの多重参照（NamedOffset + namespace）
+### Recipe 3: 階層化名前空間と同一オフセットの多重参照（Offset + namespace）
 **【課題】**  
 複雑なフォーマットやループ処理で複数のチャンクを書き出す際、キー名の衝突を防ぎ、さらに「同じオフセット位置を複数のポインタから参照」させたい。
 
 ```python
-from binary_master import BinaryWriter, NamedOffset, binary_struct, UInt16
+from binary_master import BinaryWriter, Offset, binary_struct, UInt16
 
 @binary_struct
 class BlockHeader:
     block_id: UInt16
     # 同一のキー "body" を2つのポインタが参照（同一キーの多重登録）
-    primary_body_offset: NamedOffset["body"]
-    mirror_body_offset: NamedOffset["body"]
+    primary_body_offset: Offset["body"]
+    mirror_body_offset: Offset["body"]
 
 writer = BinaryWriter(default_endian="little")
 
@@ -1277,7 +1293,7 @@ assert restored_from_json.to_bytes() == binary_data
 - `BitReader` で指定ビット数ずつ順次取り出し。
 
 ```python
-from binary_master import BitWriter, BitReader
+from binary_master.bitstream import BitWriter, BitReader
 
 # 1. ビットストリームの書き込み
 bw = BitWriter(msb_first=True)
@@ -1381,6 +1397,7 @@ builder.write_c("protocol_types.h")
 - **Declarative Struct**: Can be used as field types in `@binary_struct`.
 
 ### 12.7 Arbitrary Bitstream Manipulation
+- `from binary_master.bitstream import BitWriter, BitReader`
 - `BitWriter(stream=None, msb_first=True)`: `write_bits(value, bit_count)`, `flush_bits(pad_bit=0)`, `to_bytes()`.
 - `BitReader(data_or_stream, msb_first=True)`: `read_bits(bit_count)`, `peek_bits(bit_count)`, `align_to_byte()`.
 - `writer.write_bits(val, count)` & `reader.read_bits(count)`: Integrated directly into `BinaryWriter` and `BinaryReader`. Non-bit write methods automatically flush unaligned bits.

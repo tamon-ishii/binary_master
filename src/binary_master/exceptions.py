@@ -94,17 +94,17 @@ class TotalSizeExceededError(BinaryMasterError, ValueError):
     pass
 
 
-class NamedOffsetError(BinaryMasterError):
-    """Base exception for NamedOffset errors."""
+class OffsetError(BinaryMasterError):
+    """Base exception for Offset errors."""
     pass
 
 
-class DuplicateNamedOffsetError(NamedOffsetError, ValueError):
-    """Raised when a named offset key is already registered or duplicated."""
+class DuplicateOffsetError(OffsetError, ValueError):
+    """Raised when an offset key is already registered or duplicated."""
     pass
 
 
-class NamedOffsetNotFoundError(NamedOffsetError, KeyError):
-    """Raised when a named offset key does not exist."""
+class OffsetNotFoundError(OffsetError, KeyError):
+    """Raised when an offset key does not exist."""
     pass
 

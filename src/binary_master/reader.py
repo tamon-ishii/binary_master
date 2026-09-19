@@ -55,7 +55,7 @@ class BinaryReader:
         """
         self._default_endian = normalize_endian(default_endian)
 
-        if isinstance(source, (bytes, bytearray)):
+        if isinstance(source, (bytes, bytearray, memoryview)):
             self._stream: BinaryIO = io.BytesIO(source)
             self._auto_close = True if auto_close is None else auto_close
         elif isinstance(source, (str, Path)):
@@ -66,7 +66,7 @@ class BinaryReader:
             self._auto_close = False if auto_close is None else auto_close
         else:
             raise TypeError(
-                f"source must be bytes, bytearray, readable stream, mmap, or file path, got {type(source).__name__}"
+                f"source must be bytes, bytearray, memoryview, readable stream, mmap, or file path, got {type(source).__name__}"
             )
         self._mmap: Any = None
         self._mmap_file: Any = None
@@ -486,6 +486,3 @@ class BinaryReader:
         from binary_master.debug import debug_dump as _debug_dump
 
         return _debug_dump(self, format=format, **kwargs)
-
-
-Reader = BinaryReader

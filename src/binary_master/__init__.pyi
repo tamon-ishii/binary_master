@@ -1,5 +1,3 @@
-from typing import Literal
-
 from .binary_struct import (
     Array as Array,
 )
@@ -40,16 +38,10 @@ from .binary_struct import (
     CString as CString,
 )
 from .binary_struct import (
-    Double as Double,
-)
-from .binary_struct import (
     FixedArray as FixedArray,
 )
 from .binary_struct import (
     FixedString as FixedString,
-)
-from .binary_struct import (
-    Float as Float,
 )
 from .binary_struct import (
     Float16 as Float16,
@@ -85,9 +77,6 @@ from .binary_struct import (
     MagicBase as MagicBase,
 )
 from .binary_struct import (
-    NamedOffset as NamedOffset,
-)
-from .binary_struct import (
     Offset as Offset,
 )
 from .binary_struct import (
@@ -106,9 +95,6 @@ from .binary_struct import (
     RelativeBase as RelativeBase,
 )
 from .binary_struct import (
-    Struct as Struct,
-)
-from .binary_struct import (
     UInt8 as UInt8,
 )
 from .binary_struct import (
@@ -122,9 +108,6 @@ from .binary_struct import (
 )
 from .binary_struct import (
     Variant as Variant,
-)
-from .binary_struct import (
-    binary_size as binary_size,
 )
 from .binary_struct import (
     binary_struct as binary_struct,
@@ -153,29 +136,11 @@ from .binary_struct import (
 from .binary_struct import (
     write_variant as write_variant,
 )
-from .bitstream import (
-    BitReader as BitReader,
-)
-from .bitstream import (
-    BitWriter as BitWriter,
-)
-from .builder import (
-    BinaryBuilder as BinaryBuilder,
-)
 from .builder import (
     Builder as Builder,
 )
 from .builder import (
     BuilderReadResult as BuilderReadResult,
-)
-from .c_header import (
-    to_c_header as to_c_header,
-)
-from .c_header import (
-    to_c_struct as to_c_struct,
-)
-from .c_header import (
-    write_c_header as write_c_header,
 )
 from .checksum import (
     CRC16 as CRC16,
@@ -208,6 +173,9 @@ from .checksum import (
     compute_checksum as compute_checksum,
 )
 from .code_gen import (
+    generate_c_header as generate_c_header,
+)
+from .code_gen import (
     generate_code as generate_code,
 )
 from .code_gen import (
@@ -221,6 +189,15 @@ from .code_gen import (
 )
 from .code_gen import (
     generate_rust_code as generate_rust_code,
+)
+from .code_gen import (
+    to_c_header as to_c_header,
+)
+from .code_gen import (
+    to_c_struct as to_c_struct,
+)
+from .code_gen import (
+    write_c_header as write_c_header,
 )
 from .code_gen import (
     write_code as write_code,
@@ -265,7 +242,7 @@ from .enums import (
     normalize_endian as normalize_endian,
 )
 from .enums import (
-    normalize_named_offset_key as normalize_named_offset_key,
+    normalize_offset_key as normalize_offset_key,
 )
 from .exceptions import (
     BinaryMasterError as BinaryMasterError,
@@ -274,7 +251,7 @@ from .exceptions import (
     ChecksumMismatchError as ChecksumMismatchError,
 )
 from .exceptions import (
-    DuplicateNamedOffsetError as DuplicateNamedOffsetError,
+    DuplicateOffsetError as DuplicateOffsetError,
 )
 from .exceptions import (
     InvalidConstantError as InvalidConstantError,
@@ -286,10 +263,10 @@ from .exceptions import (
     InvalidMagicError as InvalidMagicError,
 )
 from .exceptions import (
-    NamedOffsetError as NamedOffsetError,
+    OffsetError as OffsetError,
 )
 from .exceptions import (
-    NamedOffsetNotFoundError as NamedOffsetNotFoundError,
+    OffsetNotFoundError as OffsetNotFoundError,
 )
 from .exceptions import (
     RangeValidationError as RangeValidationError,
@@ -301,34 +278,16 @@ from .manual import (
     LayoutEntry as LayoutEntry,
 )
 from .manual import (
-    generate_bitfield_packet_diagram as generate_bitfield_packet_diagram,
-)
-from .manual import (
     generate_html as generate_html,
 )
 from .manual import (
     generate_manual as generate_manual,
 )
 from .manual import (
-    generate_mermaid_diagram as generate_mermaid_diagram,
-)
-from .manual import (
-    generate_packet_diagram as generate_packet_diagram,
-)
-from .manual import (
-    inspect_struct_layout as inspect_struct_layout,
-)
-from .manual import (
-    resolve_language as resolve_language,
-)
-from .manual import (
     write_html as write_html,
 )
 from .reader import (
     BinaryReader as BinaryReader,
-)
-from .reader import (
-    Reader as Reader,
 )
 from .varint import (
     VarInt as VarInt,
@@ -366,9 +325,5 @@ from .writer import (
 from .writer import (
     OffsetTableHandle as OffsetTableHandle,
 )
-from .writer import (
-    Writer as Writer,
-)
 
-L = Literal
 __version__: str

@@ -9,6 +9,8 @@ from binary_master.code_gen.c import (
     generate_c_choice,
     generate_c_header,
     generate_c_struct,
+    to_c_header,
+    to_c_struct,
     write_c_header,
 )
 from binary_master.code_gen.cpp import (
@@ -68,7 +70,7 @@ def normalize_lang(lang: str) -> str:
 
 
 def generate_code(builder: Any, lang: str, **kwargs) -> str:
-    """Generate source code in the requested language from a BinaryBuilder, BinaryWriter, or @binary_struct."""
+    """Generate source code in the requested language from a Builder, BinaryWriter, or @binary_struct."""
     if hasattr(builder, "__binary__"):
         from binary_master.builder import Builder
         cls = builder if isinstance(builder, type) else builder.__class__
@@ -133,6 +135,8 @@ def write_code(
 __all__ = [
     "generate_c_header",
     "write_c_header",
+    "to_c_header",
+    "to_c_struct",
     "generate_c_struct",
     "generate_c_choice",
     "generate_rust_code",

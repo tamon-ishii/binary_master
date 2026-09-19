@@ -2,11 +2,12 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-276%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-290%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの宣言的バイナリ構造化＆仕様書自動生成ライブラリです。
 
 ### 🌟 特徴
+- **⚡ 超高速**: `StructPlan` キャッシュと fast-path により、`to_bytes()` / `from_bytes()` は 700,000+ ops/sec の超高速処理およびゼロコピーデシリアライズに対応。
 - **🛡️ 安全**: ポインタ操作を気にせず、境界チェックや型検証が自動で行われる安全な純 Python 設計。
 - **📊 仕様書の自動吐き出し**: 定義した構造体から Mermaid パケット図付き Markdown や、ブラウザで開ける HTML 仕様書をワンライナーで生成。
 - **✨ IDE で強力に補完**: 型アノテーションによる dataclass 感覚の記法で、フィールド名や型が IDE でスムーズに補完。
@@ -46,10 +47,15 @@ packet.write_html("sensor_spec.html", title="センサー通信パケット仕�
 - **Python**: 3.14 以上
 
 ```bash
-# uv を使用する場合
+# uv を使用する場合（GitHub から直接追加）
+uv add https://github.com/tamon-ishii/binary_master.git
+
+# またはパッケージ名から追加
 uv add binary-master
 
 # pip を使用する場合
+pip install git+https://github.com/tamon-ishii/binary_master.git
+# またはローカルクローンから
 pip install .
 ```
 
@@ -100,7 +106,6 @@ from binary_master import (
     BinaryWriter,
     Bits,
     FixedArray,
-    L,
     Offset,
     UInt8,
     UInt16,
@@ -121,7 +126,7 @@ class HeaderFlags:
 class Image:
     width: UInt16
     height: UInt16
-    pixels: FixedArray[UInt8, L[4]]  # 静的型チェッカー準拠の L[4]（または Literal[4]）
+    pixels: FixedArray[UInt8, 4]  # 固定長配列（または FixedArray[UInt8, Literal[4]]）
 
 # メインヘッダー（Image へのオフセットを保持）
 @binary_struct
@@ -403,9 +408,9 @@ pos_pkt = PacketHeader(128)
 assert pos_pkt.payload_len == 128
 ```
 
-#### 静的型チェッカー（ty / Pyright / mypy）対応と基底クラス (`BinaryStruct` / `Struct`)
+#### 静的型チェッカー（ty / Pyright / mypy）対応と基底クラス (`BinaryStruct`)
 `@binary_struct` は実行時に動的に `to_bytes()`, `from_bytes()`, `to_dict()` などのメソッドを付与します。
-Astral の `ty` や Pyright、mypy などの静的型チェッカーにおいて、動的属性の警告（`unresolved-attribute`）を回避し、IDE のコード補完（IntelliSense）を有効化するには、基底クラス `BinaryStruct`（または別名 `Struct`）を継承します：
+Astral の `ty` や Pyright、mypy などの静的型チェッカーにおいて、動的属性の警告（`unresolved-attribute`）を回避し、IDE のコード補完（IntelliSense）を有効化するには、基底クラス `BinaryStruct` を継承します：
 
 ```python
 from binary_master import binary_struct, BinaryStruct, UInt16
@@ -601,16 +606,16 @@ print(restored.num_items)     # => 2 (自動補完)
 print(restored.table_offset)  # => [8, 14] (各 LeafItem への相対オフセット)
 ```
 
-##### 🎯 自由配置・ヘッダー先行書き込み (`NamedOffset["key"]`)
-`Offset[...]` は「親構造体の直後に自動追記」されますが、**「ヘッダーを先に書いて、その後に任意の文字列や可変長データを挟み、任意のタイミングでオフセット位置を確定させたい」** 場合には、`NamedOffset["key"]` を使用します。
+##### 🎯 自由配置・ヘッダー先行書き込み (`Offset["key"]`)
+`Offset[...]` は「親構造体の直後に自動追記」されますが、**「ヘッダーを先に書いて、その後に任意の文字列や可変長データを挟み、任意のタイミングでオフセット位置を確定させたい」** 場合には、`Offset["key"]` を使用します。
 
 ```python
-from binary_master import binary_struct, UInt16, BinaryWriter, NamedOffset, read_struct
+from binary_master import binary_struct, UInt16, BinaryWriter, Offset, read_struct
 
 @binary_struct
 class Header:
     magic: UInt16
-    offset: NamedOffset["payload_pos"]  # "payload_pos" というキー名でオフセット枠を宣言
+    offset: Offset["payload_pos"]  # "payload_pos" というキー名でオフセット枠を宣言
 
 writer = BinaryWriter()
 h = Header(magic=0x1234)
@@ -625,9 +630,9 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
 ```
 
 - **同一キーの多重登録と例外安全性**:
-  - 同じキー名の `NamedOffset` を複数のフィールドや構造体で宣言した場合、同一キーの多重登録が許可されます。`writer.write_named_offset("key")` を呼び出すと、そのキーに紐づくすべてのオフセットスロットが同じターゲット位置へと一括でバックパッチされます（複数のポインタが同一ペイロードを指す構造に対応）。
-  - すでに解決済みのキーに対して誤って再度 `write_named_offset("key")` を呼び出した場合は、意図しない二重確定を防ぐため [`DuplicateNamedOffsetError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L101-L103) が発生します（明示的に上書き・再更新する場合は [`rewrite_named_offset("key")`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/writer.py) を使用します）。
-  - `write_named_offset("key")` や `rewrite_named_offset("key")` で存在しないキーを指定した場合は、安全のため [`NamedOffsetNotFoundError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L106-L108) が発生します。
+  - 同じキー名の `Offset` を複数のフィールドや構造体で宣言した場合、同一キーの多重登録が許可されます。`writer.write_named_offset("key")` を呼び出すと、そのキーに紐づくすべてのオフセットスロットが同じターゲット位置へと一括でバックパッチされます（複数のポインタが同一ペイロードを指す構造に対応）。
+  - すでに解決済みのキーに対して誤って再度 `write_named_offset("key")` を呼び出した場合は、意図しない二重確定を防ぐため [`DuplicateOffsetError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L101-L103) が発生します（明示的に上書き・再更新する場合は [`rewrite_named_offset("key")`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/writer.py) を使用します）。
+  - `write_named_offset("key")` や `rewrite_named_offset("key")` で存在しないキーを指定した場合は、安全のため [`OffsetNotFoundError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L106-L108) が発生します。
 - **名前空間スコープ (`with writer.namespace(...)`)**:
   同じ構造体クラスをループや複数チャンクで使い回す場合、`with writer.namespace(...)` で囲むことで同一キー名（例: `"payload"`）の衝突を完全に防止できます。
   ```python
@@ -641,9 +646,9 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
   ```
   - スコープ内の相対キーは自動的に `"chunk_0/payload"` のように階層化されます。
   - ネスト（入れ子）や `auto_id=True` による自動採番（`chunk_0`, `chunk_1`...）に対応。
-  - スコープ内から先頭スラッシュ `/` 付きキー（例: `NamedOffset["/global_footer"]`）を指定すると、ルート名前空間を直接参照できます。
+  - スコープ内から先頭スラッシュ `/` 付きキー（例: `Offset["/global_footer"]`）を指定すると、ルート名前空間を直接参照できます。
 
-- **型ヒント併用による自動デリファレンス (`NamedOffset["key", TargetStruct]`)**:
+- **型ヒント併用による自動デリファレンス (`Offset["key", TargetStruct]`)**:
   ターゲット構造体型を指定することで、読み込み時に対象構造体を自動インスタンス化して復元できます。
   ```python
   @binary_struct
@@ -655,7 +660,7 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
   class ImageContainer:
       magic: UInt32
       # 型ヒントを併用して宣言
-      image: NamedOffset["img_payload", ImageData]
+      image: Offset["img_payload", ImageData]
 
   # 書き込み: インスタンスを渡しておけば write_named_offset で自動書き出し！
   container = ImageContainer(magic=0x494D4730, image=ImageData(width=640, height=480))
@@ -668,7 +673,7 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
   print(restored.image.width, restored.image.height)  # => 640 480
   ```
 
-- **Enum / Symbol キーのサポート (`NamedOffset[MyEnum.KEY]`)**:
+- **Enum / Symbol キーのサポート (`Offset[MyEnum.KEY]`)**:
   キーのタイポ（打ち間違い）を IDE や静的型チェッカーで防止するため、Python の `Enum` メンバーをキーとして直接指定できます。
   ```python
   from enum import Enum
@@ -680,7 +685,7 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
   @binary_struct
   class Packet:
       magic: UInt32
-      payload_ptr: NamedOffset[PacketKey.PAYLOAD, ImageData]
+      payload_ptr: Offset[PacketKey.PAYLOAD, ImageData]
 
   writer.write_struct(Packet(magic=1))
   writer.align_to(16)
@@ -690,9 +695,7 @@ print(restored.offset)  # => 2 + 4 + len("任意の可変長データ...")
 
 #### 配列 (`FixedArray` & `Array`)
 - `FixedArray[Type, Size]`: 固定長配列（サイズ不足時は自動パディング、サイズ超過時はエラー検知）。
-  - **型安全性・IDE補完**: Python 公式の型仕様（PEP 484/526）に準拠し、最新の型チェッカー（`ty` / PyCharm / mypy）で型警告（`invalid-type-form`）を出さない記法として、要素数に `L[N]` または `Literal[N]` の指定を推奨します（例: `FixedArray[UInt8, L[4]]`）。
-  - 短縮形 `L` は `from binary_master import L` から直接インポート可能です。
-  - 従来の `FixedArray[UInt8, 4]` のような生の数値も実行時に自動アンラップされるため、そのまま完全動作します。
+  - **型安全性・IDE補完**: 要素数には生の数値（例: `FixedArray[UInt8, 4]`）または Python 公式の型仕様（PEP 586）に準拠した `FixedArray[UInt8, Literal[4]]` を指定できます。
 - `Array[Type]`: 可変長配列。
 
 
@@ -798,8 +801,8 @@ class ChunkContainer:
    - そのため、ヘッダー先行代入 `header.image_offset = payload` で型警告が出ず、デシリアライズ後（`restored.image_offset.`）で **`ImagePayload` の各フィールド（`width`, `height` 等）が 100% 自動補完** されます。
 2. **プリミティブ型代入の完全許容**:
    - `UInt8`〜`UInt64`、`Int8`〜`Int64` は IDE 上で `int` として扱われるため、`magic=0x42494E59` や `width=100` などの整数値リテラルを直接渡しても型不一致警告が出ません。
-3. **固定長配列の型指定 (`L[N]` / `Literal[N]`)**:
-   - Python の型仕様（PEP 484/526）により、型式の Generic 引数に生の数値を書くと型チェッカーから警告が出ます。`FixedArray[UInt8, L[4]]` のように `L[N]` または `Literal[N]` で囲むことで、警告ゼロの完全な型安全性を得られます。
+3. **固定長配列の型指定 (`Literal[N]` / 生の数値)**:
+   - 要素数には生の数値（`FixedArray[UInt8, 4]`）または `typing.Literal`（`FixedArray[UInt8, Literal[4]]`）を指定でき、警告ゼロの完全な型安全性を得られます。
 
 
 #### 多態チャンク（タグ付き共用体 / バリアント）とサブキャプション
@@ -1014,10 +1017,10 @@ with writer.set_caption(
     writer.write_struct(active_payload)
 ```
 
-###### ユースケース D: `BinaryBuilder` での共通構文
-事前設計型の `BinaryBuilder` でも全く同じ構文で利用できます：
+###### ユースケース D: `Builder` での共通構文
+事前設計型の `Builder` でも全く同じ構文で利用できます：
 ```python
-builder = BinaryBuilder(title="Network Protocol")
+builder = Builder(title="Network Protocol")
 
 with builder.set_caption("HeaderSection", desc="基本ヘッダ", spec_count=1):
     builder.add_field("magic", "UInt32", 4, desc="プロトコル識別子")
@@ -1189,7 +1192,7 @@ diff_report = writer_expected.diff(writer_actual, color=True)
 print(diff_report)
 ```
 
-### 6. プロトコル全体の事前スキーマ定義・仕様書・多言語・リーダー統合 (`Builder` / `BinaryBuilder`)
+### 6. プロトコル全体の事前スキーマ定義・仕様書・多言語・リーダー統合 (`Builder`)
 
 #### 💡 なぜ `Builder` が必要なのか？（`Writer` との使い分け・存在理由）
 
@@ -1304,7 +1307,7 @@ if "footer" in result:
 
 ### 7. 多言語ヘッダー・構造体定義のエクスポート (C, Rust, C#, Modern C++, Go)
 
-`Builder` / `BinaryBuilder` および `@binary_struct` は、Python 側で定義したバイナリレイアウト（1バイトパッキング整合）を保ったまま、主要なネイティブ・システムプログラミング言語向けのコードを自動生成できます。
+`Builder` および `@binary_struct` は、Python 側で定義したバイナリレイアウト（1バイトパッキング整合）を保ったまま、主要なネイティブ・システムプログラミング言語向けのコードを自動生成できます。
 
 | 言語 | `Builder` メソッド | `@binary_struct` メソッド | 生成特徴 |
 |---|---|---|---|
@@ -1328,8 +1331,8 @@ if "footer" in result:
 | `UInt32` / `Int32` | 4 バイト | 32ビット 符号なし / 符号付き整数 |
 | `UInt64` / `Int64` | 8 バイト | 64ビット 符号なし / 符号付き整数 |
 | `Float16` | 2 バイト | IEEE 754 半精度浮動小数点数 |
-| `Float32` / `Float` / `float` | 4 バイト | IEEE 754 単精度浮動小数点数（`Float` は `Float32` のエイリアス） |
-| `Float64` / `Double` | 8 バイト | IEEE 754 倍精度浮動小数点数（`Double` は `Float64` のエイリアス） |
+| `Float32` / `float` | 4 バイト | IEEE 754 単精度浮動小数点数 |
+| `Float64` | 8 バイト | IEEE 754 倍精度浮動小数点数 |
 | `Bits[N]` | N ビット | ビットフィールドのフィールド幅 |
 | `Offset[T, Size, BaseOffset]` | 指定サイズ（デフォルト: 4B） | 構造体 `T` へのバイトオフセット（自動解決。`UInt16` 等のサイズ指定や `Base.SELF + 0x20` 等の構造体先頭相対指定に対応） |
 | `OffsetTable[Count, Type, BaseOffset]` | `sizeof(Type) * Count` | オフセットテーブル配列（自動解決。`Base.SELF` 等の相対指定に対応） |
@@ -1349,7 +1352,7 @@ if "footer" in result:
 - **他言語コード生成**: `Cls.to_c()` / `Cls.to_c_struct()`, `Cls.to_rust()`, `Cls.to_cpp()`, `Cls.to_csharp()`, `Cls.to_go()`
 - **JSON/辞書変換**: `instance.to_dict()` / `Cls.from_dict()`, `instance.to_json()` / `Cls.from_json()`
 
-### `Builder` / `BinaryBuilder` 主要メソッド
+### `Builder` 主要メソッド
 - **章・説明文の追加**: `add_document(title, content)`（Markdown 形式の説明文・章を追加）
 - **構造体の登録**: `add_struct(cls, name=None, desc="", condition=None, condition_func=None, count=None)`（`@binary_struct` クラスを登録。条件分岐やリピート件数に対応）
 - **多態バリアント分岐の登録**: `add_choice(name, tag_field, variants, desc="", condition=None, condition_func=None)`（タグフィールドに基づくバリアント選択点を登録）
@@ -1529,7 +1532,7 @@ class CompactMessage:
 - **`BinaryWriter` / `BinaryReader` 連携**: `writer.write_bits()`, `reader.read_bits()` でバイトストリームとビットストリームをシームレスに混在可能。
 
 ```python
-from binary_master import BitWriter, BitReader
+from binary_master.bitstream import BitWriter, BitReader
 
 bw = BitWriter()
 bw.write_bits(0b101, 3)     # 3 ビット書き込み
@@ -1697,23 +1700,23 @@ pkt.write_html("packet_manual_en.html", lang="en")
 
 ---
 
-## サンプルコード一覧
+## サンプルコード一覧 (Jupyter Notebooks)
 
-`sample/` ディレクトリには、基本機能から高度な応用まで系統立てて学べるサンプルスクリプトが用意されています：
+`sample/` ディレクトリには、GitHub 上でも直接出力付きで確認できる対話型の Jupyter Notebook サンプルが用意されています：
 
 | ファイル | テーマ | 主な内容 |
 |---|---|---|
-| [`sample/01_basic_struct.py`](sample/01_basic_struct.py) | 基本的な宣言的構造体 | `@binary_struct` の定義、数値型・固定長配列、`to_bytes()`、`read_struct()`、`sizeof()`、エンディアン制御 |
-| [`sample/02_bitfields_and_alignment.py`](sample/02_bitfields_and_alignment.py) | ビットフィールドとアライメント | `Bits[N]` によるビットパッキング、`align=4` によるパディング、`auto_align=True` 自然アライメント |
-| [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) | 相対ポインタ & オフセットテーブル | `Offset[T, Base.SELF]`、オフセット演算（`Base.SELF + 0x20`）、`OffsetTable`、自動デリファレンス |
-| [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング、デバッグダンプ（`hexdump`, `dump`） |
-| [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) | Builder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、多言語出力（C/Rust/C++/C#/Go）、`builder.write()`、`builder.read()` |
-| [`sample/06_advanced_v2_features.py`](sample/06_advanced_v2_features.py) | v0.2.0 高度機能総合デモ | CRC32、BinaryEnum、Magic、Constant、JSON連携、iter_struct、VarInt、BitWriter/BitReader |
-| [`sample/07_v0_3_0_features.py`](sample/07_v0_3_0_features.py) | v0.3.0 新機能 | Float16、LengthOf / CountOf、total_size / pad_to、Range バリデーション、インタラクティブ HTML 仕様書生成 |
-| [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 7 本のサンプルを順番に自動実行・検証するオーケストレーター |
+| [`sample/01_basic_struct.ipynb`](sample/01_basic_struct.ipynb) | 基本的な宣言的構造体 | `@binary_struct` の定義、数値型・固定長文字列、`to_bytes()`、`read_struct()`、`sizeof()`、エンディアン制御 |
+| [`sample/02_bitfields_and_alignment.ipynb`](sample/02_bitfields_and_alignment.ipynb) | ビットフィールドとアライメント | `Bits[N]` によるビットパッキング、`align=4` によるパディング、`auto_align=True` 自然アライメント |
+| [`sample/03_offsets_and_tables.ipynb`](sample/03_offsets_and_tables.ipynb) | 相対ポインタ & オフセットテーブル | `Offset[T, Base.SELF]`、オフセット演算（`Base.SELF + 0x20`）、`OffsetTable`、遅延バックパッチ、名前空間スコープ |
+| [`sample/04_procedural_writer.ipynb`](sample/04_procedural_writer.ipynb) | 手続き的ライター & リーダー | `BinaryWriter` / `BinaryReader` によるストリーム操作、各種文字列、境界パディング、仕様書・Cヘッダー直接出力、デバッグダンプ |
+| [`sample/05_builder_and_reader.ipynb`](sample/05_builder_and_reader.ipynb) | Builder と自動リーダー | 事前スキーマ定義、`add_document`、多態 `add_choice`、多言語出力（C/Rust/C++/C#/Go）、`builder.write()`、`builder.read()` |
+| [`sample/06_advanced_v2_features.ipynb`](sample/06_advanced_v2_features.ipynb) | 高度信頼性機能総合デモ | CRC32、BinaryEnum、Magic、Constant、JSON連携、iter_struct、VarInt、BitWriter/BitReader |
+| [`sample/07_v0_3_0_features.ipynb`](sample/07_v0_3_0_features.ipynb) | モダン宣言的機能 (v0.3.0+) | Float16、LengthOf / CountOf、total_size / pad_to、Range バリデーション、インタラクティブ HTML 仕様書生成 |
+| [`sample/main.py`](sample/main.py) | 一括実行ランナー | 全 7 本の Jupyter Notebook を順番に自動実行・検証するオーケストレーター |
 
 ```bash
-# 全サンプルの実行
+# 全サンプルの自動実行・検証
 python sample/main.py
 ```
 

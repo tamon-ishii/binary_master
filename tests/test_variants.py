@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import pytest
+
 from binary_master import (
     BinaryWriter,
-    BinaryReader,
     UInt8,
     UInt16,
     UInt32,
     Variant,
     binary_struct,
     generate_manual,
-    read_struct,
     write_struct,
 )
 

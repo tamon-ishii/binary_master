@@ -164,27 +164,49 @@ def csharp_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
         elem_cs, _, _ = csharp_type_of(elem_t)
         return f"{elem_cs}[]", cnt, None
 
-    # Offset[Target, Size, Base]
+    # Offset[Target / Key, Size, Base]
     is_offset = (isinstance(field_type, tuple) and len(field_type) >= 1 and field_type[0] is Offset) or (
         get_origin(field_type) is Offset
     )
     if is_offset:
-        target_name = "Target"
-        offset_t = UInt32
-        if isinstance(field_type, tuple):
-            if len(field_type) >= 2:
-                target_name = getattr(field_type[1], "__name__", str(field_type[1]))
-            if len(field_type) >= 3:
-                offset_t = field_type[2]
+        first_arg = field_type[1] if isinstance(field_type, tuple) and len(field_type) >= 2 else (
+            get_args(field_type)[0] if get_args(field_type) else None
+        )
+        if isinstance(first_arg, (str, enum.Enum)) or (isinstance(field_type, tuple) and len(field_type) >= 5):
+            key_name = str(first_arg)
+            target_name = ""
+            offset_t = UInt32
+            if isinstance(field_type, tuple):
+                if len(field_type) >= 3 and field_type[2] is not None:
+                    target_name = getattr(field_type[2], "__name__", str(field_type[2]))
+                if len(field_type) >= 4 and field_type[3] is not None:
+                    offset_t = field_type[3]
+            else:
+                args = get_args(field_type)
+                if len(args) >= 2 and args[1] is not None:
+                    target_name = getattr(args[1], "__name__", str(args[1]))
+                if len(args) >= 3 and args[2] is not None:
+                    offset_t = args[2]
+            cs_name, _, _ = csharp_type_of(offset_t)
+            comment = f"Named offset '{key_name}' to {target_name}" if target_name else f"Named offset '{key_name}'"
+            return cs_name, None, comment
         else:
-            args = get_args(field_type)
-            if len(args) >= 1:
-                target_name = getattr(args[0], "__name__", str(args[0]))
-            if len(args) >= 2 and args[1] in (UInt8, UInt16, UInt32, UInt64):
-                offset_t = args[1]
+            target_name = "Target"
+            offset_t = UInt32
+            if isinstance(field_type, tuple):
+                if len(field_type) >= 2:
+                    target_name = getattr(field_type[1], "__name__", str(field_type[1]))
+                if len(field_type) >= 3:
+                    offset_t = field_type[2]
+            else:
+                args = get_args(field_type)
+                if len(args) >= 1:
+                    target_name = getattr(args[0], "__name__", str(args[0]))
+                if len(args) >= 2 and args[1] in (UInt8, UInt16, UInt32, UInt64):
+                    offset_t = args[1]
 
-        cs_name, _, _ = csharp_type_of(offset_t)
-        return cs_name, None, f"Offset to {target_name}"
+            cs_name, _, _ = csharp_type_of(offset_t)
+            return cs_name, None, f"Offset to {target_name}"
 
     # OffsetTable[Count, Type, Base]
     is_offset_tbl = (isinstance(field_type, tuple) and len(field_type) >= 1 and field_type[0] is OffsetTable) or (
@@ -380,7 +402,7 @@ def generate_csharp_choice(
 
 
 def generate_csharp_code(builder: Any, namespace: str = "BinaryProtocol") -> str:
-    """Generate complete C# source file from a BinaryBuilder instance."""
+    """Generate complete C# source file from a Builder instance."""
     from binary_master.builder import (
         ChoiceElement,
         DocumentElement,
@@ -470,7 +492,7 @@ def write_csharp(
     path_or_file: Optional[Union[str, Path, IO[str]]] = None,
     namespace: str = "BinaryProtocol",
 ) -> str:
-    """Generate C# code from a BinaryBuilder and optionally save to file."""
+    """Generate C# code from a Builder and optionally save to file."""
     content = generate_csharp_code(builder, namespace=namespace)
     if path_or_file is not None:
         if isinstance(path_or_file, (str, Path)):

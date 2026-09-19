@@ -5,32 +5,30 @@
 4. Interactive HTML documentation (to_html, write_html, generate_html)
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from binary_master import (
-    binary_struct,
+    Array,
+    BinaryReader,
+    BinaryWriter,
+    Builder,
+    Bytes,
+    CountOf,
+    CString,
+    FixedArray,
+    Int32,
+    LengthOf,
+    Range,
+    RangeValidationError,
+    TotalSizeExceededError,
     UInt8,
     UInt16,
     UInt32,
-    Int32,
-    Float32,
-    Bytes,
-    Array,
-    FixedArray,
-    CString,
-    BinaryWriter,
-    BinaryReader,
+    binary_struct,
     sizeof,
-    Range,
-    RangeValidationError,
-    LengthOf,
-    CountOf,
-    TotalSizeExceededError,
-    generate_html,
-    write_html,
-    Builder,
 )
-
 
 # ==========================================
 # 1. Tests for LengthOf & CountOf

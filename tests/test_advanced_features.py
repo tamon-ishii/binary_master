@@ -1,28 +1,27 @@
 """Unit tests for struct docstring in manual, auto padding/align, and offset tables."""
 
-import pytest
 import struct
 
+import pytest
+
 from binary_master import (
+    Base,
     BinaryWriter,
+    Bits,
     Endian,
+    Offset,
+    OffsetTable,
+    OffsetTableHandle,
+    RelativeBase,
     UInt8,
     UInt16,
     UInt32,
     UInt64,
-    Bits,
-    Offset,
-    OffsetTable,
-    OffsetTableHandle,
-    Base,
-    RelativeBase,
-    sizeof,
     binary_struct,
-    write_struct,
     read_struct,
+    sizeof,
 )
 from binary_master.manual import generate_manual
-
 
 # ==========================================================
 # 1. Docstring Reflection Tests

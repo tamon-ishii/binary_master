@@ -3,28 +3,17 @@
 import os
 import shutil
 import subprocess
-import tempfile
-from pathlib import Path
+
 import pytest
 
 from binary_master import (
+    Builder,
     FixedArray,
     Float32,
-    Builder,
-    Offset,
-    OffsetTable,
     UInt8,
     UInt16,
     UInt32,
     binary_struct,
-)
-from binary_master.code_gen import (
-    generate_code,
-    generate_cpp_code,
-    generate_csharp_code,
-    generate_go_code,
-    generate_rust_code,
-    write_code,
 )
 
 
@@ -299,17 +288,15 @@ class TestUnifiedDispatcher:
 class TestNewFeaturesCodeGen:
     def test_advanced_constraints_code_gen(self):
         from binary_master import (
+            CRC32,
             Array,
             Bytes,
             Constant,
             CountOf,
-            CRC32,
             Int16,
             LengthOf,
             Magic,
             Range,
-            UInt8,
-            UInt16,
         )
 
         @binary_struct

@@ -1,15 +1,14 @@
-import pytest
 from binary_master import (
-    binary_struct,
+    BinaryReader,
+    BinaryWriter,
+    OffsetTable,
     UInt16,
     UInt32,
-    OffsetTable,
-    BinaryWriter,
-    BinaryReader,
+    binary_struct,
     generate_manual,
     to_c_struct,
-    inspect_struct_layout,
 )
+from binary_master.manual import inspect_struct_layout
 
 
 def test_offset_table_variable_declarative():

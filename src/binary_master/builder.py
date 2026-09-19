@@ -1,4 +1,4 @@
-"""Schema-first BinaryBuilder / Builder and automated binary reader."""
+"""Schema-first Builder and automated binary reader."""
 
 from __future__ import annotations
 
@@ -124,7 +124,7 @@ class FieldElement:
 
 
 class BuilderReadResult(dict):
-    """Container for deserialized objects returned by BinaryBuilder.read() / Builder.read().
+    """Container for deserialized objects returned by Builder.read().
 
     Supports both dictionary-style key access (`res['header']`) and
     attribute-style dot access (`res.header`), including shadowed method names.
@@ -246,7 +246,7 @@ def _clean_mermaid_id(name: str) -> str:
     return clean or "node"
 
 
-class BinaryBuilder:
+class Builder:
     """Declarative specification builder, multi-language code generator, and automated deserializer.
 
     Enables schema-first manual generation with conditional branches, polymorphic variants,
@@ -272,7 +272,7 @@ class BinaryBuilder:
             Union[DocumentElement, StructElement, ChoiceElement, SectionElement, FieldElement]
         ] = []
 
-    def add_document(self, title: str, content: str) -> BinaryBuilder:
+    def add_document(self, title: str, content: str) -> Builder:
         """Add a narrative documentation chapter or explanatory markdown section.
 
         Args:
@@ -293,7 +293,7 @@ class BinaryBuilder:
         condition: Optional[str] = None,
         condition_func: Optional[Callable[[Any], bool]] = None,
         count: Optional[Union[int, str, Callable[[Any], int]]] = None,
-    ) -> BinaryBuilder:
+    ) -> Builder:
         """Register a @binary_struct class in the specification layout.
 
         Args:
@@ -330,7 +330,7 @@ class BinaryBuilder:
         desc: str = "",
         condition: Optional[str] = None,
         condition_func: Optional[Callable[[Any], bool]] = None,
-    ) -> BinaryBuilder:
+    ) -> Builder:
         """Register a polymorphic branch or choice point dispatched by a tag field.
 
         Args:
@@ -431,7 +431,7 @@ class BinaryBuilder:
         endian: Optional[str] = None,
         condition: Optional[str] = None,
         condition_func: Optional[Callable[[Any], bool]] = None,
-    ) -> BinaryBuilder:
+    ) -> Builder:
         """Add an ad-hoc field entry without requiring a full struct class.
 
         Args:
@@ -464,7 +464,7 @@ class BinaryBuilder:
         writer: Any,
         *,
         include_fields: bool = True,
-    ) -> BinaryBuilder:
+    ) -> Builder:
         """Import section captions and layout fields recorded by a BinaryWriter.
 
         Enables seamless transition from procedural binary writing to declarative schema
@@ -512,7 +512,7 @@ class BinaryBuilder:
 
         return self
 
-    def import_captions(self, writer: Any) -> BinaryBuilder:
+    def import_captions(self, writer: Any) -> Builder:
         """Import unique section captions from a BinaryWriter into the builder.
 
         Args:
@@ -531,7 +531,7 @@ class BinaryBuilder:
         default_endian: Optional[str] = None,
         version: Optional[str] = None,
         description: str = "",
-    ) -> BinaryBuilder:
+    ) -> Builder:
         """Construct a new Builder schema from a populated BinaryWriter instance.
 
         Args:
@@ -542,7 +542,7 @@ class BinaryBuilder:
             description: Optional protocol description.
 
         Returns:
-            A new BinaryBuilder configured with sections and fields from writer.
+            A new Builder configured with sections and fields from writer.
         """
         if hasattr(writer, "to_builder"):
             return writer.to_builder(
@@ -1165,7 +1165,7 @@ class BinaryBuilder:
         Returns:
             The generated C header code as a string.
         """
-        from binary_master.c_header import generate_c_header
+        from binary_master.code_gen.c import generate_c_header
 
         return generate_c_header(self, guard=guard, pack=pack)
 
@@ -1185,7 +1185,7 @@ class BinaryBuilder:
         Returns:
             The generated C header code as a string.
         """
-        from binary_master.c_header import write_c_header
+        from binary_master.code_gen.c import write_c_header
 
         return write_c_header(self, path_or_file=path_or_file, guard=guard, pack=pack)
 
@@ -1823,11 +1823,7 @@ class BinaryBuilder:
             writer.write_bytes(bytes(val), name=elem.name, desc=elem.desc)
 
 
-# Canonical aliases
-Builder = BinaryBuilder
-
 __all__ = [
-    "BinaryBuilder",
     "Builder",
     "BuilderReadResult",
     "DocumentElement",

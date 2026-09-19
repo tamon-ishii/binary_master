@@ -2,19 +2,18 @@
 
 import io
 from pathlib import Path
+
 import pytest
 
 from binary_master import (
+    BinaryWriter,
     Bits,
-    FixedArray,
-    BinaryBuilder,
     Builder,
+    FixedArray,
     UInt8,
     UInt16,
     UInt32,
     binary_struct,
-    write_struct,
-    BinaryWriter,
 )
 from binary_master.builder import BuilderReadResult
 
@@ -291,25 +290,20 @@ def test_builder_error_handling():
 
 
 def test_builder_aliases():
-    """Verify BinaryBuilder and Builder are identical and functional, and ManualBuilder is removed."""
+    """Verify Builder is functional, and BinaryBuilder and ManualBuilder are removed from binary_master."""
     import binary_master
-    from binary_master import BinaryBuilder, Builder
-    from binary_master.builder import BinaryBuilder as BB1, Builder as B1
+    from binary_master import Builder
+    from binary_master.builder import Builder as B1
 
-    assert BinaryBuilder is Builder
-    assert BB1 is BinaryBuilder
     assert B1 is Builder
 
-    # Ensure ManualBuilder is completely removed
+    # Ensure removed names are not in binary_master
     assert not hasattr(binary_master, "ManualBuilder")
+    assert not hasattr(binary_master, "BinaryBuilder")
 
     b = Builder(title="Alias Test", version="1.0")
     b.add_struct(Header, name="header")
     assert len(b.elements) == 1
-
-    bb = BinaryBuilder(title="Alias Test 2")
-    bb.add_struct(Header, name="header")
-    assert len(bb.elements) == 1
 
 
 def test_builder_section_and_caption_context_managers():
@@ -426,7 +420,7 @@ def test_builder_import_writer_and_captions():
 
     # Verify elements: 2 sections + 3 fields = 5 elements
     assert len(builder.elements) == 5
-    from binary_master.builder import SectionElement, FieldElement
+    from binary_master.builder import FieldElement, SectionElement
     assert isinstance(builder.elements[0], SectionElement)
     assert builder.elements[0].title == "File Header"
     assert isinstance(builder.elements[1], FieldElement)

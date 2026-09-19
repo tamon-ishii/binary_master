@@ -1,35 +1,34 @@
 """Tests for binary_struct serialization and writing."""
 
-from pathlib import Path
 import struct
+from pathlib import Path
+
 import pytest
 
 from binary_master import (
+    Array,
     BinaryWriter,
+    Bits,
     Endian,
-    UInt8,
-    UInt16,
-    UInt32,
-    UInt64,
+    FixedArray,
+    Float32,
+    Float64,
     Int8,
     Int16,
     Int32,
     Int64,
-    Float32,
-    Float64,
-    Offset,
-    Array,
-    FixedArray,
-    Bits,
-    binary_struct,
-    write_struct,
-    sizeof,
-    binary_size,
-    offsetof,
-    bit_offsetof,
     Magic,
+    Offset,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    binary_struct,
+    bit_offsetof,
+    offsetof,
+    sizeof,
+    write_struct,
 )
-
 
 # ==========================================================
 # Test Struct Definitions
@@ -228,8 +227,8 @@ def test_sizeof_primitives():
     assert sizeof(UInt16) == 2
     assert sizeof(UInt32) == 4
     assert sizeof(UInt64) == 8
-    assert binary_size(Float32) == 4
-    assert binary_size(Float64) == 8
+    assert sizeof(Float32) == 4
+    assert sizeof(Float64) == 8
 
 
 def test_sizeof_static_classes_and_instances():
@@ -417,7 +416,7 @@ def test_offsetof_dynamic_fields():
 
 def test_bytes_and_string_types_in_binary_struct():
     """Test Bytes[N], FixedString[N], CString, and PrefixedString in @binary_struct."""
-    from binary_master import Bytes, FixedString, CString, PrefixedString, read_struct
+    from binary_master import Bytes, CString, FixedString, PrefixedString, read_struct
 
     @binary_struct(endian="little")
     class UserProfile:
@@ -567,7 +566,10 @@ def test_struct_default_values():
 
 def test_binary_struct_base_class():
     """Verify subclassing BinaryStruct provides statically typed methods and clean serialization."""
-    from binary_master import BinaryStruct, Struct, to_bytes, from_bytes
+    import binary_master
+    from binary_master import BinaryStruct, from_bytes, to_bytes
+
+    assert not hasattr(binary_master, "Struct")
 
     @binary_struct
     class Header(BinaryStruct):
@@ -594,9 +596,8 @@ def test_binary_struct_base_class():
     h4 = Header.from_json(j)
     assert h4 == h
 
-    # Struct alias works the same
     @binary_struct
-    class SubItem(Struct):
+    class SubItem(BinaryStruct):
         val: UInt8
 
     s = SubItem(val=7)

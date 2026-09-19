@@ -1,34 +1,25 @@
 """Tests for BinaryReader and @binary_struct deserialization."""
 
-import io
-from pathlib import Path
-import pytest
 import struct
+from pathlib import Path
+
+import pytest
 
 from binary_master import (
+    Array,
     BinaryReader,
     BinaryWriter,
+    Bits,
     Endian,
-    Reader,
+    FixedArray,
+    Float32,
+    Int32,
+    Offset,
     UInt8,
     UInt16,
     UInt32,
-    UInt64,
-    Int8,
-    Int16,
-    Int32,
-    Int64,
-    Float32,
-    Float64,
-    Offset,
-    OffsetTable,
-    Array,
-    FixedArray,
-    Bits,
     binary_struct,
-    read_struct,
 )
-
 
 # ==========================================================
 # 1. Primitive Reading Tests

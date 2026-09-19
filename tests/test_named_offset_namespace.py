@@ -1,25 +1,24 @@
 import struct
+
 import pytest
+
 from binary_master import (
-    binary_struct,
     BinaryWriter,
-    NamedOffset,
-    UInt32,
+    Offset,
     UInt16,
-    read_struct,
-    DuplicateNamedOffsetError,
-    NamedOffsetNotFoundError,
+    UInt32,
+    binary_struct,
 )
 
 
 @binary_struct
 class ChunkHeader:
     magic: UInt32
-    payload_offset: NamedOffset["payload"]
+    payload_offset: Offset["payload"]
 
 
 def test_named_offset_isolated_namespaces():
-    """Verify that multiple structs with identical NamedOffset keys do not collide across namespaces."""
+    """Verify that multiple structs with identical Offset keys do not collide across namespaces."""
     writer = BinaryWriter()
 
     # Chunk A
@@ -71,8 +70,8 @@ def test_named_offset_root_escape_with_leading_slash():
     """Verify that leading slash '/' escapes active namespace to target root scope."""
     @binary_struct
     class ScopedWithGlobalRef:
-        local_ref: NamedOffset["local"]
-        global_ref: NamedOffset["/global_target"]
+        local_ref: Offset["local"]
+        global_ref: Offset["/global_target"]
 
     writer = BinaryWriter()
 
@@ -147,7 +146,7 @@ def test_named_offset_direct_reserve_in_namespace():
 
 
 def test_named_offset_with_enum_keys():
-    """Verify that Enum members can be used as NamedOffset keys seamlessly."""
+    """Verify that Enum members can be used as Offset keys seamlessly."""
     from enum import Enum
 
     class ChunkKey(Enum):
@@ -157,7 +156,7 @@ def test_named_offset_with_enum_keys():
     @binary_struct
     class EnumKeyStruct:
         magic: UInt32
-        body_offset: NamedOffset[ChunkKey.BODY]
+        body_offset: Offset[ChunkKey.BODY]
 
     writer = BinaryWriter()
     writer.write_struct(EnumKeyStruct(magic=0x11223344))
@@ -171,7 +170,7 @@ def test_named_offset_with_enum_keys():
 
 
 def test_named_offset_with_target_type_auto_dereferencing():
-    """Verify NamedOffset[key, TargetStruct] automatically deserializes TargetStruct on read."""
+    """Verify Offset[key, TargetStruct] automatically deserializes TargetStruct on read."""
     @binary_struct
     class ImageData:
         width: UInt16
@@ -180,7 +179,7 @@ def test_named_offset_with_target_type_auto_dereferencing():
     @binary_struct
     class ImageContainer:
         magic: UInt32
-        image: NamedOffset["img_payload", ImageData]
+        image: Offset["img_payload", ImageData]
 
     payload = ImageData(width=640, height=480)
     container = ImageContainer(magic=0x494D4730, image=payload)
@@ -204,6 +203,7 @@ def test_named_offset_with_target_type_auto_dereferencing():
 def test_named_offset_with_target_type_and_enum_key():
     """Verify combination of Enum key, target type, offset type, and relative base."""
     from enum import Enum
+
     from binary_master import Base
 
     class MyKeys(Enum):
@@ -216,7 +216,7 @@ def test_named_offset_with_target_type_and_enum_key():
     @binary_struct
     class MasterRecord:
         magic: UInt32
-        sub: NamedOffset[MyKeys.SUB_RECORD, SubRecord, UInt16, Base.SELF]
+        sub: Offset[MyKeys.SUB_RECORD, SubRecord, UInt16, Base.SELF]
 
     sub_obj = SubRecord(val=0xDEADBEEF)
     master = MasterRecord(magic=0xAA55AA55, sub=sub_obj)
@@ -240,6 +240,7 @@ def test_named_offset_with_target_type_and_enum_key():
 def test_named_offset_type_label_in_manual():
     """Verify that generate_manual renders target type and enum key in the specification table."""
     from enum import Enum
+
     from binary_master.manual import generate_manual
 
     class FileKeys(Enum):
@@ -252,9 +253,9 @@ def test_named_offset_type_label_in_manual():
     @binary_struct
     class Container:
         magic: UInt32
-        payload_ptr: NamedOffset[FileKeys.PAYLOAD, ChunkPayload, UInt16]
+        payload_ptr: Offset[FileKeys.PAYLOAD, ChunkPayload, UInt16]
 
     md = generate_manual(Container, lang="en")
-    assert "`NamedOffset['payload', ChunkPayload, UInt16]`" in md
+    assert "`Offset['payload', ChunkPayload, UInt16]`" in md
 
 

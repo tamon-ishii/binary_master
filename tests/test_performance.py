@@ -6,6 +6,8 @@ import pytest
 
 from binary_master import (
     BinaryStruct,
+    Bool,
+    Bytes,
     Endian,
     Float32,
     Int32,
@@ -94,3 +96,96 @@ def test_constrained_struct_plan() -> None:
     pkt_deser = ConstrainedPacket.from_bytes(raw)
     assert pkt_deser.status == 5
     assert pkt_deser.count == 100
+
+
+@binary_struct
+class NetworkHeader(BinaryStruct):
+    packet_id: UInt16
+    payload: Bytes[16]
+    is_active: Bool
+    flags: UInt8
+
+
+def test_bytes_and_bool_fast_path() -> None:
+    plan = get_struct_plan(NetworkHeader)
+    assert plan.can_fast_unpack is True
+    assert plan.can_fast_pack is True
+    assert plan.total_fixed_size == 2 + 16 + 1 + 1  # 20 bytes
+    assert plan.fast_field_names == ("packet_id", "payload", "is_active", "flags")
+
+    pkt = NetworkHeader(
+        packet_id=0x1234,
+        payload=b"0123456789abcdef",
+        is_active=True,
+        flags=0xAB,
+    )
+    raw = pkt.to_bytes()
+    assert len(raw) == 20
+    assert raw[:2] == b"\x34\x12"  # little-endian UInt16
+    assert raw[2:18] == b"0123456789abcdef"
+    assert raw[18] == 1
+    assert raw[19] == 0xAB
+
+    deser = NetworkHeader.from_bytes(raw)
+    assert deser.packet_id == 0x1234
+    assert deser.payload == b"0123456789abcdef"
+    assert deser.is_active is True
+    assert deser.flags == 0xAB
+
+
+def test_zero_copy_deserialization() -> None:
+    pkt = NetworkHeader(
+        packet_id=0x5678,
+        payload=b"ABCDEF0123456789",
+        is_active=False,
+        flags=0x42,
+    )
+    raw = pkt.to_bytes()
+
+    # From memoryview (zero-copy buffer protocol)
+    mv = memoryview(raw)
+    deser_mv = NetworkHeader.from_bytes(mv)
+    assert deser_mv.packet_id == 0x5678
+    assert deser_mv.payload == b"ABCDEF0123456789"
+    assert deser_mv.is_active is False
+    assert deser_mv.flags == 0x42
+
+    # From bytearray
+    ba = bytearray(raw)
+    deser_ba = NetworkHeader.from_bytes(ba)
+    assert deser_ba.packet_id == 0x5678
+    assert deser_ba.payload == b"ABCDEF0123456789"
+
+
+def test_writer_stream_fast_pack() -> None:
+    from binary_master import BinaryWriter
+
+    pkt = NetworkHeader(
+        packet_id=0x9999,
+        payload=b"1111222233334444",
+        is_active=True,
+        flags=0xFF,
+    )
+    writer = BinaryWriter(record_entries=False)
+    writer.write_struct(pkt)
+    data = writer.to_bytes()
+    assert len(data) == 20
+    deser = NetworkHeader.from_bytes(data)
+    assert deser.packet_id == 0x9999
+    assert deser.payload == b"1111222233334444"
+
+
+def test_named_offset_code_generation() -> None:
+    from binary_master import Offset
+    from binary_master.code_gen import generate_code
+
+    @binary_struct
+    class Chunk(BinaryStruct):
+        magic: UInt32
+        data_offset: Offset["data_tag", UInt32]
+
+    for lang in ("c", "cpp", "csharp", "go", "rust"):
+        code = generate_code(Chunk, lang=lang)
+        assert "data_offset" in code
+        assert "data_tag" in code
+

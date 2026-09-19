@@ -2,13 +2,12 @@
 
 import subprocess
 from pathlib import Path
-import pytest
 
 from binary_master import (
     Bits,
+    Builder,
     FixedArray,
     Float32,
-    Builder,
     UInt8,
     UInt16,
     UInt32,

@@ -1,8 +1,6 @@
 """Tests for binary-master CLI."""
 
-import io
 from pathlib import Path
-import pytest
 
 from binary_master import UInt8, UInt32, binary_struct
 from binary_master.cli import main

@@ -2,13 +2,14 @@
 
 ## 概要
 
-Configuration header parameters.
+HeaderChunk(protocol_version: binary_master.binary_struct.UInt16, flags: binary_master.binary_struct.UInt16)
 
 - **合計サイズ**: 98 バイト (`0x0062`)
 - **デフォルトエンディアン**: リトルエンディアン (Little)
-- **合計フィールド数**: 19
+- **合計フィールド数**: 19 (定義数: 13)
+- **構造体数**: 2
 
-## 構造図 (フローチャート)
+## 構造図
 
 ```mermaid
 flowchart TD
@@ -47,29 +48,11 @@ flowchart TD
     N11 --> N12
 ```
 
-## 構造図 (パケット図)
-
-```mermaid
-packet-beta
-title Procedural Binary Protocol Specification レイアウト
-0-31: "magic (UInt32)"
-32-47: "version_major (UInt16)"
-48-63: "version_minor (UInt16)"
-64-183: "app_name (CString)"
-184-367: "doc_title (PrefixedString[2])"
-368-431: "author_tag (FixedString[8])"
-432-447: "chunk_type (UInt16)"
-448-463: "protocol_version (UInt16)"
-464-479: "flags (UInt16)"
-480-495: "num_records (UInt16)"
-496-783: "DataRecord 🔁 xnum_records (36B)"
-```
-
 ## メモリレイアウト表
 
 ### File Header
 
-Container header identifying format and version
+ファイル識別子とバージョン
 
 ```mermaid
 packet-beta
@@ -87,7 +70,7 @@ title File Header レイアウト
 
 ### Metadata
 
-Textual metadata and application properties
+アプリケーション属性テキスト
 
 ```mermaid
 packet-beta
@@ -99,13 +82,13 @@ title Metadata レイアウト
 
 | オフセット (16進) | オフセット (10進) | サイズ (B) | フィールド名 | 型 | エンディアン | 説明 |
 |---|---|---|---|---|---|---|
-| `0x0008` | 8 | 15 | `app_name` | `CString` | - | App Name |
-| `0x0017` | 23 | 23 | `doc_title` | `PrefixedString[2]` | Little | Doc Title |
-| `0x002E` | 46 | 8 | `author_tag` | `FixedString[8]` | - | Author Tag |
+| `0x0008` | 8 | 15 | `app_name` | `CString` | - | Null終端文字列 |
+| `0x0017` | 23 | 23 | `doc_title` | `PrefixedString[2]` | Little | 2B長さプレフィックス文字列 |
+| `0x002E` | 46 | 8 | `author_tag` | `FixedString[8]` | - | 8B固定長文字列 |
 
 ### Dynamic Payload
 
-Dynamic payload dispatched by chunk_type
+動的ペイロードブロック
 
 ```mermaid
 packet-beta
@@ -121,13 +104,13 @@ title Dynamic Payload レイアウト
 | `0x0036` | 54 | 2 | `chunk_type` | `UInt16` | Little | 1=HeaderChunk, 2=TextChunk |
 | `0x0038` | 56 | 2 | `protocol_version` | `UInt16` | Little | - |
 | `0x003A` | 58 | 2 | `flags` | `UInt16` | Little | - |
-| `0x003C` | 60 | 2 | `num_records` | `UInt16` | Little | Number of following data records |
+| `0x003C` | 60 | 2 | `num_records` | `UInt16` | Little | レコード件数 |
 
 この領域には、条件（種別タグ等）に応じて以下のいずれかの構造体が格納されます。
 
 #### [バリアント] Tag `0x0001`: `HeaderChunk`
 
-Configuration header parameters.
+HeaderChunk(protocol_version: binary_master.binary_struct.UInt16, flags: binary_master.binary_struct.UInt16)
 
 ```mermaid
 packet-beta
@@ -143,7 +126,7 @@ title HeaderChunk Layout
 
 #### [バリアント] Tag `0x0002`: `TextChunk`
 
-Text data chunk payload.
+TextChunk(length: binary_master.binary_struct.UInt16, content: (<class 'binary_master.binary_struct.FixedArray'>, <class 'binary_master.binary_struct.UInt8'>, 16))
 
 ```mermaid
 packet-beta
@@ -159,10 +142,11 @@ title TextChunk Layout
 
 ### DataRecord
 
-Repeating measurement data records
+連続計測データレコード
 
 - 🔁 **繰り返し**: `num_records` 回
 - **1要素サイズ**: `12` バイト (0xC)
+- **配置範囲**: `0x003E` 〜 `0x0062` (`36` バイト)
 - **サンプルデータ**: 3 件 (合計 `36` バイト)
 
 ```mermaid

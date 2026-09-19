@@ -5,12 +5,12 @@ from typing import Annotated
 import pytest
 
 from binary_master import (
-    BinaryBuilder,
     BinaryReader,
     BinaryType,
     BinaryWriter,
     Bits,
     Bool,
+    Builder,
     FixedArray,
     UInt8,
     binary_struct,
@@ -19,7 +19,7 @@ from binary_master import (
     sizeof,
     write_struct,
 )
-from binary_master.c_header import c_type_of
+from binary_master.code_gen.c import c_type_of
 from binary_master.code_gen.cpp import cpp_type_of
 from binary_master.code_gen.csharp import csharp_type_of
 from binary_master.code_gen.go import go_type_of
@@ -180,7 +180,7 @@ def test_bool_in_fixed_array():
 
 
 def test_builder_with_bool():
-    builder = BinaryBuilder(title="Bool Test")
+    builder = Builder(title="Bool Test")
     builder.add_field("flag1", "Bool", size=1)
     builder.add_field("flag4", "Bool[4]", size=4)
 

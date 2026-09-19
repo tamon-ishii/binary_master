@@ -191,27 +191,49 @@ def c_type_of(field_type: Any) -> Tuple[str, Optional[int], Optional[str]]:
         elem_c, _, _ = c_type_of(elem_t)
         return elem_c, cnt, None
 
-    # Offset[Target, Size, Base]
+    # Offset[Target / Key, Size, Base]
     is_offset = (isinstance(field_type, tuple) and len(field_type) >= 1 and field_type[0] is Offset) or (
         get_origin(field_type) is Offset
     )
     if is_offset:
-        target_name = "Target"
-        offset_t = UInt32
-        if isinstance(field_type, tuple):
-            if len(field_type) >= 2:
-                target_name = getattr(field_type[1], "__name__", str(field_type[1]))
-            if len(field_type) >= 3:
-                offset_t = field_type[2]
+        first_arg = field_type[1] if isinstance(field_type, tuple) and len(field_type) >= 2 else (
+            get_args(field_type)[0] if get_args(field_type) else None
+        )
+        if isinstance(first_arg, (str, enum.Enum)) or (isinstance(field_type, tuple) and len(field_type) >= 5):
+            key_name = str(first_arg)
+            target_name = ""
+            offset_t = UInt32
+            if isinstance(field_type, tuple):
+                if len(field_type) >= 3 and field_type[2] is not None:
+                    target_name = getattr(field_type[2], "__name__", str(field_type[2]))
+                if len(field_type) >= 4 and field_type[3] is not None:
+                    offset_t = field_type[3]
+            else:
+                args = get_args(field_type)
+                if len(args) >= 2 and args[1] is not None:
+                    target_name = getattr(args[1], "__name__", str(args[1]))
+                if len(args) >= 3 and args[2] is not None:
+                    offset_t = args[2]
+            c_name, _, _ = c_type_of(offset_t)
+            comment = f"Named offset '{key_name}' to {target_name}" if target_name else f"Named offset '{key_name}'"
+            return c_name, None, comment
         else:
-            args = get_args(field_type)
-            if len(args) >= 1:
-                target_name = getattr(args[0], "__name__", str(args[0]))
-            if len(args) >= 2 and args[1] in (UInt8, UInt16, UInt32, UInt64):
-                offset_t = args[1]
+            target_name = "Target"
+            offset_t = UInt32
+            if isinstance(field_type, tuple):
+                if len(field_type) >= 2:
+                    target_name = getattr(field_type[1], "__name__", str(field_type[1]))
+                if len(field_type) >= 3:
+                    offset_t = field_type[2]
+            else:
+                args = get_args(field_type)
+                if len(args) >= 1:
+                    target_name = getattr(args[0], "__name__", str(args[0]))
+                if len(args) >= 2 and args[1] in (UInt8, UInt16, UInt32, UInt64):
+                    offset_t = args[1]
 
-        c_name, _, _ = c_type_of(offset_t)
-        return c_name, None, f"Offset to {target_name}"
+            c_name, _, _ = c_type_of(offset_t)
+            return c_name, None, f"Offset to {target_name}"
 
     # OffsetTable[Count, Type, Base]
     is_offset_tbl = (isinstance(field_type, tuple) and len(field_type) >= 1 and field_type[0] is OffsetTable) or (
@@ -403,7 +425,7 @@ def generate_c_header(
     guard: Optional[str] = None,
     pack: bool = True,
 ) -> str:
-    """Generate a complete C99/C11 header file from a BinaryBuilder or BinaryWriter instance."""
+    """Generate a complete C99/C11 header file from a Builder or BinaryWriter instance."""
     if hasattr(builder, "to_builder"):
         builder = builder.to_builder()
 
@@ -533,7 +555,7 @@ def write_c_header(
     guard: Optional[str] = None,
     pack: bool = True,
 ) -> str:
-    """Generate C header code from a BinaryBuilder and optionally save to file."""
+    """Generate C header code from a Builder and optionally save to file."""
     content = generate_c_header(builder, guard=guard, pack=pack)
     if path_or_file is not None:
         if isinstance(path_or_file, (str, Path)):

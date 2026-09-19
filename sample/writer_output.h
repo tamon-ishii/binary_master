@@ -24,17 +24,17 @@ extern "C" {
 
 /* ----------------------------------------------------------------------------
  * Section: File Header
- * Container header identifying format and version
+ * ファイル識別子とバージョン
  * ---------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------------
  * Section: Metadata
- * Textual metadata and application properties
+ * アプリケーション属性テキスト
  * ---------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------------
  * Section: Dynamic Payload
- * Dynamic payload dispatched by chunk_type
+ * 動的ペイロードブロック
  * ---------------------------------------------------------------------------- */
 
 /**
@@ -42,12 +42,12 @@ extern "C" {
  * Configuration header variant
  */
 typedef enum PayloadTag {
-    PAYLOAD_TAG_HEADER_CHUNK = 0x01, /**< Tag 0x01: Configuration header parameters. */
-    PAYLOAD_TAG_TEXT_CHUNK = 0x02, /**< Tag 0x02: Text data chunk payload. */
+    PAYLOAD_TAG_HEADER_CHUNK = 0x01, /**< Tag 0x01: HeaderChunk(protocol_version: binary_master.binary_struct.UInt16, flags: binary_master.binary_struct.UInt16) */
+    PAYLOAD_TAG_TEXT_CHUNK = 0x02, /**< Tag 0x02: TextChunk(length: binary_master.binary_struct.UInt16, content: (<class 'binary_master.binary_struct.FixedArray'>, <class 'binary_master.binary_struct.UInt8'>, 16)) */
 } PayloadTag;
 
 /**
- * Configuration header parameters.
+ * HeaderChunk(protocol_version: binary_master.binary_struct.UInt16, flags: binary_master.binary_struct.UInt16)
  */
 typedef struct HeaderChunk {
     uint16_t protocol_version;
@@ -55,7 +55,7 @@ typedef struct HeaderChunk {
 } HeaderChunk;
 
 /**
- * Text data chunk payload.
+ * TextChunk(length: binary_master.binary_struct.UInt16, content: (<class 'binary_master.binary_struct.FixedArray'>, <class 'binary_master.binary_struct.UInt8'>, 16))
  */
 typedef struct TextChunk {
     uint16_t length;
@@ -72,11 +72,11 @@ typedef union PayloadUnion {
 
 /* ----------------------------------------------------------------------------
  * Section: DataRecord
- * Repeating measurement data records
+ * 連続計測データレコード
  * ---------------------------------------------------------------------------- */
 
 /**
- * Repeating measurement data record.
+ * DataRecord(record_id: binary_master.binary_struct.UInt32, timestamp: binary_master.binary_struct.UInt32, value: binary_master.binary_struct.Float32)
  */
 typedef struct DataRecord {
     uint32_t record_id;

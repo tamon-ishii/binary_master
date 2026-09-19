@@ -1,7 +1,9 @@
 """Comprehensive integration tests covering all spec scenarios for BinaryWriter."""
 
 from pathlib import Path
+
 import pytest
+
 from binary_master import BinaryWriter, Endian
 
 

@@ -13,4 +13,4 @@ venv/
 .ruff_cache/
 /example.py
 scratch/
-
+*.html

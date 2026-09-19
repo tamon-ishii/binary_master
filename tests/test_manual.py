@@ -1,30 +1,30 @@
 """Tests for Mermaid Markdown manual generation."""
 
 from pathlib import Path
-import pytest
 
+import binary_master
 from binary_master import (
+    Array,
     BinaryWriter,
+    Bits,
+    Builder,
     Endian,
+    FixedArray,
+    LayoutEntry,
+    Offset,
+    OffsetTable,
     UInt8,
     UInt16,
     UInt32,
-    Offset,
-    Array,
-    FixedArray,
-    Bits,
     binary_struct,
-    generate_manual,
     generate_html,
-    OffsetTable,
-    Builder,
-    LayoutEntry,
-    generate_bitfield_packet_diagram,
-    generate_packet_diagram,
-    generate_mermaid_diagram,
+    generate_manual,
 )
-import binary_master
-
+from binary_master.manual import (
+    generate_bitfield_packet_diagram,
+    generate_mermaid_diagram,
+    generate_packet_diagram,
+)
 
 
 @binary_struct(bits=16)
@@ -365,7 +365,7 @@ def test_builder_lang_ja():
 
 def test_resolve_language_and_auto_locale(monkeypatch):
     """Test resolve_language function and automatic locale detection with lang='auto'."""
-    from binary_master import resolve_language
+    from binary_master.manual import resolve_language
 
     # Explicit languages
     assert resolve_language("ja") == "ja"
@@ -471,7 +471,7 @@ def test_anonymous_offset_table_title():
 
 def test_structure_diagram_repeated_elements_omitted():
     """Verify that repeated items are aggregated cleanly into a single block in packet diagram without '...'."""
-    from binary_master import binary_struct, UInt16, FixedArray, UInt8
+    from binary_master import binary_struct
 
     @binary_struct
     class SubItem:
@@ -501,7 +501,7 @@ def test_flowchart_indexed_omission():
 
 def test_packet_diagram_large_data_summarization():
     """Verify that large raw data blocks and large arrays are automatically summarized with byte sizes."""
-    from binary_master import binary_struct, FixedArray, UInt8, UInt32, Bytes
+    from binary_master import binary_struct
 
     # 1. Raw bytes >= 64B
     w = BinaryWriter()

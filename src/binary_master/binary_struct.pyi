@@ -1,7 +1,6 @@
 from typing import (
     IO,
     Any,
-    Literal,
     Optional,
     TypeVar,
     Union,
@@ -32,8 +31,6 @@ type Int64 = int
 type Float16 = float
 type Float32 = float
 type Float64 = float
-type Float = float
-type Double = float
 type Bool = bool
 
 # Dynamic types
@@ -43,11 +40,9 @@ type CString = str
 type PrefixedString = str
 
 # 3. Arrays & Offsets
-L = Literal
 type FixedArray[T, *Args] = bytes | list[T]
 type Array[T] = list[T]
 type Offset[Target, *Args] = Target | None
-type NamedOffset[Key, *Args] = Any
 type OffsetTable[Count, *Args] = list[Any] | None
 type Bits[Width] = int
 type Variant[Tag, Mapping, *Args] = Any
@@ -136,8 +131,6 @@ class BinaryStruct:
     @classmethod
     def write_go(cls, path_or_file: Union[str, Any, IO[str]], **kwargs: Any) -> str: ...
 
-Struct = BinaryStruct
-
 def to_bytes(obj: Any, endian: Any = ...) -> bytes: ...
 def from_bytes[T](cls: type[T], data: bytes, endian: Any = ...) -> T: ...
 def write_struct(
@@ -169,7 +162,6 @@ def write_variant(
 
 def read_struct[T](cls: type[T], data: bytes | Any = ..., reader: Any = ..., endian: Any = ...) -> T: ...
 def sizeof(cls_or_obj: Any) -> int: ...
-def binary_size(cls_or_obj: Any) -> int: ...
 def offsetof(cls_or_obj: Any, field_name: str) -> int: ...
 def bit_offsetof(cls_or_obj: Any, field_name: str) -> tuple[int, int]: ...
 def _calculate_field_size(name: str, ftype: Any, val: Any = ..., is_cls: bool = ..., instance: Any = ...) -> int: ...

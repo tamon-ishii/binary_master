@@ -1,8 +1,3 @@
-from typing import Literal
-
-L = Literal
-
-
 from .binary_struct import (
     Array,
     Base,
@@ -15,10 +10,8 @@ from .binary_struct import (
     Constant,
     CountOf,
     CString,
-    Double,
     FixedArray,
     FixedString,
-    Float,
     Float16,
     Float32,
     Float64,
@@ -28,19 +21,16 @@ from .binary_struct import (
     Int64,
     LengthOf,
     Magic,
-    NamedOffset,
     Offset,
     OffsetTable,
     PrefixedString,
     Range,
     RelativeBase,
-    Struct,
     UInt8,
     UInt16,
     UInt32,
     UInt64,
     Variant,
-    binary_size,
     binary_struct,
     bit_offsetof,
     from_bytes,
@@ -51,9 +41,7 @@ from .binary_struct import (
     write_struct,
     write_variant,
 )
-from .bitstream import BitReader, BitWriter
-from .builder import BinaryBuilder, Builder, BuilderReadResult
-from .c_header import to_c_header, to_c_struct, write_c_header
+from .builder import Builder, BuilderReadResult
 from .checksum import (
     CRC16,
     CRC16_ARC,
@@ -67,11 +55,15 @@ from .checksum import (
     compute_checksum,
 )
 from .code_gen import (
+    generate_c_header,
     generate_code,
     generate_cpp_code,
     generate_csharp_code,
     generate_go_code,
     generate_rust_code,
+    to_c_header,
+    to_c_struct,
+    write_c_header,
     write_code,
     write_cpp,
     write_csharp,
@@ -86,31 +78,26 @@ from .debug import (
     dump_table,
     hexdump,
 )
-from .enums import Endian, EndianType, normalize_endian, normalize_named_offset_key
+from .enums import Endian, EndianType, normalize_endian, normalize_offset_key
 from .exceptions import (
     BinaryMasterError,
     ChecksumMismatchError,
-    DuplicateNamedOffsetError,
+    DuplicateOffsetError,
     InvalidConstantError,
     InvalidEnumError,
     InvalidMagicError,
-    NamedOffsetError,
-    NamedOffsetNotFoundError,
+    OffsetError,
+    OffsetNotFoundError,
     RangeValidationError,
     TotalSizeExceededError,
 )
 from .manual import (
     LayoutEntry,
-    generate_bitfield_packet_diagram,
     generate_html,
     generate_manual,
-    generate_mermaid_diagram,
-    generate_packet_diagram,
-    inspect_struct_layout,
-    resolve_language,
     write_html,
 )
-from .reader import BinaryReader, Reader
+from .reader import BinaryReader
 from .varint import (
     VarInt,
     VarInt32,
@@ -123,16 +110,14 @@ from .varint import (
     encode_varint,
     encode_varuint,
 )
-from .writer import BinaryWriter, OffsetTableHandle, Writer
+from .writer import BinaryWriter, OffsetTableHandle
 
-__version__ = "0.3.8"
+__version__ = "0.4.0"
 
 
 __all__ = [
     "BinaryWriter",
-    "Writer",
     "BinaryReader",
-    "Reader",
     "OffsetTableHandle",
     "Endian",
     "EndianType",
@@ -149,15 +134,12 @@ __all__ = [
     "Float16",
     "Float32",
     "Float64",
-    "Float",
-    "Double",
     "Bool",
     "Bytes",
     "FixedString",
     "CString",
     "PrefixedString",
     "Offset",
-    "NamedOffset",
     "OffsetTable",
     "Variant",
     "Array",
@@ -178,10 +160,10 @@ __all__ = [
     "InvalidEnumError",
     "RangeValidationError",
     "TotalSizeExceededError",
-    "NamedOffsetError",
-    "DuplicateNamedOffsetError",
-    "NamedOffsetNotFoundError",
-    "normalize_named_offset_key",
+    "OffsetError",
+    "DuplicateOffsetError",
+    "OffsetNotFoundError",
+    "normalize_offset_key",
     "ChecksumBase",
     "CRC32",
     "CRC16",
@@ -202,33 +184,23 @@ __all__ = [
     "decode_varuint",
     "encode_varint",
     "decode_varint",
-    "BitWriter",
-    "BitReader",
     "binary_struct",
     "BinaryStruct",
-    "Struct",
     "write_struct",
     "write_variant",
     "read_struct",
     "to_bytes",
     "from_bytes",
     "sizeof",
-    "binary_size",
     "offsetof",
     "bit_offsetof",
     "LayoutEntry",
     "generate_manual",
     "generate_html",
     "write_html",
-    "generate_mermaid_diagram",
-    "generate_packet_diagram",
-    "generate_bitfield_packet_diagram",
-    "inspect_struct_layout",
-    "resolve_language",
-    "BinaryBuilder",
-
     "Builder",
     "BuilderReadResult",
+    "generate_c_header",
     "to_c_header",
     "write_c_header",
     "to_c_struct",
@@ -248,9 +220,4 @@ __all__ = [
     "dump_table",
     "dump_json",
     "dump_dict",
-    "Literal",
-    "L",
 ]
-
-
-

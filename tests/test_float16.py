@@ -1,13 +1,12 @@
 """Tests for Float16 (IEEE 754 half-precision floating point) support."""
 
-import math
 import shutil
 import subprocess
 from pathlib import Path
+
 import pytest
 
 from binary_master import (
-    Array,
     BinaryReader,
     BinaryWriter,
     Builder,
@@ -23,7 +22,6 @@ from binary_master import (
     to_c_struct,
 )
 from binary_master.code_gen import (
-    generate_code,
     generate_cpp_code,
     generate_csharp_code,
     generate_go_code,

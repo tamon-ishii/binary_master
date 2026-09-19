@@ -11,7 +11,7 @@ from typing import IO, TYPE_CHECKING, Any, Iterable, Iterator, Literal, Optional
 if TYPE_CHECKING:
     from binary_master.bitstream import BitWriter
 
-from binary_master.enums import Endian, EndianType, normalize_endian, normalize_named_offset_key
+from binary_master.enums import Endian, EndianType, normalize_endian, normalize_offset_key
 
 # Integer boundary constants
 INT8_MIN, INT8_MAX = -128, 127
@@ -1118,7 +1118,7 @@ class BinaryWriter:
         and the leading slash is stripped. Otherwise, if inside a namespace,
         the active namespace path is prepended with '/'.
         """
-        str_name = normalize_named_offset_key(name)
+        str_name = normalize_offset_key(name)
         if str_name.startswith("/"):
             return str_name[1:]
         if self._namespace_stack:
@@ -1127,9 +1127,9 @@ class BinaryWriter:
 
     @contextmanager
     def namespace(self, name: Any = "", *, auto_id: bool = False) -> Iterator[str]:
-        """Create a scoped namespace context for NamedOffset keys.
+        """Create a scoped namespace context for Offset keys.
 
-        Inside this block, relative NamedOffset keys are automatically qualified
+        Inside this block, relative Offset keys are automatically qualified
         with the namespace path (e.g. 'chunk_0/payload'). Absolute keys starting
         with '/' bypass this prefix and resolve in the root namespace.
 
@@ -1143,7 +1143,7 @@ class BinaryWriter:
         Raises:
             ValueError: If `name` is empty and `auto_id` is False.
         """
-        str_name = normalize_named_offset_key(name) if name else ""
+        str_name = normalize_offset_key(name) if name else ""
         prefix = str_name if str_name else ("scope" if auto_id else "")
         if auto_id:
             idx = self._namespace_counters.get(prefix, 0)
@@ -1174,7 +1174,7 @@ class BinaryWriter:
         _is_qualified: bool = False,
     ) -> None:
         """Internal method to register a placeholder slot for a named offset."""
-        str_name = normalize_named_offset_key(name)
+        str_name = normalize_offset_key(name)
         qualified_name = str_name if _is_qualified else self._qualify_name(str_name)
         if qualified_name not in self._named_offset_slots:
             self._named_offset_slots[qualified_name] = []
@@ -1228,7 +1228,7 @@ class BinaryWriter:
 
         self._stream.write(b"\x00" * offset_size)
         entry_idx = len(self._entries)
-        type_name = f"NamedOffset[{qualified_name!r}]"
+        type_name = f"Offset[{qualified_name!r}]"
         self._record_entry(
             offset=placeholder_pos,
             size=offset_size,
@@ -1273,17 +1273,17 @@ class BinaryWriter:
             The resolved target offset in the stream.
 
         Raises:
-            NamedOffsetNotFoundError: If `name` was never registered.
-            DuplicateNamedOffsetError: If `name` was already resolved (use rewrite_named_offset instead).
+            OffsetNotFoundError: If `name` was never registered.
+            DuplicateOffsetError: If `name` was already resolved (use rewrite_named_offset instead).
         """
         qualified_name = self._qualify_name(name)
         if qualified_name not in self._named_offset_slots or not self._named_offset_slots[qualified_name]:
-            from binary_master.exceptions import NamedOffsetNotFoundError
-            raise NamedOffsetNotFoundError(f"Named offset key {qualified_name!r} does not exist.")
+            from binary_master.exceptions import OffsetNotFoundError
+            raise OffsetNotFoundError(f"Named offset key {qualified_name!r} does not exist.")
 
         if not _allow_rewrite and any(slot.get("resolved") for slot in self._named_offset_slots[qualified_name]):
-            from binary_master.exceptions import DuplicateNamedOffsetError
-            raise DuplicateNamedOffsetError(
+            from binary_master.exceptions import DuplicateOffsetError
+            raise DuplicateOffsetError(
                 f"Named offset key {qualified_name!r} has already been resolved with write_named_offset. "
                 "Use rewrite_named_offset() to explicitly update it."
             )
@@ -1299,7 +1299,7 @@ class BinaryWriter:
         if target is not None:
             if hasattr(target, "__binary__"):
                 from binary_master.binary_struct import write_struct
-                write_struct(target, writer=self, endian=endian)
+                write_struct(target, writer=self, endian=endian, record_entries=self._record_entries)
             elif isinstance(target, (bytes, bytearray, memoryview)):
                 self.write_bytes(bytes(target))
             elif isinstance(target, str):
@@ -1355,12 +1355,12 @@ class BinaryWriter:
             The resolved target offset in the stream.
 
         Raises:
-            NamedOffsetNotFoundError: If `name` does not exist in registered named offsets.
+            OffsetNotFoundError: If `name` does not exist in registered named offsets.
         """
         qualified_name = self._qualify_name(name)
         if qualified_name not in self._named_offset_slots or not self._named_offset_slots[qualified_name]:
-            from binary_master.exceptions import NamedOffsetNotFoundError
-            raise NamedOffsetNotFoundError(f"Named offset key {qualified_name!r} does not exist.")
+            from binary_master.exceptions import OffsetNotFoundError
+            raise OffsetNotFoundError(f"Named offset key {qualified_name!r} does not exist.")
 
         if target is not None:
             return self.write_named_offset(qualified_name, target=target, endian=endian, _allow_rewrite=True)
@@ -1566,7 +1566,7 @@ class BinaryWriter:
         self._elements_log.append(("struct", s_cls))
 
         from binary_master.binary_struct import write_struct
-        write_struct(instance, writer=self, endian=endian)
+        write_struct(instance, writer=self, endian=endian, record_entries=self._record_entries)
         return self
 
     def write_variant(
@@ -1667,7 +1667,7 @@ class BinaryWriter:
                 self._struct_classes.append(cls)
 
         from binary_master.binary_struct import write_struct
-        write_struct(target_obj, writer=self, endian=endian, desc=desc, parent_field_name=name)
+        write_struct(target_obj, writer=self, endian=endian, desc=desc, parent_field_name=name, record_entries=self._record_entries)
         return self
 
     def variant(
@@ -1723,7 +1723,7 @@ class BinaryWriter:
         version: Optional[str] = None,
         description: str = "",
     ) -> Any:
-        """Convert this BinaryWriter and its recorded layout/variants into a BinaryBuilder schema."""
+        """Convert this BinaryWriter and its recorded layout/variants into a Builder schema."""
         from binary_master.builder import Builder
         resolved_endian = default_endian or (
             "little" if self.default_endian == Endian.LITTLE else "big"
@@ -2230,7 +2230,4 @@ class OffsetTableHandle:
         else:
             raise TypeError(f"Cannot write target of type {type(target).__name__}")
         return pos
-
-
-Writer = BinaryWriter
 

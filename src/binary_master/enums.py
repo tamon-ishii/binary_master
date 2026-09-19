@@ -61,8 +61,8 @@ UInt64 = BinaryType("UInt64", "Q", 8)
 Bool   = BinaryType("Bool",   "?", 1)
 
 
-def normalize_named_offset_key(key: Any) -> str:
-    """Normalize a NamedOffset key (str, Enum, or object) to a standard string identifier."""
+def normalize_offset_key(key: Any) -> str:
+    """Normalize an Offset key (str, Enum, or object) to a standard string identifier."""
     if isinstance(key, str):
         return key
     if isinstance(key, Enum):

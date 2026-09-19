@@ -1,21 +1,22 @@
 import struct
+
 import pytest
+
 from binary_master import (
-    binary_struct,
+    Base,
+    Bool,
+    Bytes,
+    CString,
+    FixedArray,
+    FixedString,
+    Float32,
+    Offset,
+    OffsetTable,
+    PrefixedString,
     UInt8,
     UInt16,
     UInt32,
-    Offset,
-    OffsetTable,
-    Base,
-    FixedArray,
-    Float32,
-    Bool,
-    FixedString,
-    CString,
-    PrefixedString,
-    Bytes,
-    dump_table,
+    binary_struct,
 )
 
 
@@ -171,13 +172,13 @@ def test_partial_keyword_instantiation_with_defaults():
 
 
 def test_named_offset_user_flow():
-    """Test user's exact flow: declare NamedOffset in struct, write struct, write string, resolve with write_named_offset."""
-    from binary_master import BinaryWriter, NamedOffset, read_struct
+    """Test user's exact flow: declare Offset in struct, write struct, write string, resolve with write_named_offset."""
+    from binary_master import BinaryWriter, read_struct
 
     @binary_struct
     class Data:
         num: UInt16
-        offset: NamedOffset["ofs"]
+        offset: Offset["ofs"]
 
     data = Data()
     writer = BinaryWriter()
@@ -195,7 +196,7 @@ def test_named_offset_user_flow():
 
 def test_named_offset_with_target_struct():
     """Test write_named_offset writing a target struct and patching relative offset."""
-    from binary_master import BinaryWriter, NamedOffset, read_struct
+    from binary_master import BinaryWriter, read_struct
 
     @binary_struct
     class Payload:
@@ -204,7 +205,7 @@ def test_named_offset_with_target_struct():
     @binary_struct
     class Header:
         magic: UInt32
-        rel_offset: NamedOffset["payload_rel", UInt32, Base.SELF]
+        rel_offset: Offset["payload_rel", UInt32, Base.SELF]
 
     h = Header(magic=0x12345678)
     writer = BinaryWriter()
@@ -220,13 +221,13 @@ def test_named_offset_with_target_struct():
 
 
 def test_named_offset_duplicate_struct_write_allowed():
-    """Writing a struct containing NamedOffset twice is allowed; resolving backpatches both."""
-    from binary_master import BinaryWriter, NamedOffset, UInt16
+    """Writing a struct containing Offset twice is allowed; resolving backpatches both."""
+    from binary_master import BinaryWriter
 
     @binary_struct
     class Header:
         num: UInt16
-        offset: NamedOffset["ofs"]
+        offset: Offset["ofs"]
 
     h1 = Header(num=1)
     h2 = Header(num=2)
@@ -248,15 +249,15 @@ def test_named_offset_duplicate_struct_write_allowed():
 
 def test_named_offset_multiple_keys_shared_point():
     """Multiple different structs and manual reservations can share the same key to point to the same target."""
-    from binary_master import BinaryWriter, NamedOffset, Base, UInt16, UInt32
+    from binary_master import BinaryWriter
 
     @binary_struct
     class First:
-        offset1: NamedOffset["shared_key", UInt32, Base.SELF]
+        offset1: Offset["shared_key", UInt32, Base.SELF]
 
     @binary_struct
     class Second:
-        offset2: NamedOffset["shared_key", UInt16, 0]
+        offset2: Offset["shared_key", UInt16, 0]
 
     writer = BinaryWriter()
     # First at 0: offset1 at 0..4, base is 0 (Base.SELF at pos 0)
@@ -280,11 +281,11 @@ def test_named_offset_multiple_keys_shared_point():
 
 
 def test_write_named_offset_missing_key_raises():
-    """Calling write_named_offset with a non-existent key must raise NamedOffsetNotFoundError."""
-    from binary_master import BinaryWriter, NamedOffsetNotFoundError
+    """Calling write_named_offset with a non-existent key must raise OffsetNotFoundError."""
+    from binary_master import BinaryWriter, OffsetNotFoundError
 
     writer = BinaryWriter()
-    with pytest.raises(NamedOffsetNotFoundError) as exc_info:
+    with pytest.raises(OffsetNotFoundError) as exc_info:
         writer.write_named_offset("non_existent_key")
 
     assert "non_existent_key" in str(exc_info.value)
@@ -292,11 +293,11 @@ def test_write_named_offset_missing_key_raises():
 
 
 def test_rewrite_named_offset_missing_key_raises():
-    """Calling rewrite_named_offset with a non-existent key must raise NamedOffsetNotFoundError."""
-    from binary_master import BinaryWriter, NamedOffsetNotFoundError
+    """Calling rewrite_named_offset with a non-existent key must raise OffsetNotFoundError."""
+    from binary_master import BinaryWriter, OffsetNotFoundError
 
     writer = BinaryWriter()
-    with pytest.raises(NamedOffsetNotFoundError) as exc_info:
+    with pytest.raises(OffsetNotFoundError) as exc_info:
         writer.rewrite_named_offset("missing_key", 0x100)
 
     assert "missing_key" in str(exc_info.value)
@@ -305,12 +306,12 @@ def test_rewrite_named_offset_missing_key_raises():
 
 def test_rewrite_named_offset_success():
     """Calling rewrite_named_offset on an existing slot updates the offset."""
-    from binary_master import BinaryWriter, NamedOffset, read_struct
+    from binary_master import BinaryWriter
 
     @binary_struct
     class Header:
         val: UInt32
-        data_offset: NamedOffset["my_data"]
+        data_offset: Offset["my_data"]
 
     h = Header(val=42)
     writer = BinaryWriter()
@@ -325,18 +326,18 @@ def test_rewrite_named_offset_success():
 
 
 def test_write_named_offset_duplicate_call_raises():
-    """Calling write_named_offset more than once on the same key must raise DuplicateNamedOffsetError."""
-    from binary_master import BinaryWriter, NamedOffset, DuplicateNamedOffsetError
+    """Calling write_named_offset more than once on the same key must raise DuplicateOffsetError."""
+    from binary_master import BinaryWriter, DuplicateOffsetError
 
     @binary_struct
     class Header:
-        ofs: NamedOffset["key"]
+        ofs: Offset["key"]
 
     writer = BinaryWriter()
     writer.write_struct(Header())
     writer.write_named_offset("key")  # first call succeeds
 
-    with pytest.raises(DuplicateNamedOffsetError) as exc_info:
+    with pytest.raises(DuplicateOffsetError) as exc_info:
         writer.write_named_offset("key")  # second call raises
 
     assert "key" in str(exc_info.value)
@@ -349,7 +350,7 @@ def test_write_named_offset_duplicate_call_raises():
 
 def test_rewrite_named_offset_with_target_struct_after_resolve():
     """rewrite_named_offset with target struct succeeds even after initial resolution."""
-    from binary_master import BinaryWriter, NamedOffset
+    from binary_master import BinaryWriter
 
     @binary_struct
     class Payload:
@@ -357,7 +358,7 @@ def test_rewrite_named_offset_with_target_struct_after_resolve():
 
     @binary_struct
     class Header:
-        ofs: NamedOffset["key"]
+        ofs: Offset["key"]
 
     writer = BinaryWriter()
     writer.write_struct(Header())  # 0..4

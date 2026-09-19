@@ -12,44 +12,37 @@
 import enum
 import os
 import tempfile
+
 import pytest
 
 from binary_master import (
-    BinaryWriter,
+    CRC16,
+    CRC32,
+    Adler32,
+    BinaryEnum,
     BinaryReader,
+    BinaryWriter,
+    Bytes,
+    Checksum8,
+    Checksum16,
+    ChecksumMismatchError,
+    Constant,
     Endian,
-    binary_struct,
+    FixedString,
+    Fletcher16,
+    InvalidConstantError,
+    InvalidEnumError,
+    InvalidMagicError,
+    Magic,
     UInt8,
     UInt16,
     UInt32,
-    UInt64,
-    Int8,
-    Int16,
-    Int32,
-    Bytes,
-    FixedString,
-    CRC32,
-    CRC16,
-    Checksum8,
-    Checksum16,
-    Fletcher16,
-    Adler32,
-    BinaryEnum,
-    Magic,
-    Constant,
-    VarUInt,
     VarInt,
-    BitWriter,
-    BitReader,
-    ChecksumMismatchError,
-    InvalidMagicError,
-    InvalidConstantError,
-    InvalidEnumError,
-    sizeof,
-    offsetof,
+    VarUInt,
+    binary_struct,
 )
+from binary_master.bitstream import BitReader, BitWriter
 from binary_master.cli import main as cli_main
-
 
 # ==========================================================
 # 1. CRC / Checksum Tests

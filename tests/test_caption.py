@@ -1,7 +1,7 @@
 """Tests for BinaryWriter.caption() and section manual generation."""
 
-import pytest
-from binary_master import BinaryWriter, Writer, Endian, UInt16, UInt8, binary_struct
+import binary_master
+from binary_master import BinaryWriter, Endian, UInt8, UInt16, binary_struct
 from binary_master.manual import generate_manual
 
 
@@ -41,11 +41,8 @@ def test_caption_basic_and_chaining():
 
 
 def test_writer_alias():
-    """Test Writer alias for BinaryWriter."""
-    assert Writer is BinaryWriter
-    w = Writer()
-    w.caption("Test").write_uint8(1)
-    assert w.entries[0].caption == "Test"
+    """Test that redundant Writer alias is removed from binary_master."""
+    assert not hasattr(binary_master, "Writer")
 
 
 def test_caption_manual_generation():
@@ -230,10 +227,10 @@ def test_set_caption_nested():
 
 
 def test_builder_set_caption():
-    """Test BinaryBuilder.set_caption with context manager."""
-    from binary_master import BinaryBuilder
+    """Test Builder.set_caption with context manager."""
+    from binary_master import Builder
 
-    builder = BinaryBuilder(title="Builder Spec")
+    builder = Builder(title="Builder Spec")
     with builder.set_caption("HeaderSection", desc="Header details", spec_count=1):
         builder.add_field("magic", "UInt32", 4, desc="Magic identifier")
 

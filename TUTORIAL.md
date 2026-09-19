@@ -75,10 +75,15 @@ Python標準の `struct` モジュールによるフォーマット文字列（`
 ### インストール方法
 
 ```bash
-# uv を使用する場合
+# uv を使用する場合（GitHub から直接追加）
+uv add https://github.com/tamon-ishii/binary_master.git
+
+# またはパッケージ名から追加
 uv add binary-master
 
-# pip を使用する場合（ローカルリポジトリから）
+# pip を使用する場合
+pip install git+https://github.com/tamon-ishii/binary_master.git
+# またはローカルリポジトリから
 pip install .
 ```
 
@@ -92,7 +97,7 @@ python sample/main.py
 
 ## Step 1: はじめてのバイナリ構造体（基礎編）
 
-> 対応サンプルコード: [`sample/01_basic_struct.py`](sample/01_basic_struct.py)
+> 対応サンプルノートブック: [`sample/01_basic_struct.ipynb`](sample/01_basic_struct.ipynb)
 
 バイナリデータの読み書きで最も基本となるのが、`@binary_struct` デコレータを用いた宣言的構造体の定義です。
 
@@ -134,7 +139,7 @@ class PlayerProfile:
 - **プリミティブ型**: `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Int8`, `Int16`, `Int32`, `Int64`, `Float16`, `Float32`, `Float64`, `Bool` などを直接指定できます。
 - **固定長文字列 & バイト列**: `FixedString[N]` や `Bytes[N]` により、固定長テキストや生バイト列を Python の `str` / `bytes` として直感的に扱えます。
 - **固定長配列**: `FixedArray[Type, Length]` で任意型の固定長配列を定義できます。
-  - **型安全性・IDE補完**: Python 公式の型仕様（PEP 484/526）に準拠し、最新の型チェッカー（`ty` / PyCharm / mypy）で型警告（`invalid-type-form`）を出さない記法として、要素数に `L[N]` または `Literal[N]` の指定を推奨します（例: `FixedArray[UInt8, L[4]]`）。短縮形 `L` は `from binary_master import L` から直接インポート可能です。従来の `FixedArray[UInt8, 4]` のような生の数値も実行時に自動アンラップされて完全動作します。
+  - **型安全性・IDE補完**: 要素数には生の数値（例: `FixedArray[UInt8, 4]`）または Python 公式の型仕様（PEP 586）に準拠した `FixedArray[UInt8, Literal[4]]` を指定できます。従来の `FixedArray[UInt8, 4]` のような生の数値も実行時に自動アンラップされて完全動作します。
 - **初期値（デフォルト値）の自由配置**: Python 標準の `@dataclass` の制限（「初期値ありフィールドの後に初期値なしフィールドを置けない」）を排除しており、**先頭や途中のフィールドにも自由に初期値（`magic: UInt32 = 0x504B5401`）を設定可能** です。
 - **Docstring とインラインコメント**: クラス docstring や `# コメント` は、後述する仕様書生成時に自動抽出され、マニュアルの「説明」に反映されます。
 
@@ -226,7 +231,7 @@ print(player.offsetof("score"))              # => 8
 
 - **アライメント考慮**: `auto_align=True` やパディングフィールドによってオフセットがずれる場合も、パディング後の正確なバイトオフセットを返します。
 - **ネスト対応**: 入れ子構造体の内部フィールドも `"header.version"` のようにドット記法で階層を辿ってオフセットを取得できます。
-- **レイアウト一覧の取得**: 全メンバのオフセット・サイズ一覧を確認したい場合は `inspect_struct_layout(PlayerProfile)` も利用できます。
+- **レイアウト一覧の取得**: 全メンバのオフセット・サイズ一覧を確認したい場合は `from binary_master.manual import inspect_struct_layout` を利用できます。
 
 ### 1.5 文字列・生バイト列型 (`Bytes`, `FixedString`, `CString`, `PrefixedString`)
 
@@ -254,7 +259,7 @@ class PacketMeta:
 
 ## Step 2: ビットフィールドとアライメント（応用編）
 
-> 対応サンプルコード: [`sample/02_bitfields_and_alignment.py`](sample/02_bitfields_and_alignment.py)
+> 対応サンプルノートブック: [`sample/02_bitfields_and_alignment.ipynb`](sample/02_bitfields_and_alignment.ipynb)
 
 通信パケットやハードウェア制御では、1バイト未満のフラグビットを詰め込む「ビットフィールド」や、CPUアクセス効率のための「メモリアライメント」が不可欠です。
 
@@ -334,7 +339,7 @@ print(sizeof(NaturalAlignedStruct))  # => 8
 
 ## Step 3: 相対オフセットとポインタテーブル（高度なデータ構造）
 
-> 対応サンプルコード: [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py)
+> 対応サンプルノートブック: [`sample/03_offsets_and_tables.ipynb`](sample/03_offsets_and_tables.ipynb)
 
 バイナリファイルフォーマット（フォント、画像、3Dモデル、ゲームアーカイブなど）では、ヘッダー内に「データ本体が存在するオフセット位置」を記録する構造が頻出します。
 
@@ -500,9 +505,9 @@ print(restored.table_offset)  # => [8, 14] (各 LeafItem への相対オフセ�
 
 ---
 
-### 3.3 自由配置・ヘッダー先行書き込み (`NamedOffset[Key, Target=None]`)
+### 3.3 自由配置・ヘッダー先行書き込み (`Offset[Key, Target=None]`)
 
-`Offset[...]` は親構造体の直後に自動追記されますが、**「ヘッダーを先に書いて、その後に任意の文字列や可変長データを挟み、後からオフセットの指す先を確定させたい」** 場合には、`NamedOffset` を使用します。
+`Offset[...]` は親構造体の直後に自動追記されますが、**「ヘッダーを先に書いて、その後に任意の文字列や可変長データを挟み、後からオフセットの指す先を確定させたい」** 場合には、`Offset["key"]` を使用します。
 さらに、**型ヒント併用（ターゲット構造体型の指定）** と **Enum / Symbol キー** にも対応しており、デシリアライズ時の自動デリファレンスやタイポ防止が可能です。
 
 ```python
@@ -512,7 +517,7 @@ from binary_master import (
     BinaryStruct,
     UInt16,
     BinaryWriter,
-    NamedOffset,
+    Offset,
     read_struct,
     FixedString,
 )
@@ -531,7 +536,7 @@ class ChunkPayload:
 class Header(BinaryStruct):
     magic: UInt16
     # 第2引数にターゲット型を指定することで、デシリアライズ時に自動デリファレンス！
-    payload: NamedOffset[SectionKey.PAYLOAD, ChunkPayload]
+    payload: Offset[SectionKey.PAYLOAD, ChunkPayload]
 
 # 書き込み
 writer = BinaryWriter()
@@ -554,9 +559,9 @@ print(restored.payload.target.height)  # => 600 (.target でもアクセス可�
 ```
 
 #### 同一キーの多重登録と例外安全性
-- 同じキー名の `NamedOffset` を複数のフィールドや構造体で宣言した場合、同一キーの多重登録が許可されます。`writer.write_named_offset("key")` を呼び出すと、そのキーに紐づくすべてのオフセットスロットが同じターゲット位置へと一括で自動バックパッチされます（複数のポインタが同一ペイロードを指す構造に対応）。
-- すでに解決済みのキーに対して誤って再度 `write_named_offset("key")` を呼び出した場合は、意図しない二重確定を防ぐため [`DuplicateNamedOffsetError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L101-L103) が発生します（明示的に上書き・再更新する場合は [`rewrite_named_offset("key")`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/writer.py) を使用します）。
-- `write_named_offset("key")` や `rewrite_named_offset("key")` で存在しないキーを指定した場合は、安全のため [`NamedOffsetNotFoundError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L106-L108) が発生します。
+- 同じキー名の `Offset` を複数のフィールドや構造体で宣言した場合、同一キーの多重登録が許可されます。`writer.write_named_offset("key")` を呼び出すと、そのキーに紐づくすべてのオフセットスロットが同じターゲット位置へと一括で自動バックパッチされます（複数のポインタが同一ペイロードを指す構造に対応）。
+- すでに解決済みのキーに対して誤って再度 `write_named_offset("key")` を呼び出した場合は、意図しない二重確定を防ぐため [`DuplicateOffsetError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L101-L103) が発生します（明示的に上書き・再更新する場合は [`rewrite_named_offset("key")`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/writer.py) を使用します）。
+- `write_named_offset("key")` や `rewrite_named_offset("key")` で存在しないキーを指定した場合は、安全のため [`OffsetNotFoundError`](file:///home/ishii/PycharmProjects/binary_master/src/binary_master/exceptions.py#L106-L108) が発生します。
 
 #### 名前空間スコープ (`with writer.namespace(...)`)
 
@@ -565,7 +570,7 @@ print(restored.payload.target.height)  # => 600 (.target でもアクセス可�
 ```python
 from binary_master import (
     BinaryWriter,
-    NamedOffset,
+    Offset,
     UInt16,
     UInt32,
     binary_struct,
@@ -580,7 +585,7 @@ class ChunkPayload:
 @binary_struct
 class ChunkHeader:
     chunk_id: UInt16
-    payload_offset: NamedOffset["payload", ChunkPayload]  # 汎用的なキー名で定義
+    payload_offset: Offset["payload", ChunkPayload]  # 汎用的なキー名で定義
 
 writer = BinaryWriter()
 
@@ -596,7 +601,7 @@ for i in range(2):
 
 data = writer.to_bytes()
 
-# 読み込み検証: 型ヒント付き NamedOffset によりオフセット位置のデシリアライズもシームレス
+# 読み込み検証: 型ヒント付き Offset によりオフセット位置のデシリアライズもシームレス
 h0 = read_struct(ChunkHeader, data[:6])
 print(f"Chunk 1 offset: {int(h0.payload_offset)}")
 ```
@@ -605,7 +610,7 @@ print(f"Chunk 1 offset: {int(h0.payload_offset)}")
 - **自動採番 (`auto_id=True`)**: ループ内で `with writer.namespace("chunk", auto_id=True):` とすると、`chunk_0`, `chunk_1`... と自動で連番が付与されます。
 - **明示的な名前空間**: `with writer.namespace("chunk_a"):` のように任意の文字列でスコープを指定することも可能です。
 - **ネスト（階層化）**: `with writer.namespace("sec"): with writer.namespace("sub"):` のようにネストすると `"sec/sub/key"` と連結されます。
-- **ルート脱出 (`/`)**: スコープ内から `NamedOffset["/global_footer"]` のように先頭にスラッシュを付けると、名前空間を脱出してルート直下のキーを参照します。
+- **ルート脱出 (`/`)**: スコープ内から `Offset["/global_footer"]` のように先頭にスラッシュを付けると、名前空間を脱出してルート直下のキーを参照します。
 
 ---
 
@@ -637,7 +642,7 @@ for i in range(10):
 
 ## Step 4: 手続き的ライター & リーダーとデバッグ機能（低レベル制御）
 
-> 対応サンプルコード: [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py)
+> 対応サンプルノートブック: [`sample/04_procedural_writer.ipynb`](sample/04_procedural_writer.ipynb)
 
 > [!TIP]
 > **Writer から直接仕様書や C/Rust ヘッダーを出力可能になりました！**  
@@ -921,11 +926,11 @@ writer.write_repeated(chunks, spec_count="num_chunks")
 
 ## Step 5: スキーマ駆動設計・仕様書自動生成・多言語出力（統合編）
 
-> 対応サンプルコード: [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py)
+> 対応サンプルノートブック: [`sample/05_builder_and_reader.ipynb`](sample/05_builder_and_reader.ipynb)
 
 ### 💡 Writer と Builder の使い分け：Builder の役割と存在理由
 
-Step 4 で見たように、`BinaryWriter` でも仕様書（Markdown）や C/Rust ヘッダーの直接出力、多態バリアント、繰り返しチャンクの集約ができるようになりました。では、`Builder`（`BinaryBuilder`）はどのような場面で必要なのでしょうか？
+Step 4 で見たように、`BinaryWriter` でも仕様書（Markdown）や C/Rust ヘッダーの直接出力、多態バリアント、繰り返しチャンクの集約ができるようになりました。では、`Builder` はどのような場面で必要なのでしょうか？
 
 1. **実データ不要の「スキーマ事前設計」**:
    バイナリデータを実際に書き出すコードやダミーデータを用意しなくても、構造体クラスの登録とプロトコルの章立て（`add_document`）だけで **仕様書や C/Rust ヘッダーを作成** できます。仕様策定フェーズに最適です。
@@ -945,7 +950,7 @@ Step 4 で見たように、`BinaryWriter` でも仕様書（Markdown）や C/Ru
 - **「バイナリを出力する処理」がある場合（日常使いの 8〜9 割）**: `BinaryWriter` を使うのが最も直感的でコード量も少なくなります。
 - **「仕様策定先行」または「受信バイナリの自動パース」を行う場合**: `Builder` が威力を発揮します。
 
-`Builder`（`BinaryBuilder`）を使用することで、事前スキーマ定義から **「仕様書生成」「多言語ヘッダー出力」「自動パーサー」** を1本の定義で完結できます。
+`Builder` を使用することで、事前スキーマ定義から **「仕様書生成」「多言語ヘッダー出力」「自動パーサー」** を1本の定義で完結できます。
 
 ### 5.1 `Builder` によるプロトコルスキーマ定義
 
@@ -1274,7 +1279,7 @@ class CompactMessage:
 8ビット未満のビット単位パッキングや、バイト境界をまたぐビットストリームの読み書きに対応します。
 
 ```python
-from binary_master import BitWriter, BitReader
+from binary_master.bitstream import BitWriter, BitReader
 
 bw = BitWriter()
 bw.write_bits(0b101, 3)     # 3 ビット
@@ -1649,7 +1654,7 @@ assert received.body.message == "Hello Binary Master!"
 |---|---|---|
 | **ヘッダー・パケットの型安全モデリング** | `@binary_struct` | Python のクラスとして綺麗に構造体を定義し、`to_bytes()` / `from_bytes()` で直感的に読み書きしたい時。 |
 | **動的ストリーム・手動オフセット制御** | `BinaryWriter` / `BinaryReader` | 途中で長さをバックパッチしたい時、可変長の生データを順次流し込みたい時、位置保護（`preserve_position`）や先読み（`peek`）が必要な時。 |
-| **スキーマ先行プロトコル設計・仕様書生成** | `Builder` (`BinaryBuilder`) | バイナリを書く前にまず仕様書（Markdown / Mermaid図）を確定させたい時、多言語コード（C/C++/Rust/C#/Go）を一斉生成したい時、辞書データから自動ビルドしたい時。 |
+| **スキーマ先行プロトコル設計・仕様書生成** | `Builder` | バイナリを書く前にまず仕様書（Markdown / Mermaid図）を確定させたい時、多言語コード（C/C++/Rust/C#/Go）を一斉生成したい時、辞書データから自動ビルドしたい時。 |
 
 ### 8.2 ゼロコピー & パフォーマンス最適化
 
@@ -1681,16 +1686,17 @@ assert received.body.message == "Hello Binary Master!"
 
 ---
 
-## まとめ & サンプルコードとの対応
+## まとめ & サンプルコードとの対応 (Jupyter Notebooks)
 
-| ステップ | トピック | 主な機能・API | 対応サンプルコード |
+| ステップ | トピック | 主な機能・API | 対応サンプルノートブック |
 |---|---|---|---|
-| **Step 1** | 基本的な構造体 | `@binary_struct`, プリミティブ型, `FixedArray`, `to_bytes()`, `from_bytes()` | [`sample/01_basic_struct.py`](sample/01_basic_struct.py) |
-| **Step 2** | ビットフィールド & アライメント | `Bits[N]`, `bits=16`, `align=4`, `auto_align=True` | [`sample/02_bitfields_and_alignment.py`](sample/02_bitfields_and_alignment.py) |
-| **Step 3** | 相対オフセット & テーブル | `Offset`, `Base.SELF`, `OffsetTable`, 自動バックパッチ | [`sample/03_offsets_and_tables.py`](sample/03_offsets_and_tables.py) |
-| **Step 4** | 手続き的ライター & リーダー | `BinaryWriter`, `BinaryReader`, 文字列戦略, `hexdump()`, `dump("table")` | [`sample/04_procedural_writer.py`](sample/04_procedural_writer.py) |
-| **Step 5** | スキーマ駆動設計 & 多言語出力 | `Builder`, `section()`, `caption()`, `write()`, `builder.read()`, `builder.hexdump()`, `builder.dump()` | [`sample/05_builder_and_reader.py`](sample/05_builder_and_reader.py) |
-| **Step 6** | v2.0 高度機能総合 | CRC32, `BinaryEnum`, `Magic`, `Constant`, JSON連携, `iter_struct`, `VarInt`, `BitWriter` | [`sample/06_advanced_v2_features.py`](sample/06_advanced_v2_features.py) |
+| **Step 1** | 基本的な構造体 | `@binary_struct`, プリミティブ型, `FixedString`, `to_bytes()`, `from_bytes()` | [`sample/01_basic_struct.ipynb`](sample/01_basic_struct.ipynb) |
+| **Step 2** | ビットフィールド & アライメント | `Bits[N]`, `bits=16`, `align=4`, `auto_align=True` | [`sample/02_bitfields_and_alignment.ipynb`](sample/02_bitfields_and_alignment.ipynb) |
+| **Step 3** | 相対オフセット & テーブル | `Offset`, `Base.SELF`, `OffsetTable`, 遅延バックパッチ, 名前空間スコープ | [`sample/03_offsets_and_tables.ipynb`](sample/03_offsets_and_tables.ipynb) |
+| **Step 4** | 手続き的ライター & リーダー | `BinaryWriter`, `BinaryReader`, 文字列戦略, 仕様書・Cヘッダー直接出力, `hexdump()` | [`sample/04_procedural_writer.ipynb`](sample/04_procedural_writer.ipynb) |
+| **Step 5** | スキーマ駆動設計 & 多言語出力 | `Builder`, `section()`, `caption()`, `write()`, `builder.read()`, 多言語出力 | [`sample/05_builder_and_reader.ipynb`](sample/05_builder_and_reader.ipynb) |
+| **Step 6** | v2.0 高度機能総合 | CRC32, `BinaryEnum`, `Magic`, `Constant`, JSON連携, `iter_struct`, `VarInt`, `BitWriter` | [`sample/06_advanced_v2_features.ipynb`](sample/06_advanced_v2_features.ipynb) |
+| **Step 7** | v0.3.0 モダン機能 | `Float16`, `LengthOf`, `CountOf`, `total_size`, `pad_to`, `Range`, インタラクティブHTML | [`sample/07_v0_3_0_features.ipynb`](sample/07_v0_3_0_features.ipynb) |
 
 すべてのサンプルは以下のコマンドでまとめて実行・検証できます：
 

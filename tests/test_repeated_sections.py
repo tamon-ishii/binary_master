@@ -6,9 +6,9 @@ from binary_master import (
     UInt16,
     UInt32,
     binary_struct,
-    generate_mermaid_diagram,
     write_struct,
 )
+from binary_master.manual import generate_mermaid_diagram
 
 
 @binary_struct

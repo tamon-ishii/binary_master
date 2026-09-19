@@ -1,21 +1,22 @@
 """Tests for dedicated binary debugging, annotated hexdumps, tabular dumps, and diffing."""
 
 import json
+
 import pytest
+
 from binary_master import (
-    BinaryWriter,
     BinaryReader,
-    binary_struct,
+    BinaryWriter,
     UInt8,
     UInt16,
     UInt32,
-    FixedArray,
-    hexdump,
+    binary_struct,
     debug_dump,
     diff_dump,
-    dump_table,
-    dump_json,
     dump_dict,
+    dump_json,
+    dump_table,
+    hexdump,
 )
 
 

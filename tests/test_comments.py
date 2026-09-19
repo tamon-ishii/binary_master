@@ -1,7 +1,8 @@
 """Tests for extracting field descriptions from source comments and Annotated."""
 
-import pytest
 from typing import Annotated
+
+import binary_master
 from binary_master import (
     BinaryWriter,
     Bits,
@@ -12,7 +13,6 @@ from binary_master import (
     UInt32,
     binary_struct,
 )
-import binary_master
 from binary_master.manual import generate_manual
 
 
