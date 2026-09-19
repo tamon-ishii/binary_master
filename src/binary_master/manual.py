@@ -71,12 +71,43 @@ class LayoutEntry:
             self.caption_repeat = self.caption_spec_count
 
 
+def _safe_issubclass(cls: Any, base: Any) -> bool:
+    """Safely check if cls is a subclass of base, handling TypeAliasType and missing types."""
+    if not isinstance(cls, type) or base is None:
+        return False
+    if isinstance(base, tuple):
+        valid_bases = tuple(b for b in base if isinstance(b, type))
+        if not valid_bases:
+            return False
+        return issubclass(cls, valid_bases)
+    if not isinstance(base, type):
+        return False
+    return issubclass(cls, base)
+
+
 def create_dummy_instance(struct_cls: type) -> Any:
     """Create a dummy instance of a @binary_struct class for layout inspection."""
     if not hasattr(struct_cls, "__binary__"):
         return None
     from typing import get_origin, get_args, Annotated
-    from binary_master.binary_struct import BinaryType, FixedArray, Array, Offset, UInt8, OffsetTable, Bool
+    import binary_master as bm
+
+    _BinaryType = getattr(bm, "BinaryType", None)
+    _FixedArray = getattr(bm, "FixedArray", None)
+    _Array = getattr(bm, "Array", None)
+    _Offset = getattr(bm, "Offset", None)
+    _OffsetTable = getattr(bm, "OffsetTable", None)
+    _UInt8 = getattr(bm, "UInt8", None)
+    _Bool = getattr(bm, "Bool", None)
+    _Bytes = getattr(bm, "Bytes", None)
+    _FixedString = getattr(bm, "FixedString", None)
+    _CString = getattr(bm, "CString", None)
+    _PrefixedString = getattr(bm, "PrefixedString", None)
+    _MagicBase = getattr(bm, "MagicBase", None)
+    _ConstantBase = getattr(bm, "ConstantBase", None)
+    _RangeBase = getattr(bm, "RangeBase", None)
+    _LengthOfBase = getattr(bm, "LengthOfBase", None)
+    _CountOfBase = getattr(bm, "CountOfBase", None)
 
     meta: dict[str, Any] = getattr(struct_cls, "__binary__", {})
     fields = meta.get("fields", {})
@@ -95,55 +126,61 @@ def create_dummy_instance(struct_cls: type) -> Any:
         if get_origin(ft) is Annotated:
             ft = get_args(ft)[0]
 
-        is_fixed = (isinstance(ft, tuple) and len(ft) >= 3 and ft[0] is FixedArray) or (get_origin(ft) is FixedArray)
-        is_arr = (isinstance(ft, tuple) and len(ft) >= 2 and ft[0] is Array) or (get_origin(ft) is Array)
-        is_offset = (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is Offset) or (get_origin(ft) is Offset)
-        is_offset_tbl = (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is OffsetTable) or (get_origin(ft) is OffsetTable)
-
-        from binary_master.binary_struct import (
-            Bytes,
-            FixedString,
-            CString,
-            PrefixedString,
-            MagicBase,
-            ConstantBase,
-            RangeBase,
-            LengthOfBase,
-            CountOfBase,
+        is_fixed = (_FixedArray is not None) and (
+            (isinstance(ft, tuple) and len(ft) >= 3 and ft[0] is _FixedArray)
+            or (get_origin(ft) is _FixedArray)
         )
+        is_arr = (_Array is not None) and (
+            (isinstance(ft, tuple) and len(ft) >= 2 and ft[0] is _Array)
+            or (get_origin(ft) is _Array)
+        )
+        is_offset = (_Offset is not None) and (
+            (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is _Offset)
+            or (get_origin(ft) is _Offset)
+        )
+        is_offset_tbl = (_OffsetTable is not None) and (
+            (isinstance(ft, tuple) and len(ft) >= 1 and ft[0] is _OffsetTable)
+            or (get_origin(ft) is _OffsetTable)
+        )
+
         from binary_master.checksum import ChecksumBase
         from binary_master.varint import VarIntTypeMeta
         import enum
 
-        if isinstance(ft, type) and issubclass(ft, MagicBase):
+        if _safe_issubclass(ft, _MagicBase):
             expected = getattr(ft, "_value", None)
             dummy_kwargs[fn] = expected if expected is not None else getattr(ft, "_raw_val", 0)
-        elif isinstance(ft, type) and issubclass(ft, ConstantBase):
+        elif _safe_issubclass(ft, _ConstantBase):
             dummy_kwargs[fn] = getattr(ft, "_value", 0)
-        elif isinstance(ft, type) and issubclass(ft, RangeBase):
-            dummy_kwargs[fn] = ft._min
-        elif isinstance(ft, type) and issubclass(ft, (LengthOfBase, CountOfBase)):
+        elif _safe_issubclass(ft, _RangeBase):
+            dummy_kwargs[fn] = getattr(ft, "_min", 0)
+        elif _safe_issubclass(ft, (_LengthOfBase, _CountOfBase)):
             dummy_kwargs[fn] = 0
-        elif isinstance(ft, type) and issubclass(ft, ChecksumBase):
+        elif _safe_issubclass(ft, ChecksumBase):
             dummy_kwargs[fn] = 0
         elif isinstance(ft, VarIntTypeMeta):
             dummy_kwargs[fn] = 0
-        elif isinstance(ft, type) and issubclass(ft, enum.Enum):
+        elif _safe_issubclass(ft, enum.Enum):
             dummy_kwargs[fn] = next(iter(ft)) if len(ft) > 0 else 0
-        elif isinstance(ft, tuple) and len(ft) >= 2 and isinstance(ft[0], type) and issubclass(ft[0], enum.Enum):
+        elif isinstance(ft, tuple) and len(ft) >= 2 and _safe_issubclass(ft[0], enum.Enum):
             dummy_kwargs[fn] = next(iter(ft[0])) if len(ft[0]) > 0 else 0
-        elif ft is bool or (isinstance(ft, type) and issubclass(ft, Bool)):
+        elif ft is bool or _safe_issubclass(ft, _Bool) or ft is _Bool:
             dummy_kwargs[fn] = False
-        elif isinstance(ft, type) and issubclass(ft, (FixedString, CString, PrefixedString)):
+        elif _safe_issubclass(ft, (_FixedString, _CString, _PrefixedString)):
             dummy_kwargs[fn] = ""
-        elif isinstance(ft, type) and issubclass(ft, Bytes):
+        elif _safe_issubclass(ft, _Bytes):
             dummy_kwargs[fn] = b"\x00" * getattr(ft, "_size", 0)
-        elif isinstance(ft, type) and issubclass(ft, BinaryType):
+        elif _safe_issubclass(ft, _BinaryType):
             dummy_kwargs[fn] = 0
         elif is_fixed:
-            cnt = ft[2] if isinstance(ft, tuple) else get_args(ft)[1]
-            elem_t = ft[1] if isinstance(ft, tuple) else get_args(ft)[0]
-            if elem_t is UInt8:
+            args = get_args(ft)
+            cnt = ft[2] if isinstance(ft, tuple) and len(ft) >= 3 else (args[1] if len(args) >= 2 else 1)
+            elem_t = ft[1] if isinstance(ft, tuple) and len(ft) >= 2 else (args[0] if len(args) >= 1 else _UInt8)
+            if hasattr(cnt, "__value__"):
+                cnt = cnt.__value__
+            if not isinstance(cnt, int):
+                cnt = 1
+            if elem_t is _UInt8:
                 dummy_kwargs[fn] = b"\x00" * cnt
             elif hasattr(elem_t, "__binary__"):
                 dummy_kwargs[fn] = [create_dummy_instance(elem_t)] * cnt
@@ -658,12 +695,9 @@ def generate_mermaid_diagram(
         else:
             _render_flowchart_nodes(indent="    ")
 
-    # Sequential connections between adjacent blocks
-    for i in range(len(node_ids) - 1):
-        lines.append(f"    {node_ids[i]} --> {node_ids[i+1]}")
-
     # Offset relationships (dotted arrows pointing to referenced target offset)
     seen_links: set[tuple[str, str]] = set()
+    offset_lines: List[str] = []
     for idx, entry in enumerate(entries):
         if entry.target_offset is not None:
             for t_idx, t_entry in enumerate(entries):
@@ -674,10 +708,18 @@ def generate_mermaid_diagram(
                         link_key = (source_nid, target_nid)
                         if link_key not in seen_links:
                             seen_links.add(link_key)
-                            lines.append(
+                            offset_lines.append(
                                 f'    {source_nid} -.->|"offset: 0x{entry.target_offset:04X}"| {target_nid}'
                             )
                     break
+
+    # Sequential connections between adjacent blocks (suppress if an offset dotted link connects them)
+    for i in range(len(node_ids) - 1):
+        pair = (node_ids[i], node_ids[i+1])
+        if pair not in seen_links:
+            lines.append(f"    {node_ids[i]} --> {node_ids[i+1]}")
+
+    lines.extend(offset_lines)
 
     lines.append("```")
     return "\n".join(lines)
@@ -952,6 +994,54 @@ def generate_manual(
     sections: List[str] = []
     sections.append(f"# {resolved_title}\n")
 
+    distinct_struct_names: List[str] = []
+    for e in entries:
+        if e.struct_name and (not distinct_struct_names or distinct_struct_names[-1] != e.struct_name):
+            distinct_struct_names.append(e.struct_name)
+
+    # Unique defined field keys
+    unique_field_keys = set()
+    for e in entries:
+        clean_name = re.sub(r"\[\d+\]$", "", e.name or "")
+        unique_field_keys.add((e.struct_name or e.caption or "", clean_name))
+    defined_field_count = len(unique_field_keys)
+
+    # Build offset to target label lookup for pointers
+    offset_to_target_label: Dict[int, str] = {}
+    caption_groups_for_lookup: List[tuple[Optional[str], List[LayoutEntry]]] = []
+    _curr_cap: Optional[str] = None
+    _curr_entries: List[LayoutEntry] = []
+    for e in entries:
+        c = e.caption or e.struct_name
+        if c != _curr_cap:
+            if _curr_entries:
+                caption_groups_for_lookup.append((_curr_cap, _curr_entries))
+            _curr_cap = c
+            _curr_entries = [e]
+        else:
+            _curr_entries.append(e)
+    if _curr_entries:
+        caption_groups_for_lookup.append((_curr_cap, _curr_entries))
+
+    for cap, c_entries in caption_groups_for_lookup:
+        display_name = cap or (c_entries[0].struct_name if c_entries else "") or "Section"
+        is_rep_lookup, rep_spec_lookup, u_entries_lookup, s_cnt_lookup = _detect_repetition(c_entries)
+        if is_rep_lookup and u_entries_lookup:
+            u_len = len(u_entries_lookup)
+            for k in range(0, len(c_entries), u_len):
+                elem_idx = k // u_len
+                first_off = c_entries[k].offset
+                offset_to_target_label[first_off] = f"{display_name}[{elem_idx}]"
+        else:
+            if c_entries:
+                first_off = c_entries[0].offset
+                offset_to_target_label[first_off] = display_name
+
+    has_captions = any(e.caption for e in entries)
+    has_multiple_structs = len(distinct_struct_names) > 1
+    has_sections = has_captions or has_multiple_structs
+    want_section_packets = section_packet_diagrams or (has_sections and diagram_type in ("packet", "both"))
+
     # 1. Summary
     root_doc = ""
     for e in entries:
@@ -966,24 +1056,26 @@ def generate_manual(
         endian_disp = "リトルエンディアン (Little)" if default_endian.lower() == "little" else "ビッグエンディアン (Big)"
         sections.append(f"- **合計サイズ**: {total_bytes} バイト (`0x{total_bytes:04X}`)")
         sections.append(f"- **デフォルトエンディアン**: {endian_disp}")
-        sections.append(f"- **合計フィールド数**: {len(entries)}\n")
+        if len(entries) != defined_field_count and defined_field_count > 0:
+            sections.append(f"- **合計フィールド数**: {len(entries)} (定義数: {defined_field_count})")
+        else:
+            sections.append(f"- **合計フィールド数**: {len(entries)}")
+        if len(distinct_struct_names) > 1:
+            sections.append(f"- **構造体数**: {len(distinct_struct_names)}")
+        sections.append("")
     else:
         sections.append("## Overview\n")
         if root_doc:
             sections.append(f"{root_doc}\n")
         sections.append(f"- **Total Size**: {total_bytes} bytes (`0x{total_bytes:04X}`)")
         sections.append(f"- **Default Endianness**: {default_endian.capitalize()}")
-        sections.append(f"- **Total Fields**: {len(entries)}\n")
-
-    distinct_struct_names: List[str] = []
-    for e in entries:
-        if e.struct_name and (not distinct_struct_names or distinct_struct_names[-1] != e.struct_name):
-            distinct_struct_names.append(e.struct_name)
-
-    has_captions = any(e.caption for e in entries)
-    has_multiple_structs = len(distinct_struct_names) > 1
-    has_sections = has_captions or has_multiple_structs
-    want_section_packets = section_packet_diagrams or (has_sections and diagram_type in ("packet", "both"))
+        if len(entries) != defined_field_count and defined_field_count > 0:
+            sections.append(f"- **Total Fields**: {len(entries)} (Defined: {defined_field_count})")
+        else:
+            sections.append(f"- **Total Fields**: {len(entries)}")
+        if len(distinct_struct_names) > 1:
+            sections.append(f"- **Structure Count**: {len(distinct_struct_names)}")
+        sections.append("")
 
     # 2. Structure Diagram
     if entries:
@@ -1129,7 +1221,11 @@ def generate_manual(
             endian_str = entry.endian or "-"
             desc_str = entry.description or "-"
             if entry.target_offset is not None:
-                target_marker = f"`-> 0x{entry.target_offset:04X}`"
+                ref_label = offset_to_target_label.get(entry.target_offset)
+                if ref_label:
+                    target_marker = f"`-> 0x{entry.target_offset:04X}` ({ref_label})"
+                else:
+                    target_marker = f"`-> 0x{entry.target_offset:04X}`"
                 if desc_str != "-":
                     desc_str = f"{desc_str} ({target_marker})"
                 else:
@@ -1186,7 +1282,11 @@ def generate_manual(
             endian_str = entry.endian or "-"
             desc_str = entry.description or "-"
             if entry.target_offset is not None:
-                target_marker = f"`-> 0x{entry.target_offset:04X}`"
+                ref_label = offset_to_target_label.get(entry.target_offset)
+                if ref_label:
+                    target_marker = f"`-> 0x{entry.target_offset:04X}` ({ref_label})"
+                else:
+                    target_marker = f"`-> 0x{entry.target_offset:04X}`"
                 if desc_str != "-":
                     desc_str = f"{desc_str} ({target_marker})"
                 else:
@@ -1318,6 +1418,7 @@ def generate_manual(
                     meta_lines = [
                         f"- 🔁 **繰り返し**: {repeat_label}",
                         f"- **1要素サイズ**: `{unit_size}` バイト (0x{unit_size:X})",
+                        f"- **配置範囲**: `0x{min_off:04X}` 〜 `0x{max_off:04X}` (`{total_size}` バイト)",
                     ]
                     if sample_count > 1:
                         meta_lines.append(f"- **サンプルデータ**: {sample_count} 件 (合計 `{total_size}` バイト)")
@@ -1327,6 +1428,7 @@ def generate_manual(
                     meta_lines = [
                         f"- 🔁 **繰り返し**: {repeat_label}",
                         f"- **1要素サイズ**: `{unit_size}` bytes (0x{unit_size:X})",
+                        f"- **Offset Range**: `0x{min_off:04X}` - `0x{max_off:04X}` (`{total_size}` bytes)",
                     ]
                     if sample_count > 1:
                         meta_lines.append(f"- **サンプルデータ**: {sample_count} 件 (合計 `{total_size}` bytes)")
@@ -1677,6 +1779,36 @@ def generate_html(
         if e.struct_name and (not distinct_struct_names or distinct_struct_names[-1] != e.struct_name):
             distinct_struct_names.append(e.struct_name)
 
+    offset_to_target_label: Dict[int, str] = {}
+    caption_groups_lookup: List[tuple[Optional[str], List[LayoutEntry]]] = []
+    _c_cap: Optional[str] = None
+    _c_entries: List[LayoutEntry] = []
+    for e in entries_list:
+        c = e.caption or e.struct_name
+        if c != _c_cap:
+            if _c_entries:
+                caption_groups_lookup.append((_c_cap, _c_entries))
+            _c_cap = c
+            _c_entries = [e]
+        else:
+            _c_entries.append(e)
+    if _c_entries:
+        caption_groups_lookup.append((_c_cap, _c_entries))
+
+    for cap, c_entries in caption_groups_lookup:
+        display_name = cap or (c_entries[0].struct_name if c_entries else "") or "Section"
+        is_rep_lookup, rep_spec_lookup, u_entries_lookup, s_cnt_lookup = _detect_repetition(c_entries)
+        if is_rep_lookup and u_entries_lookup:
+            u_len = len(u_entries_lookup)
+            for k in range(0, len(c_entries), u_len):
+                elem_idx = k // u_len
+                first_off = c_entries[k].offset
+                offset_to_target_label[first_off] = f"{display_name}[{elem_idx}]"
+        else:
+            if c_entries:
+                first_off = c_entries[0].offset
+                offset_to_target_label[first_off] = display_name
+
     has_captions = any(e.caption for e in entries_list)
     has_multiple_structs = len(distinct_struct_names) > 1
     has_sections = has_captions or has_multiple_structs
@@ -1771,7 +1903,11 @@ def generate_html(
         val_str = html_lib.escape(format_value_preview(e.value)) if include_values else "-"
         desc_str = html_lib.escape(e.description or "-")
         if e.target_offset is not None:
-            desc_str += f" &rarr; <code>0x{e.target_offset:04X}</code>"
+            ref_label = offset_to_target_label.get(e.target_offset)
+            if ref_label:
+                desc_str += f" &rarr; <code>0x{e.target_offset:04X} ({html_lib.escape(ref_label)})</code>"
+            else:
+                desc_str += f" &rarr; <code>0x{e.target_offset:04X}</code>"
 
         tr = (
             f'<tr class="table-row" id="field-row-{idx}" '
@@ -1901,6 +2037,7 @@ def generate_html(
     th_val_col = "値 / プレビュー" if is_ja else "Value / Preview"
     th_desc_col = "説明" if is_ja else "Description"
     mem_table_heading = "メモリレイアウト表" if is_ja else "Memory Layout Table"
+    filter_placeholder = "フィールド名・型・説明で検索..." if is_ja else "Filter by field name, type, description..."
 
     js_field_lbl = "フィールド:" if is_ja else "Field:"
     js_type_lbl = "型:" if is_ja else "Type:"
@@ -2145,6 +2282,38 @@ def generate_html(
       border-radius: 4px;
       font-size: 0.88em;
     }}
+    .table-toolbar {{
+      margin-bottom: 0.75rem;
+      display: flex;
+      justify-content: flex-end;
+    }}
+    .search-input {{
+      width: 100%;
+      max-width: 320px;
+      padding: 0.5rem 0.85rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans-font);
+      font-size: 0.88rem;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }}
+    .search-input:focus {{
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+    }}
+    @keyframes flashRow {{
+      0% {{ background-color: var(--highlight-border); }}
+      100% {{ background-color: transparent; }}
+    }}
+    .table-row.flash {{
+      animation: flashRow 1.5s ease-out;
+    }}
+    g.node {{
+      cursor: pointer;
+    }}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <script>
@@ -2173,6 +2342,9 @@ def generate_html(
     <section class="section">
       <div class="section-header">
         <h2>{mem_table_heading}</h2>
+      </div>
+      <div class="table-toolbar">
+        <input type="text" id="table-search" placeholder="{filter_placeholder}" class="search-input" />
       </div>
       <div class="table-container">
         <table class="layout-table" id="layout-table">
@@ -2221,6 +2393,49 @@ def generate_html(
           if (ab) ab.classList.add('active');
         }}
       }}
+
+      // Table search filter
+      const searchInput = document.getElementById('table-search');
+      if (searchInput) {{
+        searchInput.addEventListener('input', (e) => {{
+          const term = e.target.value.toLowerCase().trim();
+          tableRows.forEach(row => {{
+            if (row.classList.contains('table-row-omitted')) return;
+            const text = row.textContent.toLowerCase();
+            if (!term || text.includes(term)) {{
+              row.style.display = '';
+            }} else {{
+              row.style.display = 'none';
+            }}
+          }});
+        }});
+      }}
+
+      // Mermaid node click interaction
+      document.addEventListener('click', (e) => {{
+        const node = e.target.closest('.node');
+        if (!node) return;
+        const textEl = node.querySelector('.nodeLabel') || node;
+        const nodeText = textEl.textContent || '';
+        const mOff = nodeText.match(/0x([0-9A-Fa-f]{{4}})/);
+        let targetRow = null;
+        if (mOff) {{
+          const targetOffset = parseInt(mOff[1], 16);
+          targetRow = document.querySelector(`.table-row[data-offset-start="${{targetOffset}}"]`);
+        }}
+        if (!targetRow && node.id) {{
+          const nidMatch = node.id.match(/-(N\\d+)-/);
+          if (nidMatch) {{
+            const idx = parseInt(nidMatch[1].replace('N', ''), 10);
+            targetRow = document.getElementById(`field-row-${{idx}}`);
+          }}
+        }}
+        if (targetRow) {{
+          targetRow.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+          targetRow.classList.add('flash');
+          setTimeout(() => targetRow.classList.remove('flash'), 1500);
+        }}
+      }});
 
       // Row hover
       tableRows.forEach(row => {{
