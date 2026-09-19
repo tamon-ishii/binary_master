@@ -35,7 +35,7 @@ packet.write_html("sensor_spec.html", title="センサー通信パケット仕�
 print(packet.to_rust())                    # Rust 構造体を即時出力
 ```
 
-> 📖 **詳細なチュートリアル**: ステップバイステップで基本から応用までを学べる **[実践チュートリアル (TUTORIAL.md)](TUTORIAL.md)** をご覧ください。  
+> 📖 **実践チュートリアル**: ステップバイステップで基本から応用までを学べる **[実践チュートリアル & サンプル集 (sample/)](sample/)** をご覧ください。  
 > 📓 **対話型サンプル**: 実行結果や図解付きの **[Jupyter Notebook サンプル集 (sample/)](#対話型サンプルガイド-jupyter-notebooks)** も用意されています。  
 > 🤖 **AI・LLM**: プロンプトコンテキストに最適な情報密度の **[AI向け完全リファレンス (FOR_AI.md)](FOR_AI.md)** をご利用いただけます。
 
@@ -83,6 +83,7 @@ python -m build
 | [**05_builder_and_reader.ipynb**](sample/05_builder_and_reader.ipynb) | Builder とスキーマ駆動パース | 事前スキーマ定義 (`Builder`), 多態選択 (`add_choice`), スキーマ駆動自動リーダー (`builder.read()`) |
 | [**06_advanced_v2_features.ipynb**](sample/06_advanced_v2_features.ipynb) | 信頼性・高度プロトコル機能 | `CRC32`/`CRC16`/`Checksum8`, `BinaryEnum`, `Magic`/`Constant`, LEB128 `VarInt`, `BitWriter`/`BitReader` |
 | [**07_v0_3_0_features.ipynb**](sample/07_v0_3_0_features.ipynb) | モダン宣言的機能 & 仕様書 | `Float16`, `LengthOf`/`CountOf` 連動計算, `total_size`/`pad_to`, `Range` バリデーション, HTML仕様書 |
+| [**08_real_world_recipes.ipynb**](sample/08_real_world_recipes.ipynb) | 実践業界別レシピ集 | ゲームセーブデータ, IoT テレメトリ, 金融ティックロガー (`from_mmap`), 多態RPC (`Variant`) |
 
 ```bash
 # 全サンプルの自動実行・検証
@@ -246,8 +247,8 @@ python sample/main.py
 
 ## ドキュメント一覧
 
-- 📘 **[実践チュートリアル (TUTORIAL.md)](TUTORIAL.md)**: 基礎から応用までステップバイステップで徹底解説
-- 📓 **[Jupyter Notebook サンプル集 (sample/)](sample/)**: GitHub 上でもそのまま閲覧・実行できる対話型ノートブック
+- 📘 **[実践チュートリアル & ガイド (sample/README.md)](sample/README.md)**: 基礎から応用、アーキテクチャ選定、トラブルシューティングまで徹底解説
+- 📓 **[Jupyter Notebook サンプル集 (sample/)](sample/)**: GitHub 上でもそのまま閲覧・実行できる 8 本の対話型ノートブック
 - 🤖 **[AI向け完全リファレンス (FOR_AI.md)](FOR_AI.md)**: LLM/AI エージェント向け凝縮仕様書
 
 ---
