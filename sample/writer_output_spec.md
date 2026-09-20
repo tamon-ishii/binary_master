@@ -2,7 +2,7 @@
 
 ## 概要
 
-HeaderChunk(protocol_version: binary_master.binary_struct.UInt16, flags: binary_master.binary_struct.UInt16)
+HeaderChunk(protocol_version: binary_master.binary_types.UInt16, flags: binary_master.binary_types.UInt16)
 
 - **合計サイズ**: 98 バイト (`0x0062`)
 - **デフォルトエンディアン**: リトルエンディアン (Little)
@@ -110,7 +110,7 @@ title Dynamic Payload レイアウト
 
 #### [バリアント] Tag `0x0001`: `HeaderChunk`
 
-HeaderChunk(protocol_version: binary_master.binary_struct.UInt16, flags: binary_master.binary_struct.UInt16)
+HeaderChunk(protocol_version: binary_master.binary_types.UInt16, flags: binary_master.binary_types.UInt16)
 
 ```mermaid
 packet-beta
@@ -126,7 +126,7 @@ title HeaderChunk Layout
 
 #### [バリアント] Tag `0x0002`: `TextChunk`
 
-TextChunk(length: binary_master.binary_struct.UInt16, content: (<class 'binary_master.binary_struct.FixedArray'>, <class 'binary_master.binary_struct.UInt8'>, 16))
+TextChunk(length: binary_master.binary_types.UInt16, content: (<class 'binary_master.binary_types.FixedArray'>, <class 'binary_master.binary_types.UInt8'>, 16))
 
 ```mermaid
 packet-beta

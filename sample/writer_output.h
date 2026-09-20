@@ -42,12 +42,12 @@ extern "C" {
  * Configuration header variant
  */
 typedef enum PayloadTag {
-    PAYLOAD_TAG_HEADER_CHUNK = 0x01, /**< Tag 0x01: HeaderChunk(protocol_version: binary_master.binary_struct.UInt16, flags: binary_master.binary_struct.UInt16) */
-    PAYLOAD_TAG_TEXT_CHUNK = 0x02, /**< Tag 0x02: TextChunk(length: binary_master.binary_struct.UInt16, content: (<class 'binary_master.binary_struct.FixedArray'>, <class 'binary_master.binary_struct.UInt8'>, 16)) */
+    PAYLOAD_TAG_HEADER_CHUNK = 0x01, /**< Tag 0x01: HeaderChunk(protocol_version: binary_master.binary_types.UInt16, flags: binary_master.binary_types.UInt16) */
+    PAYLOAD_TAG_TEXT_CHUNK = 0x02, /**< Tag 0x02: TextChunk(length: binary_master.binary_types.UInt16, content: (<class 'binary_master.binary_types.FixedArray'>, <class 'binary_master.binary_types.UInt8'>, 16)) */
 } PayloadTag;
 
 /**
- * HeaderChunk(protocol_version: binary_master.binary_struct.UInt16, flags: binary_master.binary_struct.UInt16)
+ * HeaderChunk(protocol_version: binary_master.binary_types.UInt16, flags: binary_master.binary_types.UInt16)
  */
 typedef struct HeaderChunk {
     uint16_t protocol_version;
@@ -55,7 +55,7 @@ typedef struct HeaderChunk {
 } HeaderChunk;
 
 /**
- * TextChunk(length: binary_master.binary_struct.UInt16, content: (<class 'binary_master.binary_struct.FixedArray'>, <class 'binary_master.binary_struct.UInt8'>, 16))
+ * TextChunk(length: binary_master.binary_types.UInt16, content: (<class 'binary_master.binary_types.FixedArray'>, <class 'binary_master.binary_types.UInt8'>, 16))
  */
 typedef struct TextChunk {
     uint16_t length;
@@ -76,7 +76,7 @@ typedef union PayloadUnion {
  * ---------------------------------------------------------------------------- */
 
 /**
- * DataRecord(record_id: binary_master.binary_struct.UInt32, timestamp: binary_master.binary_struct.UInt32, value: binary_master.binary_struct.Float32)
+ * DataRecord(record_id: binary_master.binary_types.UInt32, timestamp: binary_master.binary_types.UInt32, value: binary_master.binary_types.Float32)
  */
 typedef struct DataRecord {
     uint32_t record_id;
