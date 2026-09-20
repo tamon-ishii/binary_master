@@ -86,7 +86,7 @@ python -m build
 | [**06_advanced_v2_features.ipynb**](sample/06_advanced_v2_features.ipynb) | 信頼性・高度プロトコル機能 | `CRC32`/`CRC16`/`Checksum8`, `BinaryEnum`, `Magic`/`Constant`, LEB128 `VarInt`, `BitWriter`/`BitReader` |
 | [**07_v0_3_0_features.ipynb**](sample/07_v0_3_0_features.ipynb) | モダン宣言的機能 & 仕様書 | `Float16`, `LengthOf`/`CountOf` 連動計算, `total_size`/`pad_to`, `Range` バリデーション, HTML仕様書 |
 | [**08_real_world_recipes.ipynb**](sample/08_real_world_recipes.ipynb) | 実践業界別レシピ集 | ゲームセーブデータ, IoT テレメトリ, 金融ティックログ (`from_mmap`), 多態RPCメッセージ (`Variant`) |
-| [**09_v0_4_0_features.ipynb**](sample/09_v0_4_0_features.ipynb) | v0.4.0 新機能ガイド | コンパクト型 (`u8`..`u64`, `s8`..`s64`, `f16`..`f64`), ImHex パターン言語 (`.hexpat`), `ZeroCopyView`, 連続パケットストリーミング (`iter_packets`), ダミー生成 (`dummy`), CLI TUI |
+| [**09_v0_4_0_features.ipynb**](sample/09_v0_4_0_features.ipynb) | v0.4.0 新機能ガイド | コンパクト型 (`u8`..`u64`, `i8`..`i64`, `f16`..`f64`), ImHex パターン言語 (`.hexpat`), `ZeroCopyView`, 連続パケットストリーミング (`iter_packets`), ダミー生成 (`dummy`), CLI TUI |
 
 ```bash
 # 全サンプルの自動実行・検証
@@ -225,8 +225,8 @@ header.to_go()                        # Go 構造体 (.go)
 
 | カテゴリ | 型名 | サイズ | 説明 / 使用例 |
 |---|---|---|---|
-| **整数型** | `UInt8`, `Int8`<br>`UInt16`, `Int16`<br>`UInt32`, `Int32`<br>`UInt64`, `Int64` | 1B<br>2B<br>4B<br>8B | 符号なし / 符号付き整数 |
-| **浮動小数点** | `Float16`<br>`Float32`<br>`Float64` | 2B<br>4B<br>8B | IEEE 754 半精度浮動小数点数<br>IEEE 754 単精度浮動小数点数<br>IEEE 754 倍精度浮動小数点数 |
+| **整数型** | `UInt8` / `u8`, `Int8` / `i8`<br>`UInt16` / `u16`, `Int16` / `i16`<br>`UInt32` / `u32`, `Int32` / `i32`<br>`UInt64` / `u64`, `Int64` / `i64` | 1B<br>2B<br>4B<br>8B | 符号なし / 符号付き整数 (`s8`..`s64` も対応) |
+| **浮動小数点** | `Float16` / `f16`<br>`Float32` / `f32`<br>`Float64` / `f64` | 2B<br>4B<br>8B | IEEE 754 半精度浮動小数点数<br>IEEE 754 単精度浮動小数点数<br>IEEE 754 倍精度浮動小数点数 |
 | **真偽値** | `Bool` | 1B | 1バイトブール値 (`0x00` / `0x01`) |
 | **ビットフィールド** | `Bits[N]` | N bit | `@binary_struct(bits=N)` 内で 1 ビット単位でパッキング |
 | **ビットマスクフラグ** | `BinaryFlag` (または `enum.IntFlag`) | 基底型依存 | ビット論理演算 (`\|`, `&`) をサポートする型安全フラグ |

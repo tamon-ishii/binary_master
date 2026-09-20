@@ -19,10 +19,10 @@ GitHub や VSCode、JupyterLab 上で実行結果・ダイアグラム・注釈�
 | **Step 6** | [**06_advanced_v2_features.ipynb**](./06_advanced_v2_features.ipynb) | 信頼性・高度プロトコル機能 | `Magic` シグネチャ, `Constant` 制約, `BinaryEnum`, `CRC32` 自動チェックサム計算・検証, LEB128 可変長整数 (`VarInt`/`VarUInt`), 任意ビットストリーム (`BitWriter`/`BitReader`) |
 | **Step 7** | [**07_v0_3_0_features.ipynb**](./07_v0_3_0_features.ipynb) | モダン宣言的機能 & 仕様書 | `Float16` (半精度浮動小数点), `LengthOf`/`CountOf` 自動連動計算, `total_size`/`pad_to` 固定サイズ保証, `Range` 値域バリデーション, 双方向 Hex Inspector 付き HTML 仕様書生成 (`write_html`) |
 | **Step 8** | [**08_real_world_recipes.ipynb**](./08_real_world_recipes.ipynb) | 実践業界別レシピ集 | ゲームセーブデータ・アーカイブ, IoT / 車載センサーテレメトリ, 高頻度取引 (HFT) 金融ティックロガー (`from_mmap`), 多態RPCメッセージキュー (`Variant`) |
-| **Step 9** | [**09_v0_4_0_features.ipynb**](./09_v0_4_0_features.ipynb) | v0.4.0 新機能ガイド | コンパクト型 (`u8`..`u64`, `s8`..`s64`, `f16`..`f64`), ImHex Pattern Language (`.hexpat`) エクスポート, `ZeroCopyView` (ゼロコピー・インプレース更新), 連続パケットストリーミング (`iter_packets`/`iter_views`), ダミー生成 (`dummy`), CLI TUI インスペクター |
+| **Step 9** | [**09_v0_4_0_features.ipynb**](./09_v0_4_0_features.ipynb) | v0.4.0 新機能ガイド | コンパクト型 (`u8`..`u64`, `i8`..`i64`, `s8`..`s64`, `f16`..`f64`), ImHex Pattern Language (`.hexpat`) エクスポート, `ZeroCopyView` (ゼロコピー・インプレース更新), 連続パケットストリーミング (`iter_packets`/`iter_views`), ダミー生成 (`dummy`), CLI TUI インスペクター |
 
 ### 🌟 v0.4.0 新機能ハイライト
-- **Pattern Language コンパクト型**: `u8`, `u16`, `u32`, `u64`, `s8`, `s16`, `s32`, `s64`, `f16`, `f32`, `f64` による ImHex Pattern Language 準拠の直感的かつ簡潔なパケット記述。
+- **コンパクト型 (Rust / C / ImHex 互換)**: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`, `f16`, `f32`, `f64` (および `s8`..`s64` エイリアス) による直感的かつ簡潔なパケット記述。
 - **ImHex Pattern Language (`.hexpat`) 出力**: `packet.to_hexpat()` / CLI `binary-master export -l hexpat` による ImHex 用パターンファイル自動出力。
 - **ZeroCopyView (ゼロコピー & 遅延解析)**: `Packet.view(buf)` / `Packet.view_from_file(path)` による即時フィールド参照、および `bytearray` 上でのインプレース直接書き換え。
 - **連続パケットストリーミング**: `iter_packets(stream, Packet)` / `iter_views` / `async_iter_packets` による連続パケットのイテレータ走査。

@@ -31,6 +31,9 @@ from binary_master import (
     f32,
     f64,
     generate_dummy,
+    i16,
+    i32,
+    i64,
     iter_packets,
     s16,
     s32,
@@ -55,9 +58,9 @@ class CompactHeader:
     flags: u16
     packet_id: u32
     timestamp: u64
-    temp_celsius: s16
-    latitude: s32
-    longitude: s64
+    temp_celsius: i16
+    latitude: i32
+    longitude: i64
     scale: f16
     ratio: f32
     precise: f64
@@ -91,6 +94,19 @@ def test_compact_types_serialization():
     assert abs(decoded.scale - 1.5) < 1e-3
     assert abs(decoded.ratio - 3.14) < 1e-5
     assert abs(decoded.precise - 2.718281828) < 1e-9
+
+    @binary_struct
+    class ImHexStyleStruct:
+        a: s16
+        b: s32
+        c: s64
+
+    im_obj = ImHexStyleStruct(a=-10, b=-200, c=-3000)
+    im_bytes = im_obj.to_bytes()
+    im_dec = ImHexStyleStruct.from_bytes(im_bytes)
+    assert im_dec.a == -10
+    assert im_dec.b == -200
+    assert im_dec.c == -3000
 
 
 def test_reader_writer_compact_methods():
@@ -136,13 +152,15 @@ def test_reader_writer_compact_methods():
 async def test_async_reader_writer_compact_methods():
     w = AsyncBinaryWriter()
     w.write_u16(42)
-    w.write_s32(-100)
+    w.write_i32(-100)
+    w.write_s32(-200)
     w.write_f32(1.25)
     data = w.to_bytes()
 
     r = AsyncBinaryReader(data)
     assert await r.read_u16() == 42
-    assert await r.read_s32() == -100
+    assert await r.read_i32() == -100
+    assert await r.read_s32() == -200
     assert abs(await r.read_f32() - 1.25) < 1e-5
 
 
