@@ -31,10 +31,10 @@ from binary_master import (
     f32,
     f64,
     generate_dummy,
-    i32,
-    i64,
     iter_packets,
     s16,
+    s32,
+    s64,
     u8,
     u16,
     u32,
@@ -56,8 +56,8 @@ class CompactHeader:
     packet_id: u32
     timestamp: u64
     temp_celsius: s16
-    latitude: i32
-    longitude: i64
+    latitude: s32
+    longitude: s64
     scale: f16
     ratio: f32
     precise: f64
@@ -136,13 +136,13 @@ def test_reader_writer_compact_methods():
 async def test_async_reader_writer_compact_methods():
     w = AsyncBinaryWriter()
     w.write_u16(42)
-    w.write_i32(-100)
+    w.write_s32(-100)
     w.write_f32(1.25)
     data = w.to_bytes()
 
     r = AsyncBinaryReader(data)
     assert await r.read_u16() == 42
-    assert await r.read_i32() == -100
+    assert await r.read_s32() == -100
     assert abs(await r.read_f32() - 1.25) < 1e-5
 
 
