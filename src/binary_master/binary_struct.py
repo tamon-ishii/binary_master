@@ -125,6 +125,26 @@ class Float64(BinaryType):
     _size = 8
 
 
+# Modern compact primitive type aliases (Pattern Language / Rust / ImHex style)
+u8 = UInt8
+u16 = UInt16
+u32 = UInt32
+u64 = UInt64
+
+i8 = Int8
+i16 = Int16
+i32 = Int32
+i64 = Int64
+
+s8 = Int8
+s16 = Int16
+s32 = Int32
+s64 = Int64
+
+f16 = Float16
+f32 = Float32
+f64 = Float64
+
 
 class BoolMeta(BinaryTypeMeta):
     """Metaclass for Bool allowing parameterized sizes like Bool[2], Bool[4], etc."""
@@ -1772,6 +1792,128 @@ def write_wireshark_method(
     )
 
 
+def to_hexpat_method(
+    cls,
+    root_name: Optional[str] = None,
+    endian: Optional[EndianType] = None,
+) -> str:
+    """Generate an ImHex Pattern Language (.hexpat) script for this @binary_struct class."""
+    from binary_master.code_gen.imhex import generate_imhex_pattern
+
+    return generate_imhex_pattern(cls, root_name=root_name, endian=endian)
+
+
+def write_hexpat_method(
+    cls,
+    path_or_file: Union[str, Path, IO[str]],
+    root_name: Optional[str] = None,
+    endian: Optional[EndianType] = None,
+) -> str:
+    """Generate and write an ImHex Pattern Language (.hexpat) file for this @binary_struct class."""
+    from binary_master.code_gen.imhex import write_imhex_pattern
+
+    return write_imhex_pattern(cls, path_or_file=path_or_file, root_name=root_name, endian=endian)
+
+
+def view_method(
+    cls: type[T],
+    buffer: Union[bytes, bytearray, memoryview],
+    offset: int = 0,
+    endian: Optional[Union[str, Endian]] = None,
+) -> Any:
+    """Create a ZeroCopyView over the buffer without allocating full struct instances."""
+    from binary_master.zero_copy import ZeroCopyView
+
+    return ZeroCopyView(cls, buffer=buffer, offset=offset, endian=endian)
+
+
+def view_from_file_method(
+    cls: type[T],
+    path: Union[str, Path],
+    offset: int = 0,
+    endian: Optional[Union[str, Endian]] = None,
+    writable: bool = False,
+) -> Any:
+    """Create a ZeroCopyView backed by a memory-mapped file."""
+    from binary_master.zero_copy import ZeroCopyView
+
+    return ZeroCopyView.from_file(cls, path=path, offset=offset, endian=endian, writable=writable)
+
+
+def iter_packets_method(
+    cls: type[T],
+    source: Union[bytes, bytearray, memoryview, Any],
+    max_count: Optional[int] = None,
+    ignore_errors: bool = False,
+    endian: Optional[str] = None,
+) -> Any:
+    """Continuously yield packets from a binary stream or buffer."""
+    from binary_master.streaming import iter_packets
+
+    return iter_packets(source, cls, max_count=max_count, ignore_errors=ignore_errors, endian=endian)
+
+
+def iter_views_method(
+    cls: type[T],
+    source: Union[bytes, bytearray, memoryview, str, Path],
+    max_count: Optional[int] = None,
+    endian: Optional[str] = None,
+) -> Any:
+    """Continuously yield zero-copy views of packets from a buffer."""
+    from binary_master.streaming import iter_views
+
+    return iter_views(source, cls, max_count=max_count, endian=endian)
+
+
+def async_iter_packets_method(
+    cls: type[T],
+    source: Any,
+    max_count: Optional[int] = None,
+    ignore_errors: bool = False,
+    endian: Optional[str] = None,
+) -> Any:
+    """Asynchronously yield packets from an async reader."""
+    from binary_master.streaming import async_iter_packets
+
+    return async_iter_packets(source, cls, max_count=max_count, ignore_errors=ignore_errors, endian=endian)
+
+
+def dummy_method(
+    cls: type[T],
+    seed: Optional[int] = None,
+    **overrides: Any,
+) -> T:
+    """Generate a dummy/mock instance populated with valid random data."""
+    from binary_master.dummy import generate_dummy
+
+    return generate_dummy(cls, seed=seed, **overrides)
+
+
+def struct_hexdump_method(
+    self: Any,
+    width: int = 16,
+    color: bool = False,
+    annotate: bool = True,
+    show_ascii: bool = True,
+    show_header: bool = True,
+    cursor: Optional[int] = None,
+    max_bytes: Optional[int] = None,
+) -> str:
+    """Generate annotated hexdump of this struct's serialized binary bytes."""
+    from binary_master.debug import hexdump as _hexdump
+
+    return _hexdump(
+        self.to_bytes(),
+        width=width,
+        color=color,
+        annotate=annotate,
+        show_ascii=show_ascii,
+        show_header=show_header,
+        cursor=cursor,
+        max_bytes=max_bytes,
+    )
+
+
 class _ToMarkdownDescriptor:
     def __get__(self, instance, owner=None):
         target = instance if instance is not None else owner
@@ -2116,6 +2258,17 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
         target_cls.write_wireshark = classmethod(write_wireshark_method)
         target_cls.to_lua = classmethod(to_wireshark_method)
         target_cls.write_lua = classmethod(write_wireshark_method)
+        target_cls.to_hexpat = classmethod(to_hexpat_method)
+        target_cls.write_hexpat = classmethod(write_hexpat_method)
+        target_cls.to_imhex = classmethod(to_hexpat_method)
+        target_cls.write_imhex = classmethod(write_hexpat_method)
+        target_cls.view = classmethod(view_method)
+        target_cls.view_from_bytes = classmethod(view_method)
+        target_cls.view_from_file = classmethod(view_from_file_method)
+        target_cls.iter_packets = classmethod(iter_packets_method)
+        target_cls.iter_views = classmethod(iter_views_method)
+        target_cls.async_iter_packets = classmethod(async_iter_packets_method)
+        target_cls.dummy = classmethod(dummy_method)
         target_cls.to_markdown = _ToMarkdownDescriptor()
         target_cls.write_markdown = _WriteMarkdownDescriptor()
         target_cls.to_html = _ToHtmlDescriptor()
@@ -2125,6 +2278,7 @@ def binary_struct(cls=None, *, endian="little", bits=None, align=None, auto_alig
         target_cls.binary_size = _BinarySizeDescriptor()
         target_cls.offsetof = _OffsetofDescriptor()
         target_cls.bit_offsetof = _BitOffsetofDescriptor()
+        target_cls.hexdump = struct_hexdump_method
         target_cls.__len__ = lambda self: sizeof(self)
         return target_cls
 
@@ -2251,6 +2405,119 @@ class BinaryStruct:
     ) -> str:
         """Generate Wireshark Lua Dissector and optionally save to file or stream."""
         return write_wireshark_method(cls, path_or_file=path_or_file, protocol_name=protocol_name, description=description, port=port)
+
+    @classmethod
+    def to_hexpat(
+        cls,
+        root_name: Optional[str] = None,
+        endian: Optional[EndianType] = None,
+    ) -> str:
+        """Generate ImHex Pattern Language (.hexpat) script."""
+        return to_hexpat_method(cls, root_name=root_name, endian=endian)
+
+    @classmethod
+    def write_hexpat(
+        cls,
+        path_or_file: Union[str, Path, IO[str]],
+        root_name: Optional[str] = None,
+        endian: Optional[EndianType] = None,
+    ) -> str:
+        """Generate ImHex Pattern Language (.hexpat) file."""
+        return write_hexpat_method(cls, path_or_file=path_or_file, root_name=root_name, endian=endian)
+
+    @classmethod
+    def view(
+        cls: type[T],
+        buffer: Union[bytes, bytearray, memoryview],
+        offset: int = 0,
+        endian: Optional[Union[str, Endian]] = None,
+    ) -> Any:
+        """Create a ZeroCopyView over the given buffer."""
+        return view_method(cls, buffer=buffer, offset=offset, endian=endian)
+
+    @classmethod
+    def view_from_bytes(
+        cls: type[T],
+        buffer: Union[bytes, bytearray, memoryview],
+        offset: int = 0,
+        endian: Optional[Union[str, Endian]] = None,
+    ) -> Any:
+        """Create a ZeroCopyView over bytes."""
+        return view_method(cls, buffer=buffer, offset=offset, endian=endian)
+
+    @classmethod
+    def view_from_file(
+        cls: type[T],
+        path: Union[str, Path],
+        offset: int = 0,
+        endian: Optional[Union[str, Endian]] = None,
+        writable: bool = False,
+    ) -> Any:
+        """Create a ZeroCopyView backed by a memory-mapped file."""
+        return view_from_file_method(cls, path=path, offset=offset, endian=endian, writable=writable)
+
+    @classmethod
+    def iter_packets(
+        cls: type[T],
+        source: Union[bytes, bytearray, memoryview, Any],
+        max_count: Optional[int] = None,
+        ignore_errors: bool = False,
+        endian: Optional[str] = None,
+    ) -> Any:
+        """Continuously yield packets from a binary stream or buffer."""
+        return iter_packets_method(cls, source, max_count=max_count, ignore_errors=ignore_errors, endian=endian)
+
+    @classmethod
+    def iter_views(
+        cls: type[T],
+        source: Union[bytes, bytearray, memoryview, str, Path],
+        max_count: Optional[int] = None,
+        endian: Optional[str] = None,
+    ) -> Any:
+        """Continuously yield zero-copy views from a buffer."""
+        return iter_views_method(cls, source, max_count=max_count, endian=endian)
+
+    @classmethod
+    def async_iter_packets(
+        cls: type[T],
+        source: Any,
+        max_count: Optional[int] = None,
+        ignore_errors: bool = False,
+        endian: Optional[str] = None,
+    ) -> Any:
+        """Asynchronously yield packets from an async reader."""
+        return async_iter_packets_method(cls, source, max_count=max_count, ignore_errors=ignore_errors, endian=endian)
+
+    @classmethod
+    def dummy(
+        cls: type[T],
+        seed: Optional[int] = None,
+        **overrides: Any,
+    ) -> T:
+        """Generate a dummy/mock instance populated with valid random data."""
+        return dummy_method(cls, seed=seed, **overrides)
+
+    def hexdump(
+        self,
+        width: int = 16,
+        color: bool = False,
+        annotate: bool = True,
+        show_ascii: bool = True,
+        show_header: bool = True,
+        cursor: Optional[int] = None,
+        max_bytes: Optional[int] = None,
+    ) -> str:
+        """Generate annotated hexdump of this struct's serialized binary bytes."""
+        return struct_hexdump_method(
+            self,
+            width=width,
+            color=color,
+            annotate=annotate,
+            show_ascii=show_ascii,
+            show_header=show_header,
+            cursor=cursor,
+            max_bytes=max_bytes,
+        )
 
     def __len__(self) -> int:
         return sizeof(self)

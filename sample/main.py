@@ -9,6 +9,7 @@ Executes all numbered Jupyter notebook samples systematically:
 6. sample/06_advanced_v2_features.ipynb
 7. sample/07_v0_3_0_features.ipynb
 8. sample/08_real_world_recipes.ipynb
+9. sample/09_v0_4_0_features.ipynb
 """
 
 import json
@@ -50,6 +51,7 @@ def main():
         sample_dir / "06_advanced_v2_features.ipynb",
         sample_dir / "07_v0_3_0_features.ipynb",
         sample_dir / "08_real_world_recipes.ipynb",
+        sample_dir / "09_v0_4_0_features.ipynb",
     ]
 
     print("======================================================================")
@@ -64,7 +66,7 @@ def main():
 
     print("\n" + "=" * 70)
     if all_passed:
-        print(" ALL 8 NOTEBOOK SAMPLES COMPLETED SUCCESSFULLY!")
+        print(f" ALL {len(samples)} NOTEBOOK SAMPLES COMPLETED SUCCESSFULLY!")
     else:
         print(" SOME SAMPLES FAILED!")
     print("=" * 70)

@@ -24,13 +24,28 @@ type UInt8 = int
 type UInt16 = int
 type UInt32 = int
 type UInt64 = int
+type u8 = int
+type u16 = int
+type u32 = int
+type u64 = int
 type Int8 = int
 type Int16 = int
 type Int32 = int
 type Int64 = int
+type i8 = int
+type i16 = int
+type i32 = int
+type i64 = int
+type s8 = int
+type s16 = int
+type s32 = int
+type s64 = int
 type Float16 = float
 type Float32 = float
 type Float64 = float
+type f16 = float
+type f32 = float
+type f64 = float
 type Bool = bool
 
 # Dynamic types
@@ -143,6 +158,24 @@ class BinaryStruct:
     def to_wireshark(cls, **kwargs: Any) -> str: ...
     @classmethod
     def write_wireshark(cls, path_or_file: Union[str, Any, IO[str]], **kwargs: Any) -> str: ...
+    @classmethod
+    def to_hexpat(cls, **kwargs: Any) -> str: ...
+    @classmethod
+    def write_hexpat(cls, path_or_file: Union[str, Any, IO[str]], **kwargs: Any) -> str: ...
+    @classmethod
+    def view[T](cls: type[T], buffer: Any, offset: int = ..., endian: Any = ...) -> Any: ...
+    @classmethod
+    def view_from_bytes[T](cls: type[T], buffer: Any, offset: int = ..., endian: Any = ...) -> Any: ...
+    @classmethod
+    def view_from_file[T](cls: type[T], path: Any, offset: int = ..., endian: Any = ..., writable: bool = ...) -> Any: ...
+    @classmethod
+    def iter_packets[T](cls: type[T], source: Any, max_count: Optional[int] = ..., ignore_errors: bool = ..., endian: Any = ...) -> Any: ...
+    @classmethod
+    def iter_views[T](cls: type[T], source: Any, max_count: Optional[int] = ..., endian: Any = ...) -> Any: ...
+    @classmethod
+    def async_iter_packets[T](cls: type[T], source: Any, max_count: Optional[int] = ..., ignore_errors: bool = ..., endian: Any = ...) -> Any: ...
+    @classmethod
+    def dummy[T](cls: type[T], seed: Optional[int] = ..., **overrides: Any) -> T: ...
     async def to_async_stream(self, writer: Any, endian: Any = ..., drain: bool = ...) -> None: ...
     @classmethod
     async def from_async_stream[T](cls: type[T], reader: Any, endian: Any = ...) -> T: ...

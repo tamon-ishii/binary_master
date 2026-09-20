@@ -40,16 +40,31 @@ from .binary_struct import (
     Variant,
     binary_struct,
     bit_offsetof,
+    f16,
+    f32,
+    f64,
     from_async_stream,
     from_bytes,
     from_file,
     from_stream,
+    i8,
+    i16,
+    i32,
+    i64,
     offsetof,
     read_struct,
+    s8,
+    s16,
+    s32,
+    s64,
     sizeof,
     to_async_stream,
     to_bytes,
     to_file,
+    u8,
+    u16,
+    u32,
+    u64,
     write_struct,
     write_variant,
 )
@@ -72,6 +87,7 @@ from .code_gen import (
     generate_cpp_code,
     generate_csharp_code,
     generate_go_code,
+    generate_imhex_pattern,
     generate_rust_code,
     generate_wireshark_dissector,
     to_c_header,
@@ -81,6 +97,7 @@ from .code_gen import (
     write_cpp,
     write_csharp,
     write_go,
+    write_imhex_pattern,
     write_rust,
     write_wireshark,
 )
@@ -98,6 +115,7 @@ from .debug import (
     dump_table,
     hexdump,
 )
+from .dummy import generate_dummy
 from .enums import Endian, EndianType, normalize_endian, normalize_offset_key
 from .exceptions import (
     BinaryMasterError,
@@ -118,6 +136,8 @@ from .manual import (
     write_html,
 )
 from .reader import BinaryReader
+from .streaming import async_iter_packets, iter_packets, iter_views
+from .tui import run_interactive_inspector
 from .varint import (
     VarInt,
     VarInt32,
@@ -131,6 +151,7 @@ from .varint import (
     encode_varuint,
 )
 from .writer import BinaryWriter, OffsetTableHandle
+from .zero_copy import ZeroCopyView
 
 __version__ = "0.4.0"
 
@@ -151,13 +172,28 @@ __all__ = [
     "UInt16",
     "UInt32",
     "UInt64",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
     "Int8",
     "Int16",
     "Int32",
     "Int64",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "s8",
+    "s16",
+    "s32",
+    "s64",
     "Float16",
     "Float32",
     "Float64",
+    "f16",
+    "f32",
+    "f64",
     "Bool",
     "Bytes",
     "FixedString",
@@ -249,8 +285,16 @@ __all__ = [
     "write_csharp",
     "generate_go_code",
     "write_go",
+    "generate_imhex_pattern",
+    "write_imhex_pattern",
     "generate_wireshark_dissector",
     "write_wireshark",
+    "ZeroCopyView",
+    "iter_packets",
+    "iter_views",
+    "async_iter_packets",
+    "generate_dummy",
+    "run_interactive_inspector",
     "hexdump",
     "debug_dump",
     "diff_dump",

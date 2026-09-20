@@ -31,6 +31,10 @@ from binary_master.code_gen.go import (
     generate_go_struct,
     write_go,
 )
+from binary_master.code_gen.imhex import (
+    generate_imhex_pattern,
+    write_imhex_pattern,
+)
 from binary_master.code_gen.rust import (
     generate_rust_choice,
     generate_rust_code,
@@ -53,6 +57,7 @@ EXTENSION_MAP = {
     ".cs": "csharp",
     ".go": "go",
     ".lua": "wireshark",
+    ".hexpat": "hexpat",
 }
 
 
@@ -71,8 +76,10 @@ def normalize_lang(lang: str) -> str:
         return "go"
     if norm in ("wireshark", "lua", "dissector"):
         return "wireshark"
+    if norm in ("hexpat", "imhex", "pattern"):
+        return "hexpat"
     raise ValueError(
-        f"Unsupported language: {lang!r}. Supported languages: 'c', 'rust', 'cpp', 'csharp', 'go', 'wireshark'"
+        f"Unsupported language: {lang!r}. Supported languages: 'c', 'rust', 'cpp', 'csharp', 'go', 'wireshark', 'hexpat'"
     )
 
 
@@ -99,6 +106,8 @@ def generate_code(builder: Any, lang: str, **kwargs) -> str:
         return generate_go_code(builder, **kwargs)
     if norm == "wireshark":
         return generate_wireshark_dissector(builder, **kwargs)
+    if norm == "hexpat":
+        return generate_imhex_pattern(builder, **kwargs)
     raise ValueError(f"Unhandled language: {norm}")
 
 
@@ -138,6 +147,8 @@ def write_code(
         return write_csharp(builder, path_or_file, **kwargs)
     if norm == "go":
         return write_go(builder, path_or_file, **kwargs)
+    if norm == "hexpat":
+        return write_imhex_pattern(builder, path_or_file, **kwargs)
     raise ValueError(f"Unhandled language: {norm}")
 
 
@@ -164,6 +175,8 @@ __all__ = [
     "write_go",
     "generate_go_struct",
     "generate_go_choice",
+    "generate_imhex_pattern",
+    "write_imhex_pattern",
     "generate_code",
     "write_code",
     "generate_wireshark_dissector",

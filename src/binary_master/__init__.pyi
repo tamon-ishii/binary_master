@@ -116,7 +116,28 @@ from .binary_struct import (
     bit_offsetof as bit_offsetof,
 )
 from .binary_struct import (
+    f16 as f16,
+)
+from .binary_struct import (
+    f32 as f32,
+)
+from .binary_struct import (
+    f64 as f64,
+)
+from .binary_struct import (
     from_bytes as from_bytes,
+)
+from .binary_struct import (
+    i8 as i8,
+)
+from .binary_struct import (
+    i16 as i16,
+)
+from .binary_struct import (
+    i32 as i32,
+)
+from .binary_struct import (
+    i64 as i64,
 )
 from .binary_struct import (
     offsetof as offsetof,
@@ -125,10 +146,34 @@ from .binary_struct import (
     read_struct as read_struct,
 )
 from .binary_struct import (
+    s8 as s8,
+)
+from .binary_struct import (
+    s16 as s16,
+)
+from .binary_struct import (
+    s32 as s32,
+)
+from .binary_struct import (
+    s64 as s64,
+)
+from .binary_struct import (
     sizeof as sizeof,
 )
 from .binary_struct import (
     to_bytes as to_bytes,
+)
+from .binary_struct import (
+    u8 as u8,
+)
+from .binary_struct import (
+    u16 as u16,
+)
+from .binary_struct import (
+    u32 as u32,
+)
+from .binary_struct import (
+    u64 as u64,
 )
 from .binary_struct import (
     write_struct as write_struct,
@@ -214,6 +259,12 @@ from .code_gen import (
 from .code_gen import (
     write_rust as write_rust,
 )
+from .code_gen.imhex import (
+    generate_imhex_pattern as generate_imhex_pattern,
+)
+from .code_gen.imhex import (
+    write_imhex_pattern as write_imhex_pattern,
+)
 from .debug import (
     debug_dump as debug_dump,
 )
@@ -231,6 +282,9 @@ from .debug import (
 )
 from .debug import (
     hexdump as hexdump,
+)
+from .dummy import (
+    generate_dummy as generate_dummy,
 )
 from .enums import (
     Endian as Endian,
@@ -289,6 +343,18 @@ from .manual import (
 from .reader import (
     BinaryReader as BinaryReader,
 )
+from .streaming import (
+    async_iter_packets as async_iter_packets,
+)
+from .streaming import (
+    iter_packets as iter_packets,
+)
+from .streaming import (
+    iter_views as iter_views,
+)
+from .tui import (
+    run_interactive_inspector as run_interactive_inspector,
+)
 from .varint import (
     VarInt as VarInt,
 )
@@ -324,6 +390,9 @@ from .writer import (
 )
 from .writer import (
     OffsetTableHandle as OffsetTableHandle,
+)
+from .zero_copy import (
+    ZeroCopyView as ZeroCopyView,
 )
 
 __version__: str

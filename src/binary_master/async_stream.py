@@ -25,15 +25,21 @@ class AsyncBinaryReader:
 
     def __init__(
         self,
-        reader: asyncio.StreamReader,
+        reader: Union[asyncio.StreamReader, bytes, bytearray, memoryview],
         default_endian: EndianType = Endian.BIG,
     ) -> None:
         """Initialize an AsyncBinaryReader.
 
         Args:
-            reader: The underlying asyncio.StreamReader.
+            reader: The underlying asyncio.StreamReader or raw bytes/buffer.
             default_endian: Default byte order (Endian.BIG or Endian.LITTLE).
         """
+        if isinstance(reader, (bytes, bytearray, memoryview)):
+            stream_reader = asyncio.StreamReader()
+            stream_reader.feed_data(bytes(reader))
+            stream_reader.feed_eof()
+            reader = stream_reader
+
         self._reader = reader
         self._default_endian = normalize_endian(default_endian)
         self._pos = 0
@@ -125,6 +131,26 @@ class AsyncBinaryReader:
     async def read_double(self, endian: Optional[EndianType] = None) -> float:
         """Read a 64-bit IEEE-754 double."""
         return await self._unpack_read("d", 8, endian)
+
+    async def read_float16(self, endian: Optional[EndianType] = None) -> float:
+        """Read a 16-bit IEEE-754 half-precision float."""
+        return await self._unpack_read("e", 2, endian)
+
+    read_u8 = read_uint8
+    read_i8 = read_int8
+    read_s8 = read_int8
+    read_u16 = read_uint16
+    read_i16 = read_int16
+    read_s16 = read_int16
+    read_u32 = read_uint32
+    read_i32 = read_int32
+    read_s32 = read_int32
+    read_u64 = read_uint64
+    read_i64 = read_int64
+    read_s64 = read_int64
+    read_f16 = read_float16
+    read_f32 = read_float
+    read_f64 = read_double
 
     async def read_bool(self, size: int = 1, endian: Optional[EndianType] = None) -> bool:
         """Read a boolean value with the given byte size."""
@@ -410,26 +436,52 @@ class AsyncBinaryReader:
             self._read_hooks.pop()
 
 
+class _AsyncBufferWriter:
+    def __init__(self) -> None:
+        self._buf = bytearray()
+
+    def write(self, data: Union[bytes, bytearray, memoryview]) -> None:
+        self._buf.extend(data)
+
+    async def drain(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    async def wait_closed(self) -> None:
+        pass
+
+    def to_bytes(self) -> bytes:
+        return bytes(self._buf)
+
+
 class AsyncBinaryWriter:
-    """Asynchronous binary writer wrapping an asyncio.StreamWriter."""
+    """Asynchronous binary writer wrapping an asyncio.StreamWriter or in-memory buffer."""
 
     def __init__(
         self,
-        writer: asyncio.StreamWriter,
+        writer: Optional[Any] = None,
         default_endian: EndianType = Endian.BIG,
     ) -> None:
         """Initialize an AsyncBinaryWriter.
 
         Args:
-            writer: The underlying asyncio.StreamWriter.
+            writer: The underlying asyncio.StreamWriter or None for in-memory buffer.
             default_endian: Default byte order (Endian.BIG or Endian.LITTLE).
         """
-        self._writer = writer
+        self._writer = writer if writer is not None else _AsyncBufferWriter()
         self._default_endian = normalize_endian(default_endian)
 
+    def to_bytes(self) -> bytes:
+        """Return buffered bytes if writing to an in-memory buffer."""
+        if hasattr(self._writer, "to_bytes"):
+            return self._writer.to_bytes()
+        raise TypeError("to_bytes() is only available when writing to an in-memory AsyncBinaryWriter")
+
     @property
-    def writer(self) -> asyncio.StreamWriter:
-        """The underlying asyncio.StreamWriter."""
+    def writer(self) -> Any:
+        """The underlying asyncio.StreamWriter or in-memory buffer."""
         return self._writer
 
     @property
@@ -485,6 +537,26 @@ class AsyncBinaryWriter:
     def write_double(self, val: float, endian: Optional[EndianType] = None) -> None:
         """Write a 64-bit IEEE-754 double."""
         self._pack_write("d", val, endian)
+
+    def write_float16(self, val: float, endian: Optional[EndianType] = None) -> None:
+        """Write a 16-bit IEEE-754 half-precision float."""
+        self._pack_write("e", val, endian)
+
+    write_u8 = write_uint8
+    write_i8 = write_int8
+    write_s8 = write_int8
+    write_u16 = write_uint16
+    write_i16 = write_int16
+    write_s16 = write_int16
+    write_u32 = write_uint32
+    write_i32 = write_int32
+    write_s32 = write_int32
+    write_u64 = write_uint64
+    write_i64 = write_int64
+    write_s64 = write_int64
+    write_f16 = write_float16
+    write_f32 = write_float
+    write_f64 = write_double
 
     def write_cstring(self, s: str, encoding: str = "utf-8") -> None:
         """Write a null-terminated C-string."""

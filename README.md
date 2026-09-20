@@ -2,17 +2,18 @@
 
 [![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-299%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-312%20passed-brightgreen.svg)]()
 
 **Binary Master** は、Python 3.14+ 向けの高速・型安全なバイナリシリアライザ兼仕様書・コード自動生成ツールキットです。  
-宣言的データクラス記法によるパケット定義、ビットフィールド、相対オフセットの自動解決、CRC検証、圧縮ペイロード（zlib/gzip/bz2/lzma）、Mermaid/HTML仕様書生成、Wireshark Lua ディセクタおよび 5 言語（C, Rust, Modern C++, C#, Go）へのコード出力を包括的にサポートします。
+宣言的データクラス記法によるパケット定義、ビットフィールド、相対オフセットの自動解決、CRC検証、圧縮ペイロード（zlib/gzip/bz2/lzma）、Mermaid/HTML仕様書生成、Wireshark Lua ディセクタ、ImHex パターン言語（`.hexpat`）、および 5 言語（C, Rust, Modern C++, C#, Go）へのコード出力を包括的にサポートします。
 
 ### 🌟 主な特徴
-- **⚡ 超高速**: `StructPlan` キャッシュとゼロコピー読み込みにより、700,000+ ops/sec の高速処理を実現。
+- **⚡ 超高速 & ゼロコピー**: `StructPlan` キャッシュと `ZeroCopyView` による遅延パースにより、オブジェクト生成なしの超高速読み取りとインプレース書き換えを実現。
 - **🛡️ 型安全 & 自動検証**: `Magic` シグネチャ、`CRC32` 計算、`Range` 値域制約、`LengthOf`/`CountOf` 連動計算を宣言的に定義・自動検証。
 - **🗜️ 透過的圧縮 & ビットマスク**: `Compressed[T, algo]` による構造体・バイト列の透過的圧縮（zlib/gzip/bz2/lzma）、`BinaryFlag`（`IntFlag`）による直感的なビットマスク。
-- **📡 非同期ストリーム & ファイルI/O**: `.to_file()` / `.from_file()` に加え、`asyncio` ネイティブな `AsyncBinaryReader` / `AsyncBinaryWriter` / `.to_async_stream()` を標準提供。
-- **📊 仕様書・Wireshark・多言語コード生成**: Mermaid パケット構造図、双方向 Hex Inspector 付き HTML 仕様書、Wireshark Lua ディセクタ、5 言語のヘッダー/コードをワンライナーで生成。
+- **📡 非同期ストリーム & パケット生成**: `AsyncBinaryReader` / `AsyncBinaryWriter` / `async_iter_packets` / `iter_packets` による連続パケットストリーミング。
+- **📊 仕様書・Wireshark・ImHex・多言語コード生成**: Mermaid パケット構造図、双方向 Hex Inspector 付き HTML 仕様書、Wireshark Lua ディセクタ、ImHex パターン言語（`.hexpat`）、5 言語のヘッダー/コードをワンライナーで生成。
+- **🎲 ダミーデータ自動生成 & TUI**: 制約を満たすランダムモック生成 (`dummy()`)、ターミナル対話型 TUI インスペクター (`binary-master inspect -i`)。
 
 ```python
 from binary_master import binary_struct, Magic, UInt16, Float32, CString, CRC32
@@ -85,6 +86,7 @@ python -m build
 | [**06_advanced_v2_features.ipynb**](sample/06_advanced_v2_features.ipynb) | 信頼性・高度プロトコル機能 | `CRC32`/`CRC16`/`Checksum8`, `BinaryEnum`, `Magic`/`Constant`, LEB128 `VarInt`, `BitWriter`/`BitReader` |
 | [**07_v0_3_0_features.ipynb**](sample/07_v0_3_0_features.ipynb) | モダン宣言的機能 & 仕様書 | `Float16`, `LengthOf`/`CountOf` 連動計算, `total_size`/`pad_to`, `Range` バリデーション, HTML仕様書 |
 | [**08_real_world_recipes.ipynb**](sample/08_real_world_recipes.ipynb) | 実践業界別レシピ集 | ゲームセーブデータ, IoT テレメトリ, 金融ティックログ (`from_mmap`), 多態RPCメッセージ (`Variant`) |
+| [**09_v0_4_0_features.ipynb**](sample/09_v0_4_0_features.ipynb) | v0.4.0 新機能ガイド | コンパクト型 (`u8`..`u64`, `i8`..`i64`, `f16`..`f64`), ImHex パターン言語 (`.hexpat`), `ZeroCopyView`, 連続パケットストリーミング (`iter_packets`), ダミー生成 (`dummy`), CLI TUI |
 
 ```bash
 # 全サンプルの自動実行・検証

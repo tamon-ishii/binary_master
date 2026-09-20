@@ -717,6 +717,23 @@ class BinaryWriter:
     write_float = write_float32
     write_double = write_float64
 
+    # Compact write aliases (u8..u64, i8..i64, s8..s64, f16..f64)
+    write_u8 = write_uint8
+    write_i8 = write_int8
+    write_s8 = write_int8
+    write_u16 = write_uint16
+    write_i16 = write_int16
+    write_s16 = write_int16
+    write_u32 = write_uint32
+    write_i32 = write_int32
+    write_s32 = write_int32
+    write_u64 = write_uint64
+    write_i64 = write_int64
+    write_s64 = write_int64
+    write_f16 = write_float16
+    write_f32 = write_float32
+    write_f64 = write_float64
+
     def write_bool(
         self,
         value: bool,

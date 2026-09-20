@@ -7,7 +7,7 @@ GitHub や VSCode、JupyterLab 上で実行結果・ダイアグラム・注釈�
 
 ## 📚 チュートリアル・ステップ一覧
 
-全 8 本のノートブックは、難易度順に段階的に学習できるように構成されています。
+全 9 本のノートブックは、難易度順に段階的に学習できるように構成されています。
 
 | ステップ | ノートブック | テーマ | 主な学習内容・機能 |
 |:---:|---|---|---|
@@ -19,8 +19,15 @@ GitHub や VSCode、JupyterLab 上で実行結果・ダイアグラム・注釈�
 | **Step 6** | [**06_advanced_v2_features.ipynb**](./06_advanced_v2_features.ipynb) | 信頼性・高度プロトコル機能 | `Magic` シグネチャ, `Constant` 制約, `BinaryEnum`, `CRC32` 自動チェックサム計算・検証, LEB128 可変長整数 (`VarInt`/`VarUInt`), 任意ビットストリーム (`BitWriter`/`BitReader`) |
 | **Step 7** | [**07_v0_3_0_features.ipynb**](./07_v0_3_0_features.ipynb) | モダン宣言的機能 & 仕様書 | `Float16` (半精度浮動小数点), `LengthOf`/`CountOf` 自動連動計算, `total_size`/`pad_to` 固定サイズ保証, `Range` 値域バリデーション, 双方向 Hex Inspector 付き HTML 仕様書生成 (`write_html`) |
 | **Step 8** | [**08_real_world_recipes.ipynb**](./08_real_world_recipes.ipynb) | 実践業界別レシピ集 | ゲームセーブデータ・アーカイブ, IoT / 車載センサーテレメトリ, 高頻度取引 (HFT) 金融ティックロガー (`from_mmap`), 多態RPCメッセージキュー (`Variant`) |
+| **Step 9** | [**09_v0_4_0_features.ipynb**](./09_v0_4_0_features.ipynb) | v0.4.0 新機能ガイド | コンパクト型 (`u8`..`u64`, `i8`..`i64`, `s8`..`s64`, `f16`..`f64`), ImHex Pattern Language (`.hexpat`) エクスポート, `ZeroCopyView` (ゼロコピー・インプレース更新), 連続パケットストリーミング (`iter_packets`/`iter_views`), ダミー生成 (`dummy`), CLI TUI インスペクター |
 
 ### 🌟 v0.4.0 新機能ハイライト
+- **Pattern Language / Rust 互換コンパクト型**: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `s16`, `f16`, `f32`, `f64` 等による直感的かつ簡潔なパケット記述。
+- **ImHex Pattern Language (`.hexpat`) 出力**: `packet.to_hexpat()` / CLI `binary-master export -l hexpat` による ImHex 用パターンファイル自動出力。
+- **ZeroCopyView (ゼロコピー & 遅延解析)**: `Packet.view(buf)` / `Packet.view_from_file(path)` による即時フィールド参照、および `bytearray` 上でのインプレース直接書き換え。
+- **連続パケットストリーミング**: `iter_packets(stream, Packet)` / `iter_views` / `async_iter_packets` による連続パケットのイテレータ走査。
+- **ダミー・モックデータ自動生成**: `Packet.dummy(seed=..., **overrides)` による制約準拠のテスト用ダミーパケット生成。
+- **インタラクティブ CLI TUI**: `binary-master inspect data.bin -s module:Packet -i` による curses ベースのデュアルペイン対話型バイナリインスペクター。
 - **ファイル & ストリーム直接 I/O**: `packet.to_file("data.bin")`, `Packet.from_file("data.bin")`, `Packet.from_stream(stream)` により一時バイト列変換なしで直接入出力。
 - **ビットマスクフラグ (`BinaryFlag`)**: `enum.IntFlag` を基底としたビット論理演算 (`|`, `&`, `~`) をフルサポートする型安全フラグ。
 - **透過的圧縮 (`Compressed`)**: `Compressed[T, algo="zlib"]` および `CompressedBytes[algo]`（zlib, gzip, bz2, lzma 対応）による自動圧縮・展開。

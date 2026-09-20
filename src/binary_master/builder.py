@@ -1285,6 +1285,27 @@ class Builder:
             port=port,
         )
 
+    def to_hexpat(
+        self,
+        root_name: Optional[str] = None,
+        endian: Optional[str] = None,
+    ) -> str:
+        """Generate ImHex Pattern Language (.hexpat) script for this schema."""
+        from binary_master.code_gen.imhex import generate_imhex_pattern
+
+        return generate_imhex_pattern(self, root_name=root_name, endian=endian)
+
+    def write_hexpat(
+        self,
+        path_or_file: Union[str, Path, IO[str]],
+        root_name: Optional[str] = None,
+        endian: Optional[str] = None,
+    ) -> str:
+        """Generate ImHex Pattern Language (.hexpat) file for this schema."""
+        from binary_master.code_gen.imhex import write_imhex_pattern
+
+        return write_imhex_pattern(self, path_or_file=path_or_file, root_name=root_name, endian=endian)
+
     def to_code(self, lang: str, **kwargs) -> str:
         """Generate source code in the specified language ('c', 'rust', 'cpp', 'csharp', 'go')."""
         from binary_master.code_gen import generate_code

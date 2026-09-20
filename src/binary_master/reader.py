@@ -368,6 +368,23 @@ class BinaryReader:
     read_float = read_float32
     read_double = read_float64
 
+    # Compact read aliases (u8..u64, i8..i64, s8..s64, f16..f64)
+    read_u8 = read_uint8
+    read_i8 = read_int8
+    read_s8 = read_int8
+    read_u16 = read_uint16
+    read_i16 = read_int16
+    read_s16 = read_int16
+    read_u32 = read_uint32
+    read_i32 = read_int32
+    read_s32 = read_int32
+    read_u64 = read_uint64
+    read_i64 = read_int64
+    read_s64 = read_int64
+    read_f16 = read_float16
+    read_f32 = read_float32
+    read_f64 = read_float64
+
     def read_bool(self, size: int = 1, endian: EndianType = None) -> bool:
         """Read a boolean value with configurable byte size (0 is False, any non-zero is True)."""
         if not isinstance(size, int) or size <= 0:

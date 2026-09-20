@@ -39,6 +39,18 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 
     data = path.read_bytes()
 
+    if getattr(args, "interactive", False):
+        struct_cls = None
+        if args.struct:
+            try:
+                struct_cls = _load_struct_class(args.struct)
+            except Exception as e:
+                print(f"Error loading struct '{args.struct}': {e}", file=sys.stderr)
+                return 1
+        from binary_master.tui import run_interactive_inspector
+
+        return run_interactive_inspector(data, struct_cls=struct_cls, filename=path.name)
+
     if args.struct:
         try:
             struct_cls = _load_struct_class(args.struct)
@@ -139,7 +151,17 @@ def cmd_export(args: argparse.Namespace) -> int:
     builder.add_struct(struct_cls)
 
     lang = args.lang.lower()
-    ext_map = {"c": ".h", "rust": ".rs", "cpp": ".hpp", "csharp": ".cs", "go": ".go", "wireshark": ".lua", "lua": ".lua"}
+    ext_map = {
+        "c": ".h",
+        "rust": ".rs",
+        "cpp": ".hpp",
+        "csharp": ".cs",
+        "go": ".go",
+        "wireshark": ".lua",
+        "lua": ".lua",
+        "hexpat": ".hexpat",
+        "imhex": ".hexpat",
+    }
 
     if args.output == "-":
         if lang == "c":
@@ -154,8 +176,10 @@ def cmd_export(args: argparse.Namespace) -> int:
             print(builder.to_go())
         elif lang in ("wireshark", "lua"):
             print(builder.to_wireshark())
+        elif lang in ("hexpat", "imhex"):
+            print(builder.to_hexpat())
         else:
-            print(f"Unknown language: {lang}. Choose from c, rust, cpp, csharp, go, wireshark, lua", file=sys.stderr)
+            print(f"Unknown language: {lang}. Choose from c, rust, cpp, csharp, go, wireshark, lua, hexpat", file=sys.stderr)
             return 1
         return 0
 
@@ -173,8 +197,10 @@ def cmd_export(args: argparse.Namespace) -> int:
         builder.write_go(out_path)
     elif lang in ("wireshark", "lua"):
         builder.write_wireshark(out_path)
+    elif lang in ("hexpat", "imhex"):
+        builder.write_hexpat(out_path)
     else:
-        print(f"Unknown language: {lang}. Choose from c, rust, cpp, csharp, go, wireshark, lua", file=sys.stderr)
+        print(f"Unknown language: {lang}. Choose from c, rust, cpp, csharp, go, wireshark, lua, hexpat", file=sys.stderr)
         return 1
 
     print(f"Exported {lang.upper()} code written to {out_path}")
@@ -195,6 +221,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_inspect.add_argument("--struct", "-s", help="Qualified @binary_struct name, e.g. 'my_module:MyHeader'")
     p_inspect.add_argument("--format", "-f", choices=["hexdump", "table", "json"], default="hexdump", help="Output format")
     p_inspect.add_argument("--color", "-c", action="store_true", help="Enable terminal ANSI colors")
+    p_inspect.add_argument("--interactive", "-i", action="store_true", help="Launch interactive curses TUI inspector")
 
     # diff
     p_diff = subparsers.add_parser("diff", help="Visually diff two binary files")
@@ -215,9 +242,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_spec.add_argument("--lang", choices=["auto", "en", "ja"], default="auto", help="Documentation language for HTML")
 
     # export
-    p_export = subparsers.add_parser("export", help="Export struct to C, Rust, C++, C#, Go, or Wireshark Lua code")
+    p_export = subparsers.add_parser("export", help="Export struct to C, Rust, C++, C#, Go, Wireshark Lua, or ImHex Pattern code")
     p_export.add_argument("struct", help="Qualified @binary_struct name, e.g. 'my_module:MyHeader'")
-    p_export.add_argument("--lang", "-l", choices=["c", "rust", "cpp", "csharp", "go", "wireshark", "lua"], required=True, help="Target language")
+    p_export.add_argument("--lang", "-l", choices=["c", "rust", "cpp", "csharp", "go", "wireshark", "lua", "hexpat", "imhex"], required=True, help="Target language")
     p_export.add_argument("--output", "-o", help="Output source code file path")
 
     args = parser.parse_args(argv)
