@@ -8,7 +8,14 @@ import struct
 from pathlib import Path
 from typing import IO, Any, BinaryIO, Optional, TypeVar, Union, cast
 
+from binary_master.binary_struct import read_struct
+from binary_master.bitstream import BitReader
+from binary_master.checksum import compute_checksum, get_checksum_algorithm
+from binary_master.debug import debug_dump as _debug_dump
+from binary_master.debug import hexdump as _hexdump
 from binary_master.enums import Endian, EndianType, normalize_endian
+from binary_master.exceptions import ChecksumMismatchError
+from binary_master.varint import decode_varint, decode_varuint
 
 T = TypeVar("T")
 
@@ -243,23 +250,17 @@ class BinaryReader:
 
     def read_varuint(self) -> int:
         """Read an unsigned variable-length integer (LEB128)."""
-        from binary_master.varint import decode_varuint
-
         val, _ = decode_varuint(self._stream)
         return val
 
     def read_varint(self) -> int:
         """Read a signed variable-length integer (LEB128)."""
-        from binary_master.varint import decode_varint
-
         val, _ = decode_varint(self._stream)
         return val
 
     def read_bits(self, bit_count: int) -> int:
         """Read an arbitrary number of bits across byte boundaries."""
         if not hasattr(self, "_bit_reader") or self._bit_reader is None:
-            from binary_master.bitstream import BitReader
-
             self._bit_reader = BitReader(self._stream, msb_first=True)
         return self._bit_reader.read_bits(bit_count)
 
@@ -276,9 +277,6 @@ class BinaryReader:
         length: Optional[int] = None,
     ) -> bool:
         """Verify checksum of preceding or specified length of bytes against expected (or next read)."""
-        from binary_master.checksum import compute_checksum, get_checksum_algorithm
-        from binary_master.exceptions import ChecksumMismatchError
-
         func, size = get_checksum_algorithm(algorithm)
         if expected is None:
             fmt = {1: "B", 2: "H", 4: "I", 8: "Q"}.get(size, "I")
@@ -466,8 +464,6 @@ class BinaryReader:
 
     def read_struct(self, cls: type[T], endian: EndianType = None) -> T:
         """Deserialize a @binary_struct class from this reader."""
-        from binary_master.binary_struct import read_struct
-
         return read_struct(cls, reader=self, endian=endian)
 
     # --- Debugging & Inspection ---
@@ -482,8 +478,6 @@ class BinaryReader:
         max_bytes: Optional[int] = None,
     ) -> str:
         """Generate a hexdump of the reader's buffer showing cursor position and remaining bytes."""
-        from binary_master.debug import hexdump as _hexdump
-
         return _hexdump(
             self,
             width=width,
@@ -500,6 +494,4 @@ class BinaryReader:
         **kwargs: Any,
     ) -> Union[str, list[dict[str, Any]]]:
         """Generate a debug dump of this reader's buffer and cursor position."""
-        from binary_master.debug import debug_dump as _debug_dump
-
         return _debug_dump(self, format=format, **kwargs)

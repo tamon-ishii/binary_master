@@ -129,8 +129,8 @@ from .exceptions import (
     RangeValidationError,
     TotalSizeExceededError,
 )
+from .layout import LayoutEntry
 from .manual import (
-    LayoutEntry,
     generate_html,
     generate_manual,
     write_html,

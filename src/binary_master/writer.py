@@ -6,12 +6,29 @@ import io
 import struct
 from contextlib import contextmanager
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, Iterable, Iterator, Literal, Optional, Union
+from typing import IO, Any, Iterable, Iterator, Literal, Optional, Union
 
-if TYPE_CHECKING:
-    from binary_master.bitstream import BitWriter
-
-from binary_master.enums import Endian, EndianType, normalize_endian, normalize_offset_key
+from binary_master.binary_struct import write_struct
+from binary_master.bitstream import BitWriter
+from binary_master.checksum import compute_checksum, get_checksum_algorithm
+from binary_master.debug import (
+    debug_dump as _debug_dump,
+)
+from binary_master.debug import (
+    diff_dump as _diff_dump,
+)
+from binary_master.debug import (
+    hexdump as _hexdump,
+)
+from binary_master.enums import (
+    Endian,
+    EndianType,
+    normalize_endian,
+    normalize_offset_key,
+)
+from binary_master.exceptions import DuplicateOffsetError, OffsetNotFoundError
+from binary_master.layout import LayoutEntry
+from binary_master.varint import encode_varint, encode_varuint
 
 # Integer boundary constants
 INT8_MIN, INT8_MAX = -128, 127
@@ -49,15 +66,11 @@ def _get_struct(fmt: str) -> struct.Struct:
     return st
 
 
-_LAYOUT_ENTRY_CLS: Any = None
+_LAYOUT_ENTRY_CLS: Any = LayoutEntry
 
 
 def _get_layout_entry_cls() -> Any:
-    global _LAYOUT_ENTRY_CLS
-    if _LAYOUT_ENTRY_CLS is None:
-        from binary_master.manual import LayoutEntry
-        _LAYOUT_ENTRY_CLS = LayoutEntry
-    return _LAYOUT_ENTRY_CLS
+    return LayoutEntry
 
 
 def _check_int_bounds(name: str, value: int, min_val: int, max_val: int) -> None:
@@ -176,7 +189,6 @@ class _WriterChecksumContext:
         end_offset = self.writer.tell()
         current_data = self.writer.to_bytes()
         block_bytes = current_data[self.start_offset:end_offset]
-        from binary_master.checksum import compute_checksum, get_checksum_algorithm
 
         self.checksum_value = compute_checksum(self.algorithm, block_bytes)
         func, size = get_checksum_algorithm(self.algorithm)
@@ -528,8 +540,6 @@ class BinaryWriter:
         max_bytes: Optional[int] = None,
     ) -> str:
         """Generate an annotated hexdump correlating bytes to written fields."""
-        from binary_master.debug import hexdump as _hexdump
-
         return _hexdump(
             self,
             width=width,
@@ -549,8 +559,6 @@ class BinaryWriter:
 
         Formats: 'hexdump' (default), 'table', 'json', 'dict'.
         """
-        from binary_master.debug import debug_dump as _debug_dump
-
         return _debug_dump(self, format=format, **kwargs)
 
     def diff(
@@ -562,8 +570,6 @@ class BinaryWriter:
         color: bool = False,
     ) -> str:
         """Compare this writer's buffer and fields against another buffer or writer."""
-        from binary_master.debug import diff_dump as _diff_dump
-
         return _diff_dump(self, other, name_left=name_left, name_right=name_right, color=color)
 
     def _record_entry(
@@ -1009,8 +1015,6 @@ class BinaryWriter:
         current_bytes = self.to_bytes()
         end = self.tell() if end_offset is None else end_offset
         range_bytes = current_bytes[start_offset:end]
-        from binary_master.checksum import compute_checksum, get_checksum_algorithm
-
         val = compute_checksum(algorithm, range_bytes)
         func, size = get_checksum_algorithm(algorithm)
         e = endian or self._default_endian
@@ -1028,8 +1032,6 @@ class BinaryWriter:
 
     def write_varuint(self, value: int, name: str = "", desc: str = "") -> BinaryWriter:
         """Write an unsigned variable-length integer (LEB128)."""
-        from binary_master.varint import encode_varuint
-
         data = encode_varuint(value)
         offset = self.tell()
         self._stream.write(data)
@@ -1046,8 +1048,6 @@ class BinaryWriter:
 
     def write_varint(self, value: int, name: str = "", desc: str = "") -> BinaryWriter:
         """Write a signed variable-length integer (LEB128)."""
-        from binary_master.varint import encode_varint
-
         data = encode_varint(value)
         offset = self.tell()
         self._stream.write(data)
@@ -1065,8 +1065,6 @@ class BinaryWriter:
     def write_bits(self, value: int, bit_count: int) -> BinaryWriter:
         """Write an arbitrary number of bits across byte boundaries (buffered)."""
         if not hasattr(self, "_bit_writer") or self._bit_writer is None:
-            from binary_master.bitstream import BitWriter
-
             self._bit_writer = BitWriter(stream=self._stream, msb_first=True)
         self._bit_writer.write_bits(value, bit_count)
         return self
@@ -1295,11 +1293,9 @@ class BinaryWriter:
         """
         qualified_name = self._qualify_name(name)
         if qualified_name not in self._named_offset_slots or not self._named_offset_slots[qualified_name]:
-            from binary_master.exceptions import OffsetNotFoundError
             raise OffsetNotFoundError(f"Named offset key {qualified_name!r} does not exist.")
 
         if not _allow_rewrite and any(slot.get("resolved") for slot in self._named_offset_slots[qualified_name]):
-            from binary_master.exceptions import DuplicateOffsetError
             raise DuplicateOffsetError(
                 f"Named offset key {qualified_name!r} has already been resolved with write_named_offset. "
                 "Use rewrite_named_offset() to explicitly update it."
@@ -1315,7 +1311,6 @@ class BinaryWriter:
 
         if target is not None:
             if hasattr(target, "__binary__"):
-                from binary_master.binary_struct import write_struct
                 write_struct(target, writer=self, endian=endian, record_entries=self._record_entries)
             elif isinstance(target, (bytes, bytearray, memoryview)):
                 self.write_bytes(bytes(target))
@@ -1376,7 +1371,6 @@ class BinaryWriter:
         """
         qualified_name = self._qualify_name(name)
         if qualified_name not in self._named_offset_slots or not self._named_offset_slots[qualified_name]:
-            from binary_master.exceptions import OffsetNotFoundError
             raise OffsetNotFoundError(f"Named offset key {qualified_name!r} does not exist.")
 
         if target is not None:
@@ -1582,7 +1576,6 @@ class BinaryWriter:
             self._struct_classes.append(s_cls)
         self._elements_log.append(("struct", s_cls))
 
-        from binary_master.binary_struct import write_struct
         write_struct(instance, writer=self, endian=endian, record_entries=self._record_entries)
         return self
 
@@ -1683,7 +1676,6 @@ class BinaryWriter:
             if cls not in self._struct_classes:
                 self._struct_classes.append(cls)
 
-        from binary_master.binary_struct import write_struct
         write_struct(target_obj, writer=self, endian=endian, desc=desc, parent_field_name=name, record_entries=self._record_entries)
         return self
 
